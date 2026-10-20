@@ -1,0 +1,19 @@
+/* ---------- Karten ---------- */
+.card { background: var(--card); border: 1px solid var(--stroke); border-radius: 8px; padding: 16px 18px; box-shadow: var(--shadow-1); }
+.card.tight { padding: 0; overflow: hidden; }
+.card h3 { margin: 0 0 10px; font: 600 14px/20px var(--font); display: flex; gap: 8px; align-items: center; }
+.cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.cards.wide { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); }
+.tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.tile { background: var(--card); border: 1px solid var(--stroke); border-radius: 8px; padding: 14px 16px; box-shadow: var(--shadow-1); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tile.click { cursor: pointer; }
+.tile.click:hover { background: var(--card-2); }
+.tile .t { color: var(--text-2); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.tile .v { font: 600 28px/34px var(--font-disp); letter-spacing: -.3px; }
+.tile .v small { font-size: 14px; font-weight: 400; color: var(--text-2); margin-left: 4px; }
+.tile .d { color: var(--text-2); font-size: 12px; }
+.kv { display: grid; grid-template-columns: minmax(110px, auto) 1fr; gap: 4px 16px; font-size: 13px; }
+.kv > dt { color: var(--text-2); }
+.kv > dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.kv > dd.warn { color: var(--warn); font-weight: 600; }
+

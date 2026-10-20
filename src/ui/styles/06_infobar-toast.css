@@ -1,0 +1,18 @@
+/* ---------- InfoBar & Toast ---------- */
+.infobar { display: flex; gap: 12px; align-items: flex-start; padding: 11px 14px; border-radius: 4px; border: 1px solid var(--stroke); background: var(--card-3); font-size: 13px; }
+.infobar .i { margin-top: 2px; }
+.infobar.err { background: var(--err-bg); }
+.infobar.err .i { color: var(--err); }
+.infobar.warn { background: var(--warn-bg); }
+.infobar.warn .i { color: var(--warn); }
+.infobar.ok { background: var(--ok-bg); }
+.infobar.ok .i { color: var(--ok); }
+.infobar.inf { background: var(--inf-bg); }
+.infobar.inf .i { color: var(--inf); }
+.infobar b { font-weight: 600; }
+.toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 90; }
+.toast { min-width: 280px; max-width: 420px; background: var(--card); border: 1px solid var(--stroke); border-radius: 8px; box-shadow: var(--shadow-3); padding: 12px 14px; display: flex; gap: 10px; animation: tin .2s ease; font-size: 13px; }
+.toast .i { margin-top: 2px; }
+.toast.ok .i { color: var(--ok); } .toast.err .i { color: var(--err); } .toast.warn .i { color: var(--warn); } .toast.inf .i { color: var(--inf); }
+@keyframes tin { from { transform: translateY(8px); opacity: 0; } }
+

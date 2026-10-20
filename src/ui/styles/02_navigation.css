@@ -1,0 +1,18 @@
+/* ---------- Navigation ---------- */
+.nav { display: flex; flex-direction: column; padding: 4px 4px 8px; gap: 2px; overflow-y: auto; overflow-x: hidden; }
+.nav-item { position: relative; display: flex; align-items: center; gap: 14px; height: 38px; padding: 0 12px; border-radius: 4px; color: var(--text); cursor: default; user-select: none; white-space: nowrap; border: 0; background: transparent; text-align: left; width: 100%; }
+.nav-item:hover { background: var(--hover); }
+.nav-item:active { background: var(--press); color: var(--text-2); }
+.nav-item.on { background: var(--sel); }
+.nav-item.on::before { content: ""; position: absolute; left: 0; top: 11px; bottom: 11px; width: 3px; border-radius: 3px; background: var(--accent); }
+.nav-item .i { width: 18px; height: 18px; }
+.nav-item .lbl { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.nav-item[disabled] { color: var(--text-dis); pointer-events: none; }
+.nav-sep { height: 1px; background: var(--stroke); margin: 6px 8px; }
+.nav-head { font-size: 12px; color: var(--text-2); padding: 10px 14px 4px; white-space: nowrap; overflow: hidden; }
+.main.collapsed .nav-item .lbl, .main.collapsed .nav-item .badge, .main.collapsed .nav-head,
+.main.compact .nav-item .lbl, .main.compact .nav-item .badge, .main.compact .nav-head { display: none; }
+.main.collapsed .nav-item .dot, .main.compact .nav-item .dot { display: block; }
+.nav-item .dot { display: none; position: absolute; left: 30px; top: 8px; width: 7px; height: 7px; border-radius: 50%; background: var(--err); }
+.nav-foot { margin-top: auto; }
+

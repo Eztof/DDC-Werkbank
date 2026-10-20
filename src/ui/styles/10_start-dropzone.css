@@ -1,0 +1,25 @@
+/* ---------- Start / Dropzone ---------- */
+.hero { display: flex; gap: 20px; align-items: center; margin: 8px 0 20px; }
+.hero .logo { width: 56px; height: 56px; }
+.hero h2 { margin: 0; font: 600 28px/36px var(--font-disp); }
+.hero p { margin: 4px 0 0; color: var(--text-2); max-width: 760px; }
+.drop { border: 1.5px dashed var(--stroke-2); border-radius: 8px; background: var(--card); padding: 34px 24px; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; transition: background .12s, border-color .12s; }
+.drop.small { padding: 18px; flex-direction: row; justify-content: center; text-align: left; }
+.drop .big { width: 44px; height: 44px; color: var(--accent); }
+.drop .t { font: 600 18px/24px var(--font-disp); }
+.drop.small .t { font-size: 15px; }
+.drop.hot, .dropping .drop { background: var(--accent-soft); border-color: var(--accent); }
+.fmt { display: flex; gap: 12px; align-items: flex-start; }
+.fmt .ic { width: 40px; height: 40px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; flex: none; }
+.fmt .ic .i { width: 22px; height: 22px; }
+.fmt b { display: block; font-weight: 600; }
+.fmt span { color: var(--text-2); font-size: 13px; }
+.station { display: flex; gap: 14px; align-items: center; }
+.station .ic { width: 44px; height: 44px; border-radius: 8px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); flex: none; }
+.station .ic .i { width: 24px; height: 24px; }
+.station .nm { font-weight: 600; font-size: 15px; }
+.station .meta { color: var(--text-2); font-size: 12px; }
+.drop-overlay { position: fixed; inset: 0; z-index: 80; background: rgba(0,0,0,.25); display: none; align-items: center; justify-content: center; }
+.dropping .drop-overlay { display: flex; }
+.drop-overlay .box { background: var(--card); border: 2px dashed var(--accent); border-radius: 12px; padding: 40px 60px; font: 600 20px var(--font-disp); color: var(--accent-text); box-shadow: var(--shadow-3); display: flex; gap: 14px; align-items: center; }
+

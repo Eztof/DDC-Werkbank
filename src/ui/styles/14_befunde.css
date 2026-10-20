@@ -1,0 +1,18 @@
+/* ---------- Befunde ---------- */
+.fgroup { margin-bottom: 12px; }
+.fgroup > .hd { display: flex; align-items: center; gap: 10px; padding: 12px 16px; cursor: default; user-select: none; }
+.fgroup > .hd .t { font-weight: 600; flex: 1; }
+.fgroup > .hd .tw .i { transition: transform .12s; }
+.fgroup.open > .hd .tw .i { transform: rotate(90deg); }
+.fgroup > .bd { border-top: 1px solid var(--stroke); display: none; }
+.fgroup.open > .bd { display: block; }
+.frow { display: flex; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--stroke); align-items: flex-start; }
+.frow:last-child { border-bottom: 0; }
+.frow .tx { flex: 1; min-width: 0; }
+.frow .tx b { font-weight: 600; display: block; }
+.frow .tx span { color: var(--text-2); font-size: 13px; display: block; margin-top: 2px; overflow-wrap: anywhere; }
+.frow .go { flex: none; display: flex; gap: 4px; }
+.frow .links { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-size: 12px; }
+.frow.mini { padding: 8px 12px; gap: 10px; }
+.frow.mini .tx b { font-size: 13px; }
+

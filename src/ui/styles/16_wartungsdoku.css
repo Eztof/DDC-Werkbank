@@ -1,0 +1,25 @@
+/* ---------- Wartungsdoku ---------- */
+.steps { display: grid; gap: 12px; }
+.step { display: flex; gap: 14px; align-items: flex-start; }
+.step .no { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-weight: 600; flex: none; }
+.step .no.done { background: var(--ok); color: #fff; }
+.step .bd { flex: 1; min-width: 0; }
+.step .bd h3 { margin: 3px 0 8px; }
+.fields { display: grid; grid-template-columns: 170px 1fr; gap: 8px 12px; align-items: center; font-size: 13px; max-width: 900px; }
+.fields label { color: var(--text-2); }
+.wgroups { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.wgrp { border: 1px solid var(--stroke); border-radius: 8px; background: var(--card); overflow: hidden; }
+.wgrp.dragover { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.wgrp .gh { display: flex; gap: 8px; align-items: center; padding: 8px 10px; background: var(--card-2); border-bottom: 1px solid var(--stroke); }
+.wgrp .gh input.gn { flex: 1; font-weight: 600; }
+.wgrp table td { padding: 3px 8px; vertical-align: middle; }
+.wgrp table th { padding: 6px 8px; background: var(--card); }
+.wgrp tr.off td { opacity: .45; }
+.wgrp td.grip { color: var(--text-3); cursor: grab; width: 18px; text-align: center; letter-spacing: -2px; }
+.wgrp input.in { width: 100%; min-height: 28px; padding: 2px 8px; }
+.wgrp select.in { min-height: 28px; padding-top: 0; padding-bottom: 0; max-width: 200px; }
+.wcent { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--stroke); border-radius: 6px; background: var(--card); cursor: default; }
+.wcent.on { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.wcent .t { font-weight: 600; }
+.wcent .m { color: var(--text-2); font-size: 12px; }
+

@@ -1,0 +1,19 @@
+/* ---------- Status-/Art-Markierungen ---------- */
+.kind { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; height: 20px; padding: 0 6px; border-radius: 4px; font: 600 11px/20px var(--font); color: #fff; background: var(--k-frei); letter-spacing: .3px; }
+.kind.AE { background: var(--k-AE); } .kind.AA { background: var(--k-AA); } .kind.BE { background: var(--k-BE); } .kind.BA { background: var(--k-BA); }
+.kind.frei { background: transparent; color: var(--text-3); border: 1px dashed var(--stroke-2); font-weight: 400; }
+.sev { display: inline-flex; width: 18px; height: 18px; border-radius: 50%; align-items: center; justify-content: center; color: #fff; flex: none; }
+.sev svg { width: 12px; height: 12px; }
+.sev.err { background: var(--err); } .sev.warn { background: var(--warn); } .sev.info { background: var(--inf); }
+.sev, .badge.err, .badge.warn { color: var(--on-sev); }
+.pill { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; border-radius: 10px; font-size: 12px; line-height: 20px; background: var(--card-3); border: 1px solid var(--stroke); color: var(--text-2); white-space: nowrap; }
+.pill.ok { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+.pill.err { background: var(--err-bg); color: var(--err); border-color: transparent; }
+.pill.warn { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+.pill.inf { background: var(--inf-bg); color: var(--inf); border-color: transparent; }
+.kbar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--card-3); min-width: 80px; }
+.kbar > span { display: block; height: 100%; }
+.kbar .AE { background: var(--k-AE); } .kbar .AA { background: var(--k-AA); } .kbar .BE { background: var(--k-BE); } .kbar .BA { background: var(--k-BA); } .kbar .frei { background: var(--stroke-2); }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--text-2); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+

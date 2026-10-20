@@ -1,0 +1,10 @@
+/* ---------- Suche oben: Bereich ---------- */
+.tb-search { width: min(520px, 42vw); }
+.tbox .scope { flex: none; border: 1px solid var(--stroke-2); background: transparent; color: var(--text-2); border-radius: 10px; font-size: 11px; line-height: 16px; padding: 1px 8px; margin-right: 6px; white-space: nowrap; cursor: default; }
+.tbox .scope:hover { background: var(--hover); color: var(--text); }
+.tbox .scope.all { background: var(--accent-soft); color: var(--accent); border-color: transparent; font-weight: 600; }
+.search-pop { max-height: 520px; }
+.search-pop .hd.sum { color: var(--text-3); font-weight: 400; padding-top: 4px; }
+.search-pop .it.more { color: var(--accent); font-size: 12px; }
+.search-pop .it.more .a { min-width: 90px; display: inline-flex; justify-content: flex-start; }
+.search-pop .it.more .a svg { width: 14px; height: 14px; }

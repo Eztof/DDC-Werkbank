@@ -1,0 +1,19 @@
+/* ---------- Seite ---------- */
+.page-head { display: flex; align-items: flex-end; gap: 16px; padding: 22px 32px 12px; flex-wrap: wrap; }
+.page-head h1 { font: 600 28px/36px var(--font-disp); margin: 0; letter-spacing: -.2px; }
+.page-head .sub { color: var(--text-2); font-size: 13px; margin-top: 2px; }
+.page-head .grow { flex: 1; min-width: 200px; }
+.page-head .acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.page-body { flex: 1; overflow: auto; padding: 4px 32px 32px; min-height: 0; }
+.page-body.flush { padding: 0; overflow: hidden; display: flex; min-height: 0; }
+.section-title { font: 600 14px/20px var(--font); margin: 22px 0 8px; display: flex; align-items: center; gap: 8px; }
+.section-title:first-child { margin-top: 4px; }
+.muted { color: var(--text-2); }
+.faint { color: var(--text-3); }
+.small { font-size: 12px; line-height: 16px; }
+.nowrap { white-space: nowrap; }
+.grow { flex: 1; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.stack { display: flex; flex-direction: column; gap: 8px; }
+.ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+

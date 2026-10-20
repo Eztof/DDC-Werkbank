@@ -1,0 +1,14 @@
+/* ---------- Flyout / Menü ---------- */
+.flyout { position: fixed; z-index: 95; background: var(--card); border: 1px solid var(--stroke); border-radius: 8px; box-shadow: var(--shadow-3); padding: 4px; min-width: 200px; animation: tin .12s ease; }
+.flyout .mi { display: flex; align-items: center; gap: 12px; padding: 7px 12px; border-radius: 4px; cursor: default; font-size: 13px; }
+.flyout .mi:hover { background: var(--hover); }
+.flyout .mi.on { font-weight: 600; }
+.flyout .mi .chkm { width: 16px; color: var(--accent); }
+.flyout .sep { height: 1px; background: var(--stroke); margin: 4px 0; }
+.flyout { max-height: 70vh; overflow-y: auto; }
+.flyout .fhead { font-size: 11px; font-weight: 600; color: var(--text-2); padding: 6px 12px 2px; }
+.pickbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 12px; padding: 8px 12px; border-radius: 6px; background: var(--accent-soft); border: 1px solid var(--accent); }
+.rail-item.drop { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); }
+table.wdoc td.grip-cell { cursor: grab; }
+table.wdoc tbody tr[draggable="true"]:active { cursor: grabbing; }
+
