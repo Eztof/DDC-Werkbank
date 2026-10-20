@@ -1,0 +1,4 @@
+node_modules/
+dist/
+DDC-Werkbank/config.json
+DDC-Werkbank/daten/

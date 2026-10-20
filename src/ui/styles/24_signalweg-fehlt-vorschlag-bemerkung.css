@@ -1,0 +1,22 @@
+/* ---------- Signalweg fehlt / Vorschlag Bemerkung ---------- */
+.nolink { color: var(--warn); font-weight: 600; }
+input.in.sugg { color: var(--warn); font-style: italic; }
+
+/* Wartungsdoku: Wert der verknüpften Klemme rechts in der Unterzeile */
+table.grid.wdoc td .sub.artsub { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 10px; }
+.wdoc .artsub-l { flex: 1 1 auto; min-width: 0; }
+.wdoc .artval { flex: none; margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text); font-size: 12px; display: inline-flex; gap: 6px; align-items: baseline; padding: 0 2px; }
+.wdoc .artval b { font-weight: 600; }
+.wdoc .artval .corr { color: var(--text-3); font-size: 11px; }
+.wdoc .artval .pill { font-size: 11px; }
+
+/* Wartungsdoku: Werkzeugleiste, Gruppen je Anlage, Hinweise */
+.wd-tools { margin-top: 12px; gap: 8px; flex-wrap: wrap; }
+.wd-tools .pickbar { margin: 0; }
+table.wdoc tr.grp td { background: var(--subtle, var(--hover)); border-top: 1px solid var(--stroke); padding-top: 9px; padding-bottom: 9px; }
+table.wdoc tr.grp .grp-name { font-weight: 600; font-size: 13px; color: var(--text); cursor: pointer; }
+table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: underline; }
+.wdoc .facchip { display: inline-block; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 8px; background: var(--hover); color: var(--text-2); margin-right: 2px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.wdoc .extlink { color: var(--text-3); white-space: nowrap; }
+.wdoc .nolink { white-space: nowrap; }
+

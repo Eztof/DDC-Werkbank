@@ -1,0 +1,12 @@
+/* ---------- Abgehakte Befunde ---------- */
+.frow.ign, table.grid tbody tr.ign td { opacity: .55; }
+.frow.ign:hover, table.grid tbody tr.ign:hover td { opacity: .85; }
+.btn.ign { white-space: nowrap; }
+.btn.ign.on { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+.where { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 12px; line-height: 18px; margin: 2px 0; }
+.where .kind { transform: scale(.9); }
+table.mg-t td .where { margin-top: 4px; }
+.fgroup .hd .grow { flex: 1; }
+.frow .tx span.where { display: flex; margin: 4px 0 2px; color: var(--text); }
+.frow .tx span.where > span, .frow .tx span.where .kind { display: inline-flex; margin-top: 0; }
+.frow .tx span.where > span.muted { color: var(--text-2); }

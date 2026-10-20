@@ -1,0 +1,19 @@
+{
+  "name": "ddc-werkbank",
+  "version": "0.3.0",
+  "private": true,
+  "description": "DDC-Werkbank: Sicherungen von Kieback&Peter-Zentralen auswerten und Wartungsdokus erstellen",
+  "type": "module",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "watch": "node tools/build.mjs --watch",
+    "test": "node tools/build.mjs && node --test \"test/*.test.mjs\"",
+    "service": "node src/service/server.js",
+    "package": "node tools/package.mjs"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "6.23.0",
+    "esbuild": "0.25.12",
+    "playwright": "1.56.1"
+  }
+}

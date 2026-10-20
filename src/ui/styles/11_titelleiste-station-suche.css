@@ -1,0 +1,11 @@
+/* ---------- Titelleiste: Station + Suche ---------- */
+.tb-station { min-width: 220px; max-width: 360px; }
+.tb-search { width: min(420px, 36vw); }
+.search-pop { position: absolute; top: 38px; left: 0; right: 0; background: var(--card); border: 1px solid var(--stroke); border-radius: 8px; box-shadow: var(--shadow-3); max-height: 420px; overflow-y: auto; z-index: 70; padding: 4px; }
+.search-pop .it { display: flex; gap: 10px; align-items: center; padding: 6px 10px; border-radius: 4px; font-size: 13px; cursor: default; }
+.search-pop .it.on, .search-pop .it:hover { background: var(--hover); }
+.search-pop .it .a { font-family: var(--mono); font-size: 12px; color: var(--text-2); min-width: 90px; }
+.search-pop .it .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-pop .it .w { color: var(--text-3); font-size: 11px; white-space: nowrap; }
+.search-pop .hd { font-size: 11px; color: var(--text-2); padding: 6px 10px 2px; font-weight: 600; }
+

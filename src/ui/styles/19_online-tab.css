@@ -1,0 +1,6 @@
+/* ---------- Online-Tab ---------- */
+.spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--stroke); border-top-color: var(--accent); animation: spin .7s linear infinite; display: inline-block; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+table.grid td.liveon { color: var(--ok); font-weight: 600; }
+table.grid td.liveoff { color: var(--text-2); }
+table.grid td.num.liveon, table.grid td.num.liveoff { text-align: right; }

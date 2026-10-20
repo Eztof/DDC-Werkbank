@@ -13,8 +13,8 @@ const B = require('./bacnet.js');
 const VERSION = '0.2';
 const PORT = 47902;
 
-/* Ordner neben der .exe (bzw. Projektordner in der Entwicklung) */
-const BASE = process.pkg ? path.dirname(process.execPath) : __dirname;
+/* Ordner neben der .exe (in der Entwicklung: DDC-Werkbank\ im Repo oder WERKBANK_DIR) */
+const BASE = process.pkg ? path.dirname(process.execPath) : (process.env.WERKBANK_DIR || path.join(__dirname, '..', '..', 'DDC-Werkbank'));
 const UI_DIR = path.join(BASE, 'ui');
 const CONFIG = path.join(BASE, 'config.json');
 const DATA_DIR = path.join(BASE, 'daten');   // Merkliste: abgehakte Befunde, Entscheidungen, Einstellungen

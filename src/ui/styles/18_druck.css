@@ -1,0 +1,70 @@
+/* ---------- Druck ---------- */
+@media print {
+  body { overflow: visible; background: #fff; }
+  #app { display: block; height: auto; }
+  .titlebar, .nav, .cmdbar, .page-head .acts, .rail, .drawer, .toasts, .pivot { display: none !important; }
+  .main { display: block; }
+  .content { border: 0; overflow: visible; }
+  .page-body { overflow: visible; padding: 0 12px; }
+  .card, .tile { box-shadow: none; break-inside: avoid; }
+  .fgroup > .bd { display: block !important; }
+}
+@media (max-width: 900px) {
+  .main { grid-template-columns: 56px 1fr; }
+  .main .nav-item .lbl, .main .nav-item .badge, .main .nav-head { display: none; }
+  .tb-brand span, .tb-station { display: none; }
+  .page-head { padding: 16px; }
+  .page-body { padding: 4px 16px 24px; }
+  .drawer { position: absolute; right: 0; top: 0; bottom: 0; width: min(420px, 100%); box-shadow: var(--shadow-3); z-index: 20; }
+  .rail { width: 180px; }
+  .fields { grid-template-columns: 1fr; }
+}
+
+/* Wartungsdoku-Tabellen: gleiche Spalten in allen Gruppen */
+.wgrp table.grid { table-layout: fixed; }
+.wgrp table.grid th { position: static; }
+.wgrp table.grid th:nth-child(1) { width: 28px; }
+.wgrp table.grid th:nth-child(2) { width: 40px; }
+.wgrp table.grid th:nth-child(3) { width: 96px; }
+.wgrp table.grid th:nth-child(4) { width: 58px; }
+.wgrp table.grid th:nth-child(5) { width: 38%; }
+.wgrp table.grid th:nth-child(7) { width: 200px; }
+.wgrp table.grid td { overflow: hidden; text-overflow: ellipsis; }
+.wgrp select.in { width: 100%; max-width: none; }
+.seg button { white-space: nowrap; }
+select.in.bad { color: var(--err); font-weight: 600; }
+.wgrp.off .gh input.gn { opacity: .5; text-decoration: line-through; }
+.chip.on .sw-dot { box-shadow: 0 0 0 1.5px var(--on-accent); }
+table.wdoc td:nth-child(3) { min-width: 250px; }
+table.wdoc td:nth-child(5) { min-width: 150px; }
+table.wdoc input[type=date] { width: 128px; }
+
+/* Wartungsdoku: Ergebnis-Farben, Sprungmarken */
+.page-body.fill { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 16px; }
+.page-body.fill > .split { flex: 1; min-height: 0; }
+.page-body.fill .rail, .page-body.fill .wd-main { overflow-y: auto; }
+:root { --tint-ok: color-mix(in srgb, var(--ok) 10%, transparent); --tint-err: color-mix(in srgb, var(--err) 10%, transparent); --tint-warn: color-mix(in srgb, var(--warn) 11%, transparent); --tint-na: color-mix(in srgb, var(--text-3) 9%, transparent); }
+table.grid tbody tr.ex-ja td { background: var(--tint-ok); }
+table.grid tbody tr.ex-mangel td { background: var(--tint-err); }
+table.grid tbody tr.ex-nein td, table.grid tbody tr.ex-nm td { background: var(--tint-warn); }
+table.grid tbody tr.ex-na td { background: var(--tint-na); }
+table.grid tbody tr.ex-ja:hover td { background: color-mix(in srgb, var(--ok) 16%, transparent); }
+table.grid tbody tr.ex-mangel:hover td { background: color-mix(in srgb, var(--err) 16%, transparent); }
+.frow.ex-mangel { background: var(--tint-err); }
+.frow.ex-ja { background: var(--tint-ok); }
+.frow .pill .i { width: 12px; height: 12px; }
+select.exsel.ex-ja { color: var(--ok); font-weight: 600; }
+select.exsel.ex-mangel { color: var(--err); font-weight: 600; }
+select.exsel.ex-nein, select.exsel.ex-nm { color: var(--warn); font-weight: 600; }
+select.exsel.ex-na { color: var(--text-2); }
+.sevdot.ok { background: var(--ok); } .sevdot.warn { background: var(--warn); }
+a.klink { display: inline-flex; align-items: center; gap: 3px; font-weight: 600; }
+a.klink .i { width: 12px; height: 12px; }
+@keyframes flashrow { 0%, 30% { box-shadow: inset 0 0 0 2px var(--accent); background: color-mix(in srgb, var(--accent) 28%, transparent); } 100% { box-shadow: inset 0 0 0 2px transparent; } }
+table.grid tbody tr.flash td { animation: flashrow 2.4s ease-out 1; }
+table.grid tbody tr.on td { background: var(--accent-soft) !important; }
+.pill.docmark { font-weight: 600; margin-left: 6px; vertical-align: 1px; }
+.pill.docmark.err { background: var(--err); color: var(--on-sev); }
+.pill.docmark.ok { background: var(--ok); color: var(--on-sev); }
+.frow .tx b .pill.docmark { display: inline-flex; }
+.wd-main table.grid th { top: -16px; }

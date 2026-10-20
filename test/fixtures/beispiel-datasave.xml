@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Künstliche Beispiel-Sicherung (DDC4000-Format) für Tests – keine echte Anlage -->
+<D4PML Version="1.2">
+ <Header>
+  <Identity CentralAddr="12" BacnetDevId="4012"/>
+  <Version applRev="1.9.3" build="77" defdataRev="5"/>
+  <InvokeID>20260115T0930</InvokeID>
+ </Header>
+ <Content>
+  <Central Addr="12">
+   <Module Addr="000" Type="DDC4200">
+    <Text>Testzentrale Halle</Text>
+    <Plant Addr="00" Type="SY"><Text>System</Text>
+     <Group Addr="00" Type="SY"><Text>System</Text>
+      <Object Addr="SY.01" Type="SY_Modul"><Para Addr="899"><Value Type="Text">1.9.3</Value></Para><Para Addr="HwRev"><Value Type="Text">B</Value></Para></Object>
+      <Object Addr="SY.02" Type="SY_BACDev"><Para Addr="ObjId"><Value Type="Int">4012</Value></Para><Para Addr="ObjName"><Value Type="Text">Z12_Halle</Value></Para><Para Addr="Location"><Value Type="Text">Halle Nord</Value></Para></Object>
+      <Object Addr="SY.03" Type="SY_Clock"><Para Addr="1"><Value Type="Int">1768469400</Value></Para></Object>
+     </Group>
+    </Plant>
+   </Module>
+   <Module Addr="001" Type="IO_Modul">
+    <Text>E/A-Modul 1</Text>
+    <Plant Addr="00" Type="P"><Text>Klemmen</Text>
+     <Group Addr="00" Type="P"><Text>Klemmen</Text>
+      <Object Addr="P.01" Type="P"><Text>RLT1 Zulufttemperatur</Text>
+       <Para Addr="1"><Value Type="Int">3</Value></Para>
+       <SubObj Addr="CAI.01" Type="CAI">
+        <Para Addr="b"><Text>Zulufttemp.</Text><Value Type="Float" Unit="62">21.4</Value><ActValue Type="Float" Unit="62">21.6</ActValue>
+         <FuncObj Addr="1" Type="F019"><Para Addr="C"><Value Type="Float" Unit="62">0.5</Value></Para></FuncObj>
+         <FuncObj Addr="2" Type="FB_AI"><Text>Zulufttemperatur</Text><Para Addr="ObjId"><Value Type="Int">1</Value></Para><Para Addr="COVInc"><Value Type="Float">0.2</Value></Para></FuncObj>
+        </Para>
+        <Para Addr="SType"><Value Type="Text">PT1000</Value></Para>
+       </SubObj>
+      </Object>
+      <Object Addr="P.02" Type="P"><Text>RLT1 Ventilator Zuluft Betrieb</Text>
+       <Para Addr="1"><Value Type="Int">1</Value></Para>
+       <SubObj Addr="CDI.01" Type="CDI">
+        <Para Addr="k"><Text>Betrieb</Text><Value Type="Bool">1</Value></Para>
+       </SubObj>
+      </Object>
+      <Object Addr="P.03" Type="P"><Text>RLT1 Ventilator Zuluft ansteuern</Text>
+       <Para Addr="1"><Value Type="Int">2</Value></Para>
+       <SubObj Addr="CDO.01" Type="CDO">
+        <Para Addr="K"><Text>Ansteuerung</Text><Value Type="Bool">0</Value>
+         <FuncObj Addr="1" Type="FSource"><Para Addr="1"><Value Type="Source">//001/01/01/M.01/Y</Value></Para></FuncObj>
+        </Para>
+        <Para Addr="k"><Value Type="Bool">1</Value></Para>
+       </SubObj>
+      </Object>
+      <Object Addr="P.04" Type="P"><Text>RLT1 Heizventil</Text>
+       <Para Addr="1"><Value Type="Int">4</Value></Para>
+       <SubObj Addr="CAO.01" Type="CAO">
+        <Para Addr="Y"><Text>Stellsignal</Text><Value Type="Float" Unit="98">35</Value>
+         <FuncObj Addr="1" Type="FSource"><Para Addr="1"><Value Type="Source">//001/01/01/R.01/Y</Value></Para></FuncObj>
+        </Para>
+        <Para Addr="y"><Value Type="Float" Unit="98">40</Value></Para>
+       </SubObj>
+      </Object>
+      <Object Addr="P.05" Type="P"><Text>Reserve</Text><Para Addr="1"><Value Type="Int">3</Value></Para></Object>
+     </Group>
+    </Plant>
+    <Plant Addr="01" Type="RLT"><Text>RLT 1 Halle</Text>
+     <Group Addr="01" Type="RG"><Text>Regelung</Text>
+      <Object Addr="M.01" Type="M"><Text>Freigabe Ventilator</Text>
+       <Para Addr="5"><Value Type="Text">E1 &amp; E2</Value></Para>
+       <Para Addr="E1"><Text>Zeitprogramm</Text>
+        <FuncObj Addr="1" Type="FSource"><Para Addr="1"><Value Type="Source">//001/01/01/S118.01/Y</Value></Para></FuncObj>
+       </Para>
+       <Para Addr="E2"><Text>Betrieb</Text>
+        <FuncObj Addr="1" Type="FSource"><Para Addr="1"><Value Type="Source">//001/00/00/P.02/CDI.01/k</Value></Para></FuncObj>
+        <FuncObj Addr="2" Type="FSelMO"><Para Addr="1"><Value Type="Text">Störung Ventilator</Value></Para><Para Addr="102"><Value Type="Int">2</Value></Para><Para Addr="6"><Value Type="Int">1</Value></Para></FuncObj>
+       </Para>
+       <Para Addr="Y"><Text>Freigabe</Text><Value Type="Bool">1</Value></Para>
+      </Object>
+      <Object Addr="R.01" Type="S066"><Text>Zulufttemperaturregler</Text>
+       <Para Addr="X"><Text>Istwert</Text>
+        <FuncObj Addr="1" Type="FSource"><Para Addr="1"><Value Type="Source">//001/00/00/P.01/CAI.01/b</Value></Para></FuncObj>
+       </Para>
+       <Para Addr="W"><Text>Sollwert</Text><Value Type="Float" Unit="62">20</Value></Para>
+       <Para Addr="Y"><Text>Stellgröße</Text><Value Type="Float" Unit="98">40</Value></Para>
+      </Object>
+      <Object Addr="S118.01" Type="S118"><Text>Zeitprogramm Lüftung</Text>
+       <Schedule><DayList WeekDay="Mo"><DayEntry Time="06:00:00" Value="1"/><DayEntry Time="18:00:00" Value="0"/></DayList><DayList WeekDay="Sa"/></Schedule>
+       <Para Addr="Y"><Text>Ausgang</Text><Value Type="Bool">1</Value></Para>
+      </Object>
+     </Group>
+    </Plant>
+   </Module>
+  </Central>
+ </Content>
+</D4PML>
