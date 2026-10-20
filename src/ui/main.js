@@ -8,7 +8,7 @@ import "./model/model.js";
 import "./model/d4pml.js";
 import "./model/ddc3000.js";
 import "./model/findings.js";
-import "./core/views.js";
+import "./model/pipeline.js";
 import "./shell/shell.js";
 import "./core/persist.js";
 import "./views/start-overview.js";

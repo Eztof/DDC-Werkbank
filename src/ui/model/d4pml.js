@@ -1,4 +1,5 @@
 import { fmtNum, fmtUnix, kid, kids, natCmp, textOf } from "../core/util.js";
+import { FORMATS } from "../core/ext.js";
 import { FB_TYPES, FUNC_NAMES, edgesIn, edgesOut, indexEdges, isOutputKind, newCentral, nodePlace, pe, portLabel, pv, valText } from "./model.js";
 
 /* =========================================================================
@@ -431,3 +432,12 @@ function flattenD4(C) {
 export const WD = { mo: "Mo", tu: "Di", we: "Mi", th: "Do", fr: "Fr", sa: "Sa", su: "So", ho: "Feiertag", sp: "Sondertag" };
 export function schedText(days) { return (days || []).map(d => (WD[d.weekday] || d.weekday) + " " + d.entries.map(e => e.time + "=" + e.value).join(" ")).join(" · "); }
 
+
+/* ---------- Als Dateiformat anmelden ---------- */
+FORMATS.add({
+  id: "d4pml", order: 20, icon: "station", label: "DDC4000-Familie / BMR",
+  desc: "datasave.xml aus der Datensicherung (DDC4200, DDC4200e, DDC4400 …) und param_backup.d4pml der BMR-Raumautomation, auch im ZIP oder Sicherungsordner.",
+  exts: ["xml", "d4pml", "dat"],
+  sniff: (name, head) => /<D4PML[\s>]/.test(head),
+  parse: (text, f) => parseD4PML(text, f.label, f.name)
+});

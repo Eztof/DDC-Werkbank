@@ -1,4 +1,5 @@
 import { natCmp } from "../core/util.js";
+import { FORMATS } from "../core/ext.js";
 import { edgeLabel, edgesIn, edgesOut, indexEdges, newCentral, nodePlace, pv } from "./model.js";
 import { schedText } from "./d4pml.js";
 
@@ -335,3 +336,12 @@ function flatPut(C, p, t) {
   if (p.GT) C.flat.set(base + "|GT", { nid, label: lbl + " · Text", val: p.GT });
 }
 
+
+/* ---------- Als Dateiformat anmelden ---------- */
+FORMATS.add({
+  id: "ddc3000", order: 10, icon: "list", label: "DDC3000",
+  desc: "*.wwf – Parameterliste der DDC3000-Zentrale (DDC3200 …) inkl. Kreisen, Logik und Wochenprogrammen.",
+  exts: ["wwf", "rtf", "txt"],
+  sniff: (name, head, text) => (/^\s*\{\\rtf/.test(head) && /(TYP=DDC3|NR=\d+\s*;\s*TYP=|\bAI\s+P=)/.test(text.slice(0, 20000))) || /^\s*Z\s+NR=\s*\d+\s*;\s*TYP=/m.test(head),
+  parse: (text, f) => parseDDC3000(text, f.label, f.name)
+});

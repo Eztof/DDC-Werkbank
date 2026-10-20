@@ -1,15 +1,14 @@
-import { go, openNode, openPin, setRenderer } from "../core/nav.js";
+import { go, setRenderer } from "../core/nav.js";
 import { emit } from "../core/events.js";
 import { APP, curC } from "../core/state.js";
-import { NAV, VIEWS } from "../core/views.js";
+import { FORMATS, SEARCH, VIEWS } from "../core/ext.js";
+import { safely } from "../core/registry.js";
 import { $, $$, SVGNS, h, natCmp, norm, store, trunc } from "../core/util.js";
-import { collectInputs, entriesFromDrop } from "../core/load.js";
-import { KIND_INFO, TYPE_NAMES, nodePlace } from "../model/model.js";
-import { parseD4PML } from "../model/d4pml.js";
-import { parseDDC3000 } from "../model/ddc3000.js";
-import { SEV_LABEL, runFindings } from "../model/findings.js";
+import { acceptAttr, collectInputs, entriesFromDrop } from "../core/load.js";
+import { KIND_INFO } from "../model/model.js";
+import { SEV_LABEL } from "../model/findings.js";
+import { prepareCentral, textHash } from "../model/pipeline.js";
 import { activeFindings, isIgnored, pref, refreshSev, setPref } from "../core/persist.js";
-import { WDOC, addTemplate } from "../wartung/wtgml.js";
 
 /* =========================================================================
    Oberfläche: Symbole, Zustand, Fenster-Gerüst, Navigation, Laden
@@ -101,7 +100,9 @@ export function toast(msg, kind, ms) {
   const t = h("div", { class: "toast " + (kind || "inf") }, icon(ic), h("div", null, msg));
   box.appendChild(t);
   setTimeout(() => { t.style.transition = "opacity .25s"; t.style.opacity = "0"; setTimeout(() => t.remove(), 300); }, ms || 3800);
+  return t;
 }
+export function setToastText(t, msg) { const d = t && t.lastChild; if (d) d.textContent = msg; }
 export function flyout(anchor, items) {
   closeFlyout();
   const f = h("div", { class: "flyout" });
@@ -196,7 +197,7 @@ export function buildShell() {
   app.appendChild(tb);
   app.appendChild(h("div", { class: "main" + (APP.collapsed ? " collapsed" : "") }, nav, content));
   document.body.appendChild(app);
-  document.body.appendChild(h("input", { type: "file", id: "fileIn", multiple: true, hidden: true, accept: ".xml,.d4pml,.wwf,.wtgml,.zip,.rtf,.txt" }));
+  document.body.appendChild(h("input", { type: "file", id: "fileIn", multiple: true, hidden: true, accept: acceptAttr() }));
   document.body.appendChild(h("input", { type: "file", id: "dirIn", multiple: true, hidden: true, webkitdirectory: true }));
   document.body.appendChild(h("div", { class: "drop-overlay" }, h("div", { class: "box" }, icon("upload"), "Loslassen zum Laden")));
   $("#fileIn").addEventListener("change", e => { loadFiles([...e.target.files]); e.target.value = ""; });
@@ -232,19 +233,14 @@ const hasFiles = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includ
 function renderNav() {
   const nav = $("#nav"); nav.innerHTML = "";
   const C = curC();
-  for (const it of NAV) {
-    if (it === "-") { nav.appendChild(h("div", { class: "nav-sep" })); continue; }
-    const [id, label, ico] = it;
-    const needs = id !== "start" && id !== "wartung" && id !== "compare" && id !== "online";
-    const b = h("button", { class: "nav-item" + (APP.view === id ? " on" : ""), disabled: needs && !C, title: label, onclick: () => go(id) },
-      icon(ico), h("span", { class: "lbl" }, label));
-    if (id === "findings" && C) {
-      const fc = findingsCount(C);
-      if (fc.err) b.appendChild(h("span", { class: "badge err", title: fc.err + " Fehler" }, fc.err));
-      if (fc.warn) b.appendChild(h("span", { class: "badge warn", title: fc.warn + " Warnungen" }, fc.warn));
-      if (fc.err) b.appendChild(h("span", { class: "dot" }));
-    }
-    if (id === "wartung" && WDOC.cur) b.appendChild(h("span", { class: "badge " + (WDOC.cur.dirty ? "warn" : "soft"), title: WDOC.cur.name + (WDOC.cur.dirty ? " – ungespeichert" : "") }, WDOC.cur.writable ? "verknüpft" : "WTGML"));
+  let lastGroup = null;
+  for (const V of VIEWS.list(v => v.nav !== false && v.label)) {
+    if (lastGroup !== null && V.group !== lastGroup) nav.appendChild(h("div", { class: "nav-sep" }));
+    lastGroup = V.group;
+    const b = h("button", { class: "nav-item" + (APP.view === V.id ? " on" : ""), "data-view": V.id, disabled: V.needsC && !C, title: V.label, onclick: () => go(V.id) },
+      icon(V.icon), h("span", { class: "lbl" }, V.label));
+    const badges = V.badge ? safely("Abzeichen " + V.id, () => V.badge(C), null) : null;
+    for (const x of badges || []) if (x) b.appendChild(x.dot ? h("span", { class: "dot" }) : h("span", { class: "badge " + (x.cls || "soft"), title: x.title || null }, x.n));
     nav.appendChild(b);
   }
   nav.appendChild(h("div", { class: "nav-foot" },
@@ -267,14 +263,14 @@ function renderTitle() {
 const SCROLL_SEL = ".page-body, .rail, .center, .grid-wrap, .drawer, .wd-main";
 export function renderAll() {
   renderTitle(); renderNav();
-  $(".main").classList.toggle("compact", APP.view === "program");
+  const V = VIEWS.get(APP.view) || VIEWS.get("start");
+  $(".main").classList.toggle("compact", !!V.compact);
   const content = $("#content");
   /* Scrollpositionen je Ansicht merken (auch beim Wechsel in eine andere Ansicht und zurück) */
   if (!APP._scroll) APP._scroll = {};
   if (APP._lastKey && $("#content")) APP._scroll[APP._lastKey] = $$(SCROLL_SEL, content).map(el => [el.scrollTop, el.scrollLeft]);
   const jump = Object.keys(APP.opts || {}).length > 0;
   content.innerHTML = ""; hideTip();
-  const V = VIEWS[APP.view] || VIEWS.start;
   const C = curC();
   if (V.needsC && !C) { APP.view = "start"; return renderAll(); }
   try { V.render(content, C, APP.opts || {}); }
@@ -283,17 +279,12 @@ export function renderAll() {
     content.appendChild(h("div", { class: "page-body" }, h("div", { class: "infobar err", style: { marginTop: "24px" } }, icon("error"),
       h("div", null, h("b", null, "Diese Ansicht konnte nicht aufgebaut werden. "), String(e && e.message || e)))));
   }
-  const key = viewKey();
+  const key = V.scrollKey ? safely("Scroll " + V.id, () => V.scrollKey(), V.id) : APP.view + "|" + (APP.cur || "");
   const pos = !jump && APP._scroll[key];
   if (pos) $$(SCROLL_SEL, content).forEach((el, i) => { if (pos[i] && !el.dataset.noRestore) { el.scrollTop = pos[i][0]; el.scrollLeft = pos[i][1]; } });
   APP._lastKey = key;
   APP._lastView = APP.view;
   APP.opts = {};
-}
-/* Schlüssel für die gemerkte Scrollposition: Ansicht + Zentrale bzw. Reiter der Wartungsdoku */
-function viewKey() {
-  if (APP.view === "wartung") return "wartung|" + (APP.wdTab || "") + "|" + (WDOC.cur ? WDOC.cur.name : "");
-  return APP.view + "|" + (APP.cur || "");
 }
 export function pageHead(title, sub, acts) {
   return h("div", { class: "page-head" },
@@ -319,25 +310,23 @@ export function stationSub(C) {
 
 /* ---------- Laden ---------- */
 let LOADING = false;
+const tick = () => new Promise(r => setTimeout(r, 0));
 async function loadFiles(files, handles) {
   if (!files || !files.length || LOADING) return;
   LOADING = true;
-  toast("Lese " + files.length + " Datei(en) …", "inf", 1500);
+  const note = toast("Lese " + files.length + " Datei(en) …", "inf", 60000);
   try {
     const found = await collectInputs(files);
-    if (!found.length) { toast("Keine Sicherung und keine WTGML-Vorlage erkannt. Erwartet: datasave.xml, *.d4pml, *.wwf, *.wtgml oder ZIP/Ordner damit.", "warn", 7000); return; }
-    const added = [], bad = [];
-    let tplAdded = 0;
-    for (const f of found) {
+    if (!found.length) { toast("Nichts Lesbares erkannt. Erwartet: " + FORMATS.list().map(F => F.label).join(", ") + " – als Datei, ZIP oder Ordner.", "warn", 7000); return; }
+    const added = [], bad = [], opened = [];
+    for (const [i, f] of found.entries()) {
+      if (found.length > 1) { setToastText(note, "Lese " + (i + 1) + " von " + found.length + ": " + f.name); await tick(); }
       try {
-        if (f.kind === "wtgml") { if (addTemplate(f.text, f.name, handles && handles.get(f.name))) tplAdded++; continue; }
-        const C = f.kind === "ddc3000" ? parseDDC3000(f.text, f.label, f.name) : parseD4PML(f.text, f.label, f.name);
-        C.filePath = f.path;
-        C.hash = textHash(f.text);
-        runFindings(C);
+        if (f.fmt.open) { const r = f.fmt.open(f.text, f, handles && handles.get(f.name)); if (r) opened.push(r); continue; }
+        const hash = textHash(f.text);
+        if (APP.centrals.some(x => x.hash === hash)) { bad.push(f.name + ": bereits geladen"); continue; }
+        const C = prepareCentral(f.fmt.parse(f.text, f), f, hash);
         refreshSev(C);
-        const dupe = APP.centrals.find(x => x.hash === C.hash);
-        if (dupe) { bad.push(f.name + ": bereits geladen"); continue; }
         APP.centrals.push(C); added.push(C);
       } catch (e) { console.error(e); bad.push(f.name + ": " + e.message); }
     }
@@ -349,11 +338,11 @@ async function loadFiles(files, handles) {
       if (APP.view === "start") APP.view = "overview";
       emit("zentralen", { centrals: APP.centrals });
     }
-    if (tplAdded) { toast("Wartungsdoku geöffnet: " + WDOC.cur.name + (WDOC.cur.handle ? " – zum direkten Speichern im Tab „Wartungsdoku“ verknüpfen." : ""), "ok", 6000); APP.wdTab = "doc"; if (!added.length) APP.view = "wartung"; }
+    for (const r of opened) { if (r.msg) toast(r.msg, "ok", 6000); if (r.view && !added.length) APP.view = r.view; }
     if (bad.length) toast(bad.join(" · "), "warn", 8000);
     renderAll();
   } catch (e) { console.error(e); toast("Fehler beim Laden: " + e.message, "err", 8000); }
-  finally { LOADING = false; }
+  finally { LOADING = false; note.remove(); }
 }
 export function removeCentral(cid) {
   APP.centrals = APP.centrals.filter(c => c.cid !== cid);
@@ -364,15 +353,14 @@ export function removeCentral(cid) {
   renderAll();
 }
 
-function textHash(t) { let h1 = 0x811c9dc5; for (let i = 0; i < t.length; i++) { h1 ^= t.charCodeAt(i); h1 = Math.imul(h1, 16777619); } return t.length + ":" + (h1 >>> 0).toString(16); }
 
-/* ---------- Globale Suche (Strg+K) – aktuelle Zentrale oder alle ---------- */
-function searchIndex(C) {
-  if (C._sidx) return C._sidx;
-  return (C._sidx = {
-    pins: C.pins.map(p => [p, norm(p.klemme + " " + p.name + " " + p.paraText)]),
-    nodes: [...C.nodes.values()].filter(n => !n.isPin && n.type !== "SYS").map(n => [n, norm(n.addr + " " + n.name + " " + n.type + " " + (TYPE_NAMES[n.type] || "") + " " + (n.formula || "") + " " + nodePlace(C, n))])
-  });
+/* ---------- Globale Suche (Strg+K) – aktuelle Zentrale oder alle ----------
+   Was gefunden wird, bestimmen die Einträge in SEARCH (core/ext.js). */
+function searchIndex(C, P) {
+  if (!C._sidx) C._sidx = new Map();
+  let X = C._sidx.get(P.id);
+  if (!X) { X = safely("Suchindex " + P.id, () => P.index(C), []) || []; C._sidx.set(P.id, X); }
+  return X;
 }
 function globalSearch() {
   const inp = h("input", { type: "search", placeholder: "Klemme, Baustein, Text suchen …" });
@@ -396,13 +384,13 @@ function globalSearch() {
     let more = 0, hitSt = 0;
     for (const C of cs) {
       const pre = many ? C.meta.name + " · " : "";
-      const X = searchIndex(C);
-      const G = { Klemmen: [], Programm: [], Befunde: [] };
-      for (const [p, hay] of X.pins) if (hay.includes(q)) G.Klemmen.push({ a: p.klemme, n: p.name || p.paraText || "–", w: p.kind, go: () => openPin(C.cid, p.uid) });
-      for (const [n, hay] of X.nodes) if (hay.includes(q)) G.Programm.push({ a: n.addr, n: (n.name || TYPE_NAMES[n.type] || n.type), w: nodePlace(C, n), go: () => openNode(C.cid, n.id) });
-      for (const f of C.findings) if (norm(f.title + " " + f.detail).includes(q)) G.Befunde.push({ a: SEV_LABEL[f.sev], n: f.title, w: f.cat + (isIgnored(C, f) ? " · abgehakt" : ""), go: () => { APP.cur = C.cid; go("findings", { focus: f.id }); } });
       let cut = 0, tot = 0;
-      for (const [g, list] of Object.entries(G)) { tot += list.length; for (const r of list.slice(0, cap)) res.push(Object.assign(r, { g: pre + g })); cut += Math.max(0, list.length - cap); }
+      for (const P of SEARCH.list()) {
+        const hits = [];
+        for (const [it, hay] of searchIndex(C, P)) if (hay.includes(q)) hits.push(it);
+        tot += hits.length; cut += Math.max(0, hits.length - cap);
+        for (const it of hits.slice(0, cap)) { const r = safely("Suche " + P.id, () => P.hit(C, it), null); if (r) res.push(Object.assign(r, { g: pre + P.label })); }
+      }
       if (tot) hitSt++;
       if (cut && many) res.push({ g: pre + "mehr", more: true, a: "", n: "Alle " + tot + " Treffer in " + C.meta.name + " zeigen", w: "", go: () => { APP._searchQ = inp.value; scope = "cur"; setPref("searchScope", "cur"); APP.cur = C.cid; if (APP.view === "start") APP.view = "overview"; renderAll(); } });
       else more += cut;

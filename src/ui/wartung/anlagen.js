@@ -1,5 +1,5 @@
 import { natCmp, norm } from "../core/util.js";
-import { edgesIn, edgesOut } from "../model/model.js";
+import { edgesIn, edgesOut, pinOf } from "../model/model.js";
 import { groupIsSystem } from "../views/program.js";
 import { applyGroups, autoGroup, dominantPrefix } from "./generator.js";
 
@@ -151,7 +151,7 @@ export function regroupPlants(W, C, splitAt) {
   for (const p of W.pins) {
     p.plant = p.plantName = p.pgroup = p.pgroupName = null; p.how = "";
     if (!p.include) continue;
-    const cp = C.pins.find(x => x.uid === p.uid);
+    const cp = pinOf(C, p.uid);
     const a = cp ? assignPlant(C, cp) : { plant: null };
     if (a.shared || (a.plant && a.plant.collector && C.format === "DDC3000") || (!a.plant && ALLG_RE.test(deUml(p.name)))) { allg.push(p); continue; }
     if (!a.plant || (a.plant.generic && C.format === "DDC3000") || a.plant.collector && a.how !== "Programm") { rest.push(p); continue; }

@@ -1,6 +1,6 @@
 import { openNode } from "../core/nav.js";
 import { APP, byCid } from "../core/state.js";
-import { VIEWS } from "../core/views.js";
+import { VIEWS } from "../core/ext.js";
 import { $, csv, download, h, natCmp, norm, safeName, trunc } from "../core/util.js";
 import { nodePlace } from "../model/model.js";
 import { btn, chk, emptyState, icon, pageHead, renderAll, searchBox, selectEl, stationLabel } from "../shell/shell.js";
@@ -31,7 +31,8 @@ function diffCentrals(A, B) {
   return rows;
 }
 
-VIEWS.compare = {
+VIEWS.add({
+  id: "compare", label: "Vergleich", icon: "compare", group: 2, order: 220,
   render(root) {
     const S = APP.cmp;
     if (!S.show) Object.assign(S, { show: new Set(["chg", "onlyA", "onlyB"]), q: "", noText: false });
@@ -102,5 +103,5 @@ VIEWS.compare = {
     }
     draw();
   }
-};
+});
 

@@ -1,4 +1,5 @@
 import { go } from "../core/nav.js";
+import { FORMATS } from "../core/ext.js";
 import { APP } from "../core/state.js";
 import { $, download, h, natCmp, nowStamp, store } from "../core/util.js";
 import { decodeBytes } from "../core/load.js";
@@ -289,3 +290,16 @@ export function wdocInsertIsp(D, bteEl, ispText, replaceSameName) {
   return isp;
 }
 
+
+/* ---------- Als Dateiformat anmelden ---------- */
+FORMATS.add({
+  id: "wtgml", order: 30, icon: "doc", label: "Wartungsdoku-Vorlage",
+  desc: "*.wtgml – Wartungsdokumentation aus dem Wartungsprogramm, leer oder ausgefüllt. Wird verknüpft und direkt bearbeitet.",
+  exts: ["wtgml", "xml"],
+  sniff: (name, head) => /<([\w-]+:)?Maintenance[\s>]/.test(head) || name.toLowerCase().endsWith(".wtgml"),
+  open(text, f, handle) {
+    if (!addTemplate(text, f.name, handle)) return null;
+    APP.wdTab = "doc";
+    return { view: "wartung", msg: "Wartungsdoku geöffnet: " + WDOC.cur.name + (WDOC.cur.handle ? " – zum direkten Speichern im Tab „Wartungsdoku“ verknüpfen." : "") };
+  }
+});

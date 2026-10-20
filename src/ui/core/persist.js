@@ -1,7 +1,7 @@
 import { openNode, openPin } from "./nav.js";
 import { APP } from "./state.js";
 import { $, h, store } from "./util.js";
-import { TYPE_NAMES, nodePlace } from "../model/model.js";
+import { TYPE_NAMES, nodePlace, pinOf } from "../model/model.js";
 import { SEV } from "../model/findings.js";
 import { icon, kindTag, renderAll, selectEl } from "../shell/shell.js";
 import { lkAks, lkCanon, lkInvalidate } from "../wartung/link.js";
@@ -127,7 +127,7 @@ export function refreshSev(C) {
 /* Worauf zeigt ein Befund? Klemme, Baustein oder mehrere */
 export function findingWhere(C, f) {
   const r = f.ref; if (!r) return null;
-  let p = r.pin ? C.pins.find(x => x.uid === r.pin) : null;
+  let p = r.pin ? pinOf(C, r.pin) : null;
   const n = r.node ? C.nodes.get(r.node) : null;
   if (!p && n && n.pin) p = n.pin;
   if (p) return { pin: p };

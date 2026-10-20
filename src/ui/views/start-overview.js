@@ -1,6 +1,7 @@
 import { go } from "../core/nav.js";
 import { APP } from "../core/state.js";
-import { VIEWS } from "../core/views.js";
+import { FORMATS, OVERVIEW_TILES, VIEWS } from "../core/ext.js";
+import { safely } from "../core/registry.js";
 import { $, copyText, h, trunc } from "../core/util.js";
 import { btn, findingsCount, icon, kbar, logoSvg, pageHead, removeCentral, stationSub, toast } from "../shell/shell.js";
 import { activeFindings } from "../core/persist.js";
@@ -11,7 +12,8 @@ import { wIsps } from "../wartung/view.js";
 /* =========================================================================
    Ansicht: Start
    ========================================================================= */
-VIEWS.start = {
+VIEWS.add({
+  id: "start", label: "Start", icon: "home", group: 0, order: 0,
   render(root) {
     root.appendChild(pageHead("Start", "Sicherungen öffnen und verwalten"));
     const body = h("div", { class: "page-body" });
@@ -69,20 +71,18 @@ VIEWS.start = {
     body.appendChild(h("div", { class: "section-title" }, "Was kann geöffnet werden?"));
     const f = h("div", { class: "cards" });
     const fmt = (ico, t, d) => h("div", { class: "card fmt" }, h("div", { class: "ic" }, icon(ico)), h("div", null, h("b", null, t), h("span", null, d)));
-    f.appendChild(fmt("station", "DDC4000-Familie", "datasave.xml aus der Datensicherung (DDC4200, DDC4200e, DDC4400 …), auch im ZIP oder Sicherungsordner."));
-    f.appendChild(fmt("cpu", "BMR / DDC420", "param_backup.d4pml – Parametersicherung der BMR-Raumautomation."));
-    f.appendChild(fmt("list", "DDC3000", "*.wwf – Parameterliste der DDC3000-Zentrale (DDC3200 …) inkl. Kreisen, Logik und Wochenprogrammen."));
-    f.appendChild(fmt("doc", "Wartungsdoku-Vorlage", "*.wtgml – Wartungsdokumentation aus dem Wartungsprogramm, leer oder ausgefüllt. Wird verknüpft und direkt bearbeitet."));
+    for (const F of FORMATS.list(F => F.label)) f.appendChild(fmt(F.icon || "file", F.label, F.desc || (F.exts || []).map(e => "*." + e).join(", ")));
     body.appendChild(f);
     body.appendChild(h("div", { class: "infobar inf", style: { marginTop: "16px" } }, icon("lock"),
       h("div", null, h("b", null, "Alles bleibt auf diesem Rechner. "), "Die Dateien werden nur im Browser gelesen. Es gibt keine Verbindung ins Internet und nichts wird gespeichert – außer dem gewählten Farbschema.")));
   }
-};
+});
 
 /* =========================================================================
    Ansicht: Übersicht
    ========================================================================= */
-VIEWS.overview = {
+VIEWS.add({
+  id: "overview", label: "Übersicht", icon: "overview", group: 1, order: 110,
   needsC: true,
   render(root, C) {
     const m = C.meta;
@@ -92,23 +92,10 @@ VIEWS.overview = {
     const body = h("div", { class: "page-body" });
     root.appendChild(body);
 
-    const kinds = {}; C.pins.forEach(p => kinds[p.kind] = (kinds[p.kind] || 0) + 1);
-    const used = C.pins.length - (kinds.frei || 0);
-    const fc = findingsCount(C);
-    const prog = [...C.nodes.values()].filter(n => !n.ghost && !n.isPin && !String(n.type).startsWith("SY_") && n.type !== "SYS");
-    const act = C.messages.filter(x => x.active).length;
-    const tile = (ico, t, v, small, d, onclick) => h("div", { class: "tile" + (onclick ? " click" : ""), onclick },
-      h("div", { class: "t" }, icon(ico), t), h("div", { class: "v" }, v, small ? h("small", null, small) : null), d ? (typeof d === "string" ? h("div", { class: "d" }, d) : d) : null);
-    body.appendChild(h("div", { class: "tiles" },
-      tile("pin", "Klemmen belegt", used, "/ " + C.pins.length, h("div", { class: "stack", style: { gap: "6px", marginTop: "4px" } }, kbar(kinds),
-        h("div", { class: "legend" }, ["AE", "AA", "BE", "BA"].filter(k => kinds[k]).map(k => h("span", null, h("i", { style: { background: `var(--k-${k})` } }), k + " " + kinds[k])))), () => go("points")),
-      tile("flow", "Programmbausteine", prog.length, null, C.edges.length + " Verknüpfungen · " + C.groups.size + " Gruppen", () => go("program")),
-      tile("alert", "Befunde", fc.err + fc.warn, null, h("div", { class: "row", style: { gap: "6px" } },
-        fc.err ? h("span", { class: "pill err" }, fc.err + " Fehler") : null, fc.warn ? h("span", { class: "pill warn" }, fc.warn + " Warnungen") : null,
-        h("span", { class: "pill inf" }, fc.info + " Hinweise")), () => go("findings")),
-      tile("clock", "Zeitprogramme", C.schedules.length, null, C.calendars.length ? C.calendars.length + " Kalender" : (C.format === "DDC3000" ? "Wochenprogramme N" : "keine Kalender"), () => go("sched", { tab: "sched" })),
-      tile("bell", "Meldungen", act, C.messages.length ? "aktiv / " + C.messages.length : null, C.messages.length ? "im Meldungsspeicher" : C.alarms.length + " Meldeobjekte", () => go("sched", { tab: C.messages.length ? "msg" : "alarm" })),
-      C.format !== "DDC3000" ? tile("bacnet", "BACnet-Objekte", C.bacnet.length, null, "Device " + (m.bacnetDevId || "–") + (C.trends.length ? " · " + C.trends.length + " Trends" : ""), () => go("sched", { tab: "bac" })) : null));
+    const tile = T => h("div", { class: "tile" + (T.onclick ? " click" : ""), onclick: T.onclick || null },
+      h("div", { class: "t" }, icon(T.icon || "info"), T.title), h("div", { class: "v" }, T.value, T.small ? h("small", null, T.small) : null),
+      T.detail ? (typeof T.detail === "string" ? h("div", { class: "d" }, T.detail) : T.detail) : null);
+    body.appendChild(h("div", { class: "tiles" }, OVERVIEW_TILES.list().map(X => { const T = safely("Kachel " + X.id, () => X.tile(C, go), null); return T ? tile(T) : null; })));
 
     /* Wichtigste Befunde */
     const top = activeFindings(C).filter(f => f.sev !== "info").slice(0, 6);
@@ -166,7 +153,7 @@ VIEWS.overview = {
     body.appendChild(cards);
     if (C.notes.length) body.appendChild(h("div", { class: "infobar warn", style: { marginTop: "16px" } }, icon("alert"), h("div", null, h("b", null, "Hinweise beim Einlesen: "), C.notes.slice(0, 8).join(" · "))));
   }
-};
+});
 
 function stationProfileText(C) {
   const m = C.meta, L = [];
@@ -185,3 +172,30 @@ function stationProfileText(C) {
   return L.join("\r\n");
 }
 
+
+/* ---------- Kacheln der Übersicht ---------- */
+const pinKinds = C => { const k = {}; C.pins.forEach(p => k[p.kind] = (k[p.kind] || 0) + 1); return k; };
+OVERVIEW_TILES.add({ id: "klemmen", order: 10, tile(C, go) {
+  const kinds = pinKinds(C);
+  return { icon: "pin", title: "Klemmen belegt", value: C.pins.length - (kinds.frei || 0), small: "/ " + C.pins.length, onclick: () => go("points"),
+    detail: h("div", { class: "stack", style: { gap: "6px", marginTop: "4px" } }, kbar(kinds),
+      h("div", { class: "legend" }, ["AE", "AA", "BE", "BA"].filter(k => kinds[k]).map(k => h("span", null, h("i", { style: { background: `var(--k-${k})` } }), k + " " + kinds[k])))) };
+} });
+OVERVIEW_TILES.add({ id: "programm", order: 20, tile(C, go) {
+  let n = 0; for (const x of C.nodes.values()) if (!x.ghost && !x.isPin && !String(x.type).startsWith("SY_") && x.type !== "SYS") n++;
+  return { icon: "flow", title: "Programmbausteine", value: n, detail: C.edges.length + " Verknüpfungen · " + C.groups.size + " Gruppen", onclick: () => go("program") };
+} });
+OVERVIEW_TILES.add({ id: "befunde", order: 30, tile(C, go) {
+  const fc = findingsCount(C);
+  return { icon: "alert", title: "Befunde", value: fc.err + fc.warn, onclick: () => go("findings"),
+    detail: h("div", { class: "row", style: { gap: "6px" } }, fc.err ? h("span", { class: "pill err" }, fc.err + " Fehler") : null, fc.warn ? h("span", { class: "pill warn" }, fc.warn + " Warnungen") : null, h("span", { class: "pill inf" }, fc.info + " Hinweise")) };
+} });
+OVERVIEW_TILES.add({ id: "zeit", order: 40, tile: (C, go) => ({ icon: "clock", title: "Zeitprogramme", value: C.schedules.length,
+  detail: C.calendars.length ? C.calendars.length + " Kalender" : (C.format === "DDC3000" ? "Wochenprogramme N" : "keine Kalender"), onclick: () => go("sched", { tab: "sched" }) }) });
+OVERVIEW_TILES.add({ id: "meldungen", order: 50, tile(C, go) {
+  const act = C.messages.filter(x => x.active).length;
+  return { icon: "bell", title: "Meldungen", value: act, small: C.messages.length ? "aktiv / " + C.messages.length : null,
+    detail: C.messages.length ? "im Meldungsspeicher" : C.alarms.length + " Meldeobjekte", onclick: () => go("sched", { tab: C.messages.length ? "msg" : "alarm" }) };
+} });
+OVERVIEW_TILES.add({ id: "bacnet", order: 60, tile: (C, go) => C.format === "DDC3000" ? null : ({ icon: "bacnet", title: "BACnet-Objekte", value: C.bacnet.length,
+  detail: "Device " + (C.meta.bacnetDevId || "–") + (C.trends.length ? " · " + C.trends.length + " Trends" : ""), onclick: () => go("sched", { tab: "bac" }) }) });

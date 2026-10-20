@@ -171,6 +171,13 @@ export function indexEdges(C) {
     if (!C.outMap.has(e.from)) C.outMap.set(e.from, []); C.outMap.get(e.from).push(e);
   });
 }
+/* Klemme über ihre uid finden (Verzeichnis wird beim ersten Zugriff aufgebaut) */
+export function pinOf(C, uid) {
+  if (!C || uid == null) return null;
+  let ix = C._pinIdx;
+  if (!ix || ix.n !== C.pins.length) { ix = C._pinIdx = { n: C.pins.length, m: new Map(C.pins.map(p => [p.uid, p])) }; }
+  return ix.m.get(uid) || null;
+}
 export const edgesIn = (C, id) => C.inMap.get(id) || [];
 export const edgesOut = (C, id) => C.outMap.get(id) || [];
 function groupOf(C, n) { return C.groups.get(n.gKey) || {}; }

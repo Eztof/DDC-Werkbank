@@ -1,6 +1,6 @@
-import { go, openPin } from "../core/nav.js";
+import { go, openNode, openPin } from "../core/nav.js";
 import { curC, vstate } from "../core/state.js";
-import { VIEWS } from "../core/views.js";
+import { SEARCH, VIEWS } from "../core/ext.js";
 import { copyText, esc, h, natCmp, norm, s, trunc, uniq } from "../core/util.js";
 import { FB_TYPES, FUNC_NAMES, KIND_INFO, TYPE_NAMES, describeTransform, dictFor, edgeLabel, edgesIn, edgesOut, isInvertedEdge, isOutputKind, nodePlace, nodeTitle, pe, portLabel, pv, roleFromText, roleOf, stateTextsOf, valText } from "../model/model.js";
 import { foVal, paraOf, schedText } from "../model/d4pml.js";
@@ -51,8 +51,10 @@ function defaultVis(C) {
   return new Set(real.length ? real[0].groups.map(g => g.key) : []);
 }
 
-VIEWS.program = {
+VIEWS.add({
+  id: "program", label: "Programm & Wirkkette", icon: "flow", group: 1, order: 130,
   needsC: true,
+  compact: true,
   render(root, C, opts) {
     const S = vstate("program", C, () => ({ vis: defaultVis(C), sel: null, mode: "plan", chain: null, view: null, cview: null, labels: false, orphans: false, withPins: true,
       open: new Set(programTree(C).filter(p => p.kind === 2).slice(0, 3).map(p => p.key)), tab: "detail", allRows: false, pos: new Map(), q: "" }));
@@ -604,7 +606,7 @@ VIEWS.program = {
       else fit();
     });
   }
-};
+});
 
 const ROLE_MARK = { release: "▷", block: "⛔", hand: "✋", in: "◂", setpoint: "◎", threshold: "⊣", formula: "ƒ", param: "·", out: "▸", time: "⏱", info: "i" };
 function maxSev(list) { let m = null; for (const x of list) if (x && (!m || SEV[x] > SEV[m])) m = x; return m; }
@@ -825,3 +827,10 @@ function nodeText(C, n) {
   return L.join("\r\n");
 }
 
+
+/* ---------- Globale Suche: Programmbausteine ---------- */
+SEARCH.add({
+  id: "programm", label: "Programm", order: 20,
+  index: C => [...C.nodes.values()].filter(n => !n.isPin && n.type !== "SYS").map(n => [n, norm(n.addr + " " + n.name + " " + n.type + " " + (TYPE_NAMES[n.type] || "") + " " + (n.formula || "") + " " + nodePlace(C, n))]),
+  hit: (C, n) => ({ a: n.addr, n: n.name || TYPE_NAMES[n.type] || n.type, w: nodePlace(C, n), go: () => openNode(C.cid, n.id) })
+});

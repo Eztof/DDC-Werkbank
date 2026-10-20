@@ -1,6 +1,6 @@
 import { go, openNode, openPin, openRef } from "../core/nav.js";
 import { APP, vstate } from "../core/state.js";
-import { VIEWS } from "../core/views.js";
+import { SEARCH, VIEWS } from "../core/ext.js";
 import { $, copyText, csv, download, fmtNum, h, natCmp, norm, nowStamp, safeName, trunc, uniq } from "../core/util.js";
 import { nodePlace, valText } from "../model/model.js";
 import { WD } from "../model/d4pml.js";
@@ -27,8 +27,14 @@ export function findingRow(C, f, compact) {
     h("div", { class: "go" }, ignButton(C, [f]), f.ref && !multi ? btn("Anzeigen", "jump", () => openRef(C, f.ref), "sm") : null));
 }
 
-VIEWS.findings = {
+VIEWS.add({
+  id: "findings", label: "Befunde", icon: "alert", group: 1, order: 140,
   needsC: true,
+  badge(C) {
+    if (!C) return null;
+    const fc = findingsCount(C);
+    return [fc.err && { n: fc.err, cls: "err", title: fc.err + " Fehler" }, fc.warn && { n: fc.warn, cls: "warn", title: fc.warn + " Warnungen" }, fc.err && { dot: true }];
+  },
   render(root, C, opts) {
     const S = vstate("findings", C, () => ({ sev: new Set(["err", "warn", "info"]), cat: "", q: "", open: null }));
     const fc = findingsCount(C);
@@ -97,7 +103,7 @@ VIEWS.findings = {
     }
     draw();
   }
-};
+});
 function findingsText(C, list) {
   const L = ["Befundbericht · " + C.meta.name, stationSub(C), "Erstellt " + nowStamp() + " mit der DDC-Werkbank", ""];
   let cat = null;
@@ -146,7 +152,8 @@ export function weekGrid(days, names, def) {
   return g;
 }
 
-VIEWS.sched = {
+VIEWS.add({
+  id: "sched", label: "Zeit & Meldungen", icon: "clock", group: 1, order: 150,
   needsC: true,
   render(root, C, opts) {
     const S = vstate("sched", C, () => ({ tab: C.schedules.length ? "sched" : "alarm", q: "", bsort: "inst" }));
@@ -239,7 +246,7 @@ VIEWS.sched = {
     };
     (T[S.tab] || T.sched)();
   }
-};
+});
 function table(heads, rows) {
   const t = h("table", { class: "grid card-t" });
   t.appendChild(h("thead", null, h("tr", null, heads.map(x => h("th", null, x)))));
@@ -250,3 +257,10 @@ function table(heads, rows) {
   return t;
 }
 
+
+/* ---------- Globale Suche: Befunde ---------- */
+SEARCH.add({
+  id: "befunde", label: "Befunde", order: 30,
+  index: C => C.findings.map(f => [f, norm(f.title + " " + f.detail)]),
+  hit: (C, f) => ({ a: SEV_LABEL[f.sev], n: f.title, w: f.cat + (isIgnored(C, f) ? " · abgehakt" : ""), go: () => { APP.cur = C.cid; go("findings", { focus: f.id }); } })
+});

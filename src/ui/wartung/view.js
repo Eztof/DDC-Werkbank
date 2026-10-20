@@ -1,9 +1,9 @@
 import { go } from "../core/nav.js";
 import { APP, byCid } from "../core/state.js";
-import { VIEWS } from "../core/views.js";
+import { VIEWS } from "../core/ext.js";
 import { $, $$, download, h, natCmp, norm, trunc, uniq } from "../core/util.js";
 import { decodeBytes } from "../core/load.js";
-import { edgesIn, edgesOut, isOutputKind } from "../model/model.js";
+import { edgesIn, edgesOut, isOutputKind, pinOf } from "../model/model.js";
 import { SEV_LABEL } from "../model/findings.js";
 import { btn, chk, emptyState, findingsCount, flyout, icon, kindTag, pageHead, renderAll, searchBox, selectEl, sevIcon, stationLabel, toast } from "../shell/shell.js";
 import { findingWhere, ignButton, ignFilterEl, ignPass, isIgnored, persistWhere, pref, setIgnored, setPref, whereLine } from "../core/persist.js";
@@ -75,7 +75,10 @@ function facZustandVorschlag(fac) {
   return "Anlage geprüft." + (lines.length ? "\n" + uniq(lines).join("\n") : " Funktion in Ordnung.");
 }
 
-VIEWS.wartung = {
+VIEWS.add({
+  id: "wartung", label: "Wartungsdoku", icon: "doc", group: 2, order: 210,
+  badge: () => WDOC.cur ? [{ n: WDOC.cur.writable ? "verknüpft" : "WTGML", cls: WDOC.cur.dirty ? "warn" : "soft", title: WDOC.cur.name + (WDOC.cur.dirty ? " – ungespeichert" : "") }] : null,
+  scrollKey: () => "wartung|" + (APP.wdTab || "") + "|" + (WDOC.cur ? WDOC.cur.name : ""),
   render(root, C0, opts) {
     const D = WDOC.cur;
     if (opts.tab) APP.wdTab = opts.tab;
@@ -111,7 +114,7 @@ VIEWS.wartung = {
     if (APP.wdTab === "mangel") return D ? wdMangelTab(body, D) : wdNoDoc(body);
     return wdGenTab(body, D);
   }
-};
+});
 
 function wdNoDoc(body) {
   body.appendChild(h("div", { class: "card", style: { maxWidth: "860px" } },
@@ -572,7 +575,7 @@ function wdGenTab(body, D) {
     d.addEventListener("dragleave", () => d.classList.remove("dragover"));
     d.addEventListener("drop", e => {
       e.preventDefault(); e.stopPropagation(); d.classList.remove("dragover");
-      const p = W.pins.find(x => x.uid === e.dataTransfer.getData("text/x-ddcwb-pin"));
+      const p = pinOf(W, e.dataTransfer.getData("text/x-ddcwb-pin"));
       if (p) { p.gid = g.gid; renderAll(); }
     });
     const rows = W.opt.sortKind ? pins : all.filter(p => p.include || p.kind !== "frei");
@@ -631,7 +634,7 @@ function autoTarget(C, f, isp) {
   const W = wdModel(C);
   const job = (a, re) => wkids(a, "job").find(j => re.test(wtxt(j, "jobDescription"))) || wkids(a, "job").find(j => /Funktion prüfen/.test(wtxt(j, "jobDescription"))) || wkids(a, "job")[0];
   const facByPlant = name => wkids(isp, "facility").find(x => norm(wtxt(x, "facBezeichnung")) === norm(name));
-  let pin = f.ref && f.ref.pin ? C.pins.find(p => p.uid === f.ref.pin) : null;
+  let pin = f.ref && f.ref.pin ? pinOf(C, f.ref.pin) : null;
   const node = f.ref && f.ref.node ? C.nodes.get(f.ref.node) : null;
   if (!pin && node && node.pin) pin = node.pin;
   const multi = f.ref && f.ref.nodes && f.ref.nodes.length > 1;

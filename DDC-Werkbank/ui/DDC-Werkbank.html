@@ -813,6 +813,64 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   };
   var unitLabel = (u) => u == null || u === "" ? "" : Object.prototype.hasOwnProperty.call(UNITS, u) ? UNITS[u] : "[" + u + "]";
 
+  // src/ui/core/registry.js
+  function registry(name) {
+    const items = /* @__PURE__ */ new Map();
+    let seq = 0, sorted = null;
+    const R = {
+      name,
+      /* Eintragen; gleiche id ersetzt den alten Eintrag (z. B. zum Überschreiben eines eingebauten) */
+      add(def) {
+        if (!def || typeof def !== "object" || !def.id) throw new Error(name + ": Eintrag ohne id");
+        const old = items.get(def.id);
+        items.set(def.id, Object.assign({ order: 100 }, def, { _seq: old ? old._seq : seq++ }));
+        sorted = null;
+        R.ver++;
+        return items.get(def.id);
+      },
+      remove(id) {
+        if (items.delete(id)) {
+          sorted = null;
+          R.ver++;
+        }
+      },
+      get: (id) => items.get(id) || null,
+      has: (id) => items.has(id),
+      /* alle Einträge in Reihenfolge, optional gefiltert */
+      list(pred) {
+        if (!sorted) sorted = [...items.values()].sort((a, b) => a.order - b.order || a._seq - b._seq);
+        return pred ? sorted.filter(pred) : sorted;
+      },
+      get size() {
+        return items.size;
+      },
+      ver: 1
+    };
+    return R;
+  }
+  function safely(what, fn, fallback) {
+    try {
+      return fn();
+    } catch (e) {
+      console.error(what + ":", e);
+      return fallback;
+    }
+  }
+
+  // src/ui/core/ext.js
+  var FORMATS = registry("Dateiformate");
+  var ANALYSES = registry("Auswertungen");
+  var CHECKS = registry("Prüfungen");
+  var VIEWS = registry("Ansichten");
+  var OVERVIEW_TILES = registry("Übersicht-Kacheln");
+  var SEARCH = registry("Suche");
+  var PIN_COLUMNS = registry("Datenpunkte-Spalten");
+  var PIN_FILTERS = registry("Datenpunkte-Filter");
+  var PIN_SECTIONS = registry("Datenpunkte-Abschnitte");
+  var PIN_ACTIONS = registry("Datenpunkte-Knöpfe");
+  var WD_TABS = registry("Wartungsdoku-Reiter");
+  var LIVE_SOURCES = registry("Live-Quellen");
+
   // src/ui/core/load.js
   async function readZip(buf) {
     const dv = new DataView(buf), u8 = new Uint8Array(buf), out = {};
@@ -886,29 +944,37 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       return new TextDecoder("windows-1252").decode(u8);
     }
   }
-  function sniffKind(name, text) {
-    const n = name.toLowerCase();
+  function sniffFormat(name, text) {
     const head = text.slice(0, 4e3);
-    if (/^\s*\{\\rtf/.test(head) && /(TYP=DDC3|NR=\d+\s*;\s*TYP=|\bAI\s+P=)/.test(text.slice(0, 2e4))) return "ddc3000";
-    if (/^\s*Z\s+NR=\s*\d+\s*;\s*TYP=/m.test(head)) return "ddc3000";
-    if (/<D4PML[\s>]/.test(head)) return "d4pml";
-    if (/<([\w-]+:)?Maintenance[\s>]/.test(head) || n.endsWith(".wtgml")) return "wtgml";
+    for (const F of FORMATS.list()) if (F.sniff && safely("Format " + F.id, () => F.sniff(name, head, text), false)) return F;
     return null;
   }
-  var WANT_EXT = /\.(xml|d4pml|wwf|wtgml|rtf|txt|dat)$/i;
   var SKIP_ZIP = /^(pidata|security|lonconf|trend|graphic)/i;
+  var EXT_VER = 0;
+  var EXT_RE = null;
+  function wantedExts() {
+    return [...new Set(FORMATS.list().flatMap((F) => F.exts || []))];
+  }
+  function wantExt() {
+    if (EXT_VER !== FORMATS.ver) {
+      EXT_VER = FORMATS.ver;
+      EXT_RE = new RegExp("\\.(" + wantedExts().map((e) => e.replace(/[^\w]/g, "")).join("|") + ")$", "i");
+    }
+    return EXT_RE;
+  }
+  var acceptAttr = () => wantedExts().map((e) => "." + e).concat(".zip").join(",");
   function labelOf(path) {
     const parts = path.split("/").filter(Boolean);
     const file = parts.pop() || path;
     for (let i = parts.length - 1; i >= 0; i--) if (!/^\d{4}-\d{2}-\d{2}/.test(parts[i])) return parts[i];
     if (parts.length) return parts[parts.length - 1];
-    return file.replace(/\.(xml|d4pml|wwf|rtf|txt)$/i, "");
+    return file.replace(/\.[^.]+$/, "");
   }
   async function collectInputs(files) {
     const found = [];
     const consider = (name, path, text) => {
-      const kind = sniffKind(name, text);
-      if (kind) found.push({ kind, label: kind === "wtgml" ? name : labelOf(path), name, path, text });
+      const fmt = sniffFormat(name, text);
+      if (fmt) found.push({ fmt, kind: fmt.id, label: fmt.open ? name : labelOf(path), name, path, text });
     };
     for (const f of files) {
       const path = f._path || f.webkitRelativePath || f.name;
@@ -919,10 +985,10 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           const zip = await readZip(await f.arrayBuffer());
           for (const [zname, data] of Object.entries(zip)) {
             const base = zname.split("/").pop();
-            if (!WANT_EXT.test(base)) continue;
+            if (!wantExt().test(base)) continue;
             consider(base, f.name.replace(/\.zip$/i, "") + "/" + zname, decodeBytes(data));
           }
-        } else if (WANT_EXT.test(lower) || !/\./.test(lower)) {
+        } else if (wantExt().test(lower) || !/\./.test(lower)) {
           if (f.size > 60 * 1024 * 1024) continue;
           consider(f.name, path, decodeBytes(new Uint8Array(await f.arrayBuffer())));
         }
@@ -1237,6 +1303,14 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       if (!C.outMap.has(e.from)) C.outMap.set(e.from, []);
       C.outMap.get(e.from).push(e);
     });
+  }
+  function pinOf(C, uid) {
+    if (!C || uid == null) return null;
+    let ix = C._pinIdx;
+    if (!ix || ix.n !== C.pins.length) {
+      ix = C._pinIdx = { n: C.pins.length, m: new Map(C.pins.map((p) => [p.uid, p])) };
+    }
+    return ix.m.get(uid) || null;
   }
   var edgesIn = (C, id) => C.inMap.get(id) || [];
   var edgesOut = (C, id) => C.outMap.get(id) || [];
@@ -1890,6 +1964,16 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   function schedText(days) {
     return (days || []).map((d) => (WD[d.weekday] || d.weekday) + " " + d.entries.map((e) => e.time + "=" + e.value).join(" ")).join(" · ");
   }
+  FORMATS.add({
+    id: "d4pml",
+    order: 20,
+    icon: "station",
+    label: "DDC4000-Familie / BMR",
+    desc: "datasave.xml aus der Datensicherung (DDC4200, DDC4200e, DDC4400 …) und param_backup.d4pml der BMR-Raumautomation, auch im ZIP oder Sicherungsordner.",
+    exts: ["xml", "d4pml", "dat"],
+    sniff: (name, head) => /<D4PML[\s>]/.test(head),
+    parse: (text, f) => parseD4PML(text, f.label, f.name)
+  });
 
   // src/ui/model/ddc3000.js
   var CP1252 = (() => {
@@ -2348,20 +2432,383 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     }
     if (p.GT) C.flat.set(base + "|GT", { nid, label: lbl + " · Text", val: p.GT });
   }
+  FORMATS.add({
+    id: "ddc3000",
+    order: 10,
+    icon: "list",
+    label: "DDC3000",
+    desc: "*.wwf – Parameterliste der DDC3000-Zentrale (DDC3200 …) inkl. Kreisen, Logik und Wochenprogrammen.",
+    exts: ["wwf", "rtf", "txt"],
+    sniff: (name, head, text) => /^\s*\{\\rtf/.test(head) && /(TYP=DDC3|NR=\d+\s*;\s*TYP=|\bAI\s+P=)/.test(text.slice(0, 2e4)) || /^\s*Z\s+NR=\s*\d+\s*;\s*TYP=/m.test(head),
+    parse: (text, f) => parseDDC3000(text, f.label, f.name)
+  });
+
+  // src/ui/model/checks/handeingriffe.js
+  function stateName(node, st, paraAddr) {
+    const t = stateTextsOf(node, paraAddr || "h");
+    if (t && t[String(st)] != null) return t[String(st)].trim();
+    return { "9": "Auto", "0": "Aus", "1": "Ein", "2": "Stufe 2" }[String(st)] || String(st);
+  }
+  CHECKS.add({
+    id: "hand",
+    label: "Handschalter und Handwerte",
+    cat: "Handeingriff",
+    order: 10,
+    formats: ["D4PML"],
+    run(C, add) {
+      const N = C.nodes;
+      const handFed = /* @__PURE__ */ new Set();
+      for (const n of N.values()) {
+        if (n.ghost || n.type !== "H601" && n.type !== "H901") continue;
+        const hpAddr = n.type === "H601" ? "10" : "5";
+        const hp = paraOf(n, hpAddr);
+        if (!hp) continue;
+        const st = vNum(pe(hp));
+        const e = edgesIn(C, n.id).find((x) => x.toPara === hpAddr);
+        const sn = e ? N.get(e.from) : null;
+        if (sn) handFed.add(sn.id);
+        if (isNaN(st) || st === 9) continue;
+        const req = vBool(pe(paraOf(n, "1")));
+        const place = nodePlace(C, n);
+        const stxt = stateName(sn, st);
+        const ref = { node: sn ? sn.id : n.id };
+        if (st === 0 && req) add(
+          "err",
+          "Handeingriff",
+          place + ": Hand AUS blockiert Anforderung",
+          `Die Automatik fordert EIN (${n.type} Para 1), der Handschalter steht auf „${stxt}“. ${n.type === "H901" ? "Die Pumpe" : "Das Aggregat"} bleibt aus.`,
+          ref
+        );
+        else if (st === 0) add("warn", "Handeingriff", place + ": Handschalter AUS", `Von Hand abgeschaltet (${n.type}). Aktuell keine Anforderung der Automatik.`, ref);
+        else if (st === 1) add("warn", "Handeingriff", place + ": Hand EIN (Dauerbetrieb)", req ? "Automatik fordert ebenfalls EIN." : "Automatik fordert AUS – läuft trotzdem.", ref);
+        else add("warn", "Handeingriff", place + ": Handschalter „" + stxt + "“", "Schalter nicht auf Automatik.", ref);
+      }
+      for (const n of N.values()) {
+        if (n.ghost || n.type !== "S_01" || handFed.has(n.id)) continue;
+        const hp = paraOf(n, "h");
+        const v = pv(hp);
+        if (!v) continue;
+        const st = vNum(pe(hp));
+        const isSwitch = v.handPlant || hp.stateTexts && hp.stateTexts["9"] != null;
+        if (!isSwitch || isNaN(st) || st === 9) continue;
+        const users = edgesOut(C, n.id).length;
+        add(
+          "warn",
+          "Handeingriff",
+          nodePlace(C, n) + ": Handschalter „" + stateName(n, st) + "“",
+          "Schalter " + n.addr + " steht nicht auf Auto" + (users ? ` und wirkt auf ${users} Verknüpfung(en).` : "."),
+          { node: n.id }
+        );
+      }
+      for (const n of N.values()) {
+        if (n.ghost || n.type !== "H613" && n.type !== "H614") continue;
+        const v = pv(paraOf(n, "10"));
+        if (v && !v.deleted && v.text !== "") add(
+          "warn",
+          "Handeingriff",
+          nodePlace(C, n) + ": Handwert am Stellgerät aktiv",
+          `${n.type} Para 10 = ${valText(v)} – überschreibt die Regelung.`,
+          { node: n.id }
+        );
+      }
+    }
+  });
+
+  // src/ui/model/checks/station.js
+  CHECKS.add({
+    id: "meldungen",
+    label: "Anstehende Meldungen",
+    cat: "Meldung",
+    order: 20,
+    formats: ["D4PML"],
+    run(C, add) {
+      for (const m of C.messages.filter((x) => x.active))
+        add(
+          "warn",
+          "Meldung",
+          "Meldung steht an: " + m.text.split("/").filter(Boolean).slice(-3).join(" › "),
+          `${m.kind || "Meldung"} kommend ${m.comeTxt || "–"} · Quelle ${m.path}`,
+          m.nodeId && C.nodes.has(m.nodeId) ? { node: m.nodeId } : null
+        );
+    }
+  });
+  CHECKS.add({
+    id: "bacnet",
+    label: "BACnet-Instanzen und Objektreferenzen",
+    cat: "BACnet",
+    order: 30,
+    formats: ["D4PML"],
+    run(C, add) {
+      const N = C.nodes;
+      const seen = /* @__PURE__ */ new Map();
+      for (const b of C.bacnet) {
+        if (!b.inst || b.fb === "DEV") continue;
+        const k = b.btype + ":" + b.inst;
+        if (!seen.has(k)) seen.set(k, []);
+        seen.get(k).push(b);
+      }
+      for (const [k, list] of seen) if (list.length > 1) {
+        add(
+          "err",
+          "BACnet",
+          `Doppelte BACnet-Instanz ${list[0].blabel} ${list[0].inst}`,
+          list.map((b) => nodeTitle(C, C.nodes.get(b.nodeId)) + (b.para ? " /" + b.para : "")).join(" · "),
+          { node: list[0].nodeId }
+        );
+      }
+      const lf = [...N.values()].filter((n) => n.loprForeign && n.loprForeign.length);
+      if (lf.length) {
+        const devs = uniq(lf.flatMap((n) => n.loprForeign.map((l) => l.dev)));
+        const localInst = new Set(C.bacnet.map((b) => String(b.inst)));
+        const allLocal = lf.every((n) => n.loprForeign.every((l) => localInst.has(String(l.inst))));
+        add(
+          "warn",
+          "BACnet",
+          `${lf.length} Zeitprogramm${lf.length > 1 ? "e" : ""} mit Objektreferenz auf Device ${devs.join(", ")} statt ${C.meta.bacnetDevId || "eigener Instanz"}`,
+          lf.map((n) => nodePlace(C, n) + " → " + n.loprForeign.map((l) => l.type + ":" + l.inst).join(", ")).join(" · ") + (allLocal ? ". Die Zielobjekte liegen in dieser Station – die Device-Instanz wurde vermutlich nachträglich geändert oder das Programm kopiert. Prüfen, ob die Zeitpläne wirklich schalten." : ". Häufige Ursache: Programm von einer anderen Station kopiert."),
+          { node: lf[0].id, nodes: lf.map((n) => n.id) }
+        );
+      }
+    }
+  });
+  CHECKS.add({
+    id: "zeitprogramme",
+    label: "Zeitprogramme",
+    cat: "Zeitprogramm",
+    order: 40,
+    formats: ["D4PML"],
+    run(C, add) {
+      for (const s2 of C.schedules) {
+        const bad = [];
+        for (const d of s2.days || []) {
+          const times = d.entries.map((e) => e.time);
+          const dup = times.filter((t, i) => times.indexOf(t) !== i);
+          const unsorted = times.some((t, i) => i && t < times[i - 1]);
+          if (dup.length || unsorted) bad.push((WD[d.weekday] || d.weekday) + (dup.length ? " (" + uniq(dup).join(", ") + " doppelt)" : ""));
+        }
+        if (bad.length) add(
+          "warn",
+          "Zeitprogramm",
+          `${s2.name}: Schaltzeiten doppelt oder ungeordnet`,
+          `Betroffen: ${bad.join(" · ")}. Die Einträge überschneiden sich – wirksam ist die zeitlich letzte Schaltung. Programm am Gerät bereinigen.`,
+          { node: s2.nodeId }
+        );
+        if (!s2.consumers.length && C.format !== "DDC3000") add("info", "Zeitprogramm", `${s2.name}: Ausgang nicht im Programm verwendet`, "Nur über BACnet oder gar nicht genutzt.", { node: s2.nodeId });
+      }
+    }
+  });
+  CHECKS.add({
+    id: "system",
+    label: "Sicherheit und Systemwerte",
+    cat: "System",
+    order: 50,
+    formats: ["D4PML"],
+    run(C, add) {
+      const pw = C.users.filter((u) => u.password);
+      if (pw.length) add(
+        "warn",
+        "Sicherheit",
+        `${pw.length} Bedienerpasswörter im Klartext in der Sicherung`,
+        "Die Sicherungsdatei enthält die Passwörter der Bedienebenen unverschlüsselt. Vor Weitergabe an Dritte beachten.",
+        null
+      );
+      if (C.meta.battery > 0 && C.meta.battery < 2.8) add("warn", "System", `Pufferbatterie ${fmtNum(C.meta.battery)} V`, "Spannung niedrig – Batteriewechsel einplanen.", null);
+      for (const s2 of C.system.filter((x) => x.warn)) add("warn", "System", s2.k + ": " + s2.v, s2.group, null);
+    }
+  });
+  CHECKS.add({
+    id: "wartungszaehler",
+    label: "Wartungszähler",
+    cat: "Wartung",
+    order: 60,
+    formats: ["D4PML"],
+    run(C, add) {
+      const N = C.nodes;
+      for (const n of N.values()) {
+        if (n.type !== "S066" || n.ghost || !/wartung/i.test(n.name + " " + ((paraOf(n, "2") || {}).texts || []).join(" "))) continue;
+        const ist = pe(paraOf(n, "4839")), gw = pv(paraOf(n, "8610")), out = vBool(pv(paraOf(n, "2")));
+        if (ist && gw) add(
+          out ? "warn" : "info",
+          "Wartung",
+          `Wartungszähler: ${fmtNum(ist.text, 0)} von ${fmtNum(gw.text, 0)}`,
+          out ? "Wartung empfohlen – Schwelle erreicht." : `Noch ${fmtNum(parseFloat(gw.text) - parseFloat(ist.text), 0)} bis zur Wartungsempfehlung (${nodePlace(C, n)}).`,
+          { node: n.id }
+        );
+      }
+    }
+  });
+
+  // src/ui/model/checks/dreipunkt.js
+  CHECKS.add({
+    id: "dreipunkt",
+    label: "3-Punkt-Stellantriebe Auf/Zu",
+    cat: "Logik",
+    order: 70,
+    formats: ["D4PML"],
+    run(C, add) {
+      const N = C.nodes;
+      const maps = [];
+      for (const n of N.values()) {
+        if (n.type !== "H613" || n.ghost) continue;
+        const m = {};
+        for (const e of edgesOut(C, n.id)) {
+          const t = N.get(e.to);
+          if (!t || !t.pin) continue;
+          const w = /\bauf\b/i.test(t.pin.name) ? "auf" : /\bzu\b/i.test(t.pin.name) ? "zu" : null;
+          if (w) m[e.fromRest] = { w, pin: t.pin };
+        }
+        if (m["7"] && m["8"] && m["7"].w === m["8"].w) add("err", "Logik", nodePlace(C, n) + ": beide 3-Punkt-Ausgänge „" + m["7"].w + "“", `${m["7"].pin.klemme} und ${m["8"].pin.klemme} sind gleich benannt.`, { node: n.id });
+        if (m["7"] || m["8"]) maps.push({ n, m });
+      }
+      const sig = (x) => (x.m["7"] ? x.m["7"].w : "-") + "/" + (x.m["8"] ? x.m["8"].w : "-");
+      const kinds = uniq(maps.map(sig).filter((x) => !x.includes("-")));
+      if (kinds.length > 1) add(
+        "warn",
+        "Logik",
+        "3-Punkt-Stellantriebe uneinheitlich verdrahtet",
+        maps.map((x) => `${nodePlace(C, x.n)}: Ausgang 7 → ${x.m["7"] ? x.m["7"].pin.klemme + " „" + x.m["7"].pin.name + "“" : "–"}, Ausgang 8 → ${x.m["8"] ? x.m["8"].pin.klemme + " „" + x.m["8"].pin.name + "“" : "–"}`).join(" · ") + " – bei einem Antrieb sind Auf/Zu vermutlich vertauscht.",
+        { node: maps[0].n.id }
+      );
+    }
+  });
+
+  // src/ui/model/checks/ddc3000.js
+  CHECKS.add({
+    id: "ddc3000",
+    label: "DDC3000-Besonderheiten",
+    cat: "Bezeichnung",
+    order: 80,
+    formats: ["DDC3000"],
+    run(C, add) {
+      for (const p of C.pins) {
+        if (p.dfltName && (p.sources.length || p.consumers.length))
+          add(
+            "warn",
+            "Bezeichnung",
+            `${p.klemme}: ${KIND_INFO[p.kind].name} verknüpft, aber ohne Klartext`,
+            p.sources.length ? "Quelle: " + p.sources.map((e) => edgeLabel(C, e)).join(", ") : "Verwendet von " + p.consumers.length + " Verknüpfung(en).",
+            { pin: p.uid }
+          );
+      }
+      for (const a of C.alarms) if (!a.src) add("info", "Meldung", a.name + ": keine Meldequelle", "Meldeziel " + (a.ziel || "–"), { node: a.nodeId });
+      for (const s2 of C.schedules) if (!s2.consumers.length) {
+        const used = C.edges.some((e) => e.from === s2.nodeId);
+        if (!used) add("info", "Zeitprogramm", s2.name + " (" + s2.nodeId.split(":")[1] + ") wird nicht verwendet", "Kein Kreis und keine Verknüpfung greift auf dieses Wochenprogramm zu.", { node: s2.nodeId });
+      }
+    }
+  });
+
+  // src/ui/model/checks/klemmen.js
+  CHECKS.add({
+    id: "klemmen",
+    label: "Klemmen und Fühler",
+    cat: "Klemmen",
+    order: 90,
+    run(C, add) {
+      const corrs = [];
+      for (const p of C.pins) {
+        if (p.kind === "frei") continue;
+        const users = p.consumers.map((e) => nodeTitle(C, C.nodes.get(e.to))).slice(0, 3).join(" · ");
+        if (p.kind === "AE" && p.value.invalid) {
+          if (p.consumers.length) add("err", "Fühler", `${p.klemme}: Fühler ungültig, wird aber verwendet`, `„${p.name || p.paraText}“ liefert keinen gültigen Wert. Verwendet von: ${users}`, { pin: p.uid });
+          else add("info", "Fühler", `${p.klemme}: Fühlereingang ohne gültigen Wert`, `„${p.name || p.paraText || "ohne Text"}“ – nicht im Programm verwendet.`, { pin: p.uid });
+        }
+        if (p.corr && p.corr.num) {
+          corrs.push(p);
+          if (Math.abs(p.corr.num) >= 2) add(
+            "warn",
+            "Fühler",
+            `${p.klemme}: große Fühlerkorrektur ${p.corr.num > 0 ? "+" : ""}${fmtNum(p.corr.num)} K`,
+            `„${p.name}“ – Fühler oder Einbauort prüfen.`,
+            { pin: p.uid }
+          );
+        }
+        if (!isOutputKind(p.kind) && p.sources.length)
+          add("warn", "Klemmen", `${p.klemme}: Eingang aufgeschaltet`, `„${p.name || p.paraText}“ wird per Verknüpfung von ${p.sources.map((e) => edgeLabel(C, e)).join(", ")} überschrieben – der Messwert der Klemme wirkt nicht.`, { pin: p.uid });
+        if (!isOutputKind(p.kind) && p.value.deleted && p.consumers.length)
+          add("warn", "Fühler", `${p.klemme}: Eingangswert gelöscht, wird aber verwendet`, `„${p.name || p.paraText}“`, { pin: p.uid });
+        if (p.reserve) continue;
+        if (isOutputKind(p.kind) && !p.sources.length) {
+          const fixed = p.value.stored && !p.value.stored.deleted && p.value.stored.text !== "";
+          const bac = p.bacnet.some((b) => /FB_(AO|BO|AV|BV)/.test(b.fb));
+          if (fixed && C.format !== "DDC3000") add("info", "Klemmen", `${p.klemme}: Ausgang mit Festwert ${valText(p.value.stored)}`, `„${p.name}“ – keine Verknüpfung, fester Wert.`, { pin: p.uid });
+          else if (bac) add("info", "Klemmen", `${p.klemme}: Ausgang nur über BACnet`, `„${p.name}“ – im Programm nicht angesteuert.`, { pin: p.uid });
+          else add("warn", "Klemmen", `${p.klemme}: Ausgang belegt, aber nicht angesteuert`, `„${p.name || p.paraText}“ hat keine Quelle im Programm.`, { pin: p.uid });
+        }
+        if (!isOutputKind(p.kind) && !p.consumers.length) {
+          const bac = p.bacnet.some((b) => b.fb !== "FB_TR");
+          add("info", "Klemmen", `${p.klemme}: Eingang ${bac ? "nur auf BACnet" : "im Programm nicht verwendet"}`, `„${p.name || p.paraText}“`, { pin: p.uid });
+        }
+        if (p.name && p.paraText) {
+          const a = norm(p.name), b = norm(p.paraText);
+          if (!(a.startsWith(b) || b.startsWith(a)))
+            add("warn", "Bezeichnung", `${p.klemme}: Klartext uneinheitlich`, `Klemme: „${p.name}“ · Wert: „${p.paraText}“ – Bedienung/GLT zeigt ggf. den falschen Text.`, { pin: p.uid });
+        }
+      }
+      if (corrs.length) add("info", "Fühler", `${corrs.length} Fühler mit Korrekturwert`, corrs.map((p) => `${p.klemme} ${p.corr.num > 0 ? "+" : ""}${fmtNum(p.corr.num)}`).join(" · "), null);
+    }
+  });
+
+  // src/ui/model/checks/logik.js
+  CHECKS.add({
+    id: "logik",
+    label: "Formeln und Verweise",
+    cat: "Logik",
+    order: 100,
+    run(C, add) {
+      for (const n of C.nodes.values()) {
+        if (n.ghost) continue;
+        if (n.type === "M" && n.formula) {
+          const used = new Set([...n.formula.matchAll(/\be([1-4])\b/g)].map((m) => m[1]));
+          const ins = edgesIn(C, n.id);
+          const conn = new Set(ins.map((e) => e.toPara));
+          for (const u of used) if (!conn.has(u)) {
+            const p = paraOf(n, u);
+            if (p && pv(p) && C.format !== "DDC3000") add("info", "Logik", `${nodeTitle(C, n)}: e${u} ohne Verknüpfung`, `Formel „${n.formula}“ nutzt e${u}; der Eingang hat nur den festen Wert ${valText(pv(p))}.`, { node: n.id });
+            else add("warn", "Logik", `${nodeTitle(C, n)}: e${u} in Formel, aber nicht verknüpft`, `Formel „${n.formula}“ – e${u} wirkt als 0${/NOT\s*\(?\s*e/.test(n.formula) ? " (unter NOT als 1)" : ""}.`, { node: n.id });
+          }
+          for (const c of conn) if (/^[1-4]$/.test(c) && !used.has(c)) add("info", "Logik", `${nodeTitle(C, n)}: e${c} verknüpft, aber nicht in der Formel`, `Formel „${n.formula}“ ignoriert Eingang e${c} (${ins.filter((e) => e.toPara === c).map((e) => edgeLabel(C, e)).join(", ")}).`, { node: n.id });
+        }
+      }
+      for (const n of C.nodes.values()) {
+        if (!n.ghost) continue;
+        const users = edgesOut(C, n.id);
+        if (!users.length) continue;
+        const who = users.slice(0, 3).map((e) => nodeTitle(C, C.nodes.get(e.to))).join(" · ");
+        if (n.foreign) add("info", "Verknüpfung", `Signal von fremder Zentrale: ${n.id}`, "Verwendet von: " + who, { node: n.id });
+        else if (C.format === "DDC3000") add("warn", "Verknüpfung", `Verweis auf nicht definierten Parameter ${n.kreis ? "Kreis " + n.kreis + " " : ""}${n.addr}`, "Verwendet von: " + who, { node: n.id });
+        else if (n.ghostGroupMissing) add("warn", "Verknüpfung", `Verweis auf Gruppe, die nicht in der Sicherung steht: ${n.id}`, "Verwendet von: " + who + ". Objekt fehlt oder läuft mit Werksstandard – Funktion prüfen.", { node: n.id });
+        else add("info", "Verknüpfung", `Verweis auf Objekt ohne eigene Parameter: ${n.id}`, "Werksstandard. Verwendet von: " + who, { node: n.id });
+      }
+    }
+  });
 
   // src/ui/model/findings.js
   var SEV = { err: 3, warn: 2, info: 1 };
   var SEV_LABEL = { err: "Fehler", warn: "Warnung", info: "Hinweis" };
+  var checksOff = () => new Set(store.get("checksOff", []));
+  var checksFor = (C) => CHECKS.list((K) => !K.formats || K.formats.includes(C.format));
   function runFindings(C) {
-    const F = [];
-    const add = (sev, cat, title, detail, ref) => F.push({ sev, cat, title, detail: detail || "", ref: ref || null });
-    if (C.format === "DDC3000") findingsD3(C, add);
-    else findingsD4(C, add);
-    findingsPins(C, add);
-    findingsLogic(C, add);
+    const F = [], off = checksOff();
+    C.checkErrors = [];
+    for (const K of checksFor(C)) {
+      if (off.has(K.id)) continue;
+      const add = (sev, cat, title, detail, ref) => F.push({ sev: SEV[sev] ? sev : "info", cat: cat || K.cat || K.label, title: String(title ?? ""), detail: detail || "", ref: ref || null, check: K.id });
+      const t0 = performance.now();
+      try {
+        K.run(C, add);
+      } catch (e) {
+        console.error("Prüfung " + K.id + ":", e);
+        C.checkErrors.push(K.id);
+        F.push({ sev: "info", cat: "Werkbank", title: "Prüfung „" + (K.label || K.id) + "“ konnte nicht vollständig laufen", detail: String(e && e.message || e), ref: null, check: K.id });
+      }
+      const ms = performance.now() - t0;
+      if (ms > 500) console.warn("Prüfung " + K.id + " braucht " + Math.round(ms) + " ms");
+    }
     F.sort((a, b) => SEV[b.sev] - SEV[a.sev] || natCmp(a.cat, b.cat) || natCmp(a.title, b.title));
     F.forEach((f, i) => f.id = i);
     C.findings = F;
+    C._sidx = null;
     C.nodeSev = /* @__PURE__ */ new Map();
     for (const f of F) {
       const id = f.ref && (f.ref.node || f.ref.pin);
@@ -2370,270 +2817,23 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     for (const p of C.pins) p.sev = C.nodeSev.get(p.nodeId) || null;
     return F;
   }
-  function stateName(node, st, paraAddr) {
-    const t = stateTextsOf(node, paraAddr || "h");
-    if (t && t[String(st)] != null) return t[String(st)].trim();
-    return { "9": "Auto", "0": "Aus", "1": "Ein", "2": "Stufe 2" }[String(st)] || String(st);
-  }
-  function findingsD4(C, add) {
-    const N = C.nodes;
-    const handFed = /* @__PURE__ */ new Set();
-    for (const n of N.values()) {
-      if (n.ghost || n.type !== "H601" && n.type !== "H901") continue;
-      const hpAddr = n.type === "H601" ? "10" : "5";
-      const hp = paraOf(n, hpAddr);
-      if (!hp) continue;
-      const st = vNum(pe(hp));
-      const e = edgesIn(C, n.id).find((x) => x.toPara === hpAddr);
-      const sn = e ? N.get(e.from) : null;
-      if (sn) handFed.add(sn.id);
-      if (isNaN(st) || st === 9) continue;
-      const req = vBool(pe(paraOf(n, "1")));
-      const place = nodePlace(C, n);
-      const stxt = stateName(sn, st);
-      const ref = { node: sn ? sn.id : n.id };
-      if (st === 0 && req) add(
-        "err",
-        "Handeingriff",
-        place + ": Hand AUS blockiert Anforderung",
-        `Die Automatik fordert EIN (${n.type} Para 1), der Handschalter steht auf „${stxt}“. ${n.type === "H901" ? "Die Pumpe" : "Das Aggregat"} bleibt aus.`,
-        ref
-      );
-      else if (st === 0) add("warn", "Handeingriff", place + ": Handschalter AUS", `Von Hand abgeschaltet (${n.type}). Aktuell keine Anforderung der Automatik.`, ref);
-      else if (st === 1) add("warn", "Handeingriff", place + ": Hand EIN (Dauerbetrieb)", req ? "Automatik fordert ebenfalls EIN." : "Automatik fordert AUS – läuft trotzdem.", ref);
-      else add("warn", "Handeingriff", place + ": Handschalter „" + stxt + "“", "Schalter nicht auf Automatik.", ref);
-    }
-    for (const n of N.values()) {
-      if (n.ghost || n.type !== "S_01" || handFed.has(n.id)) continue;
-      const hp = paraOf(n, "h");
-      const v = pv(hp);
-      if (!v) continue;
-      const st = vNum(pe(hp));
-      const isSwitch = v.handPlant || hp.stateTexts && hp.stateTexts["9"] != null;
-      if (!isSwitch || isNaN(st) || st === 9) continue;
-      const users = edgesOut(C, n.id).length;
-      add(
-        "warn",
-        "Handeingriff",
-        nodePlace(C, n) + ": Handschalter „" + stateName(n, st) + "“",
-        "Schalter " + n.addr + " steht nicht auf Auto" + (users ? ` und wirkt auf ${users} Verknüpfung(en).` : "."),
-        { node: n.id }
-      );
-    }
-    for (const n of N.values()) {
-      if (n.ghost || n.type !== "H613" && n.type !== "H614") continue;
-      const v = pv(paraOf(n, "10"));
-      if (v && !v.deleted && v.text !== "") add(
-        "warn",
-        "Handeingriff",
-        nodePlace(C, n) + ": Handwert am Stellgerät aktiv",
-        `${n.type} Para 10 = ${valText(v)} – überschreibt die Regelung.`,
-        { node: n.id }
-      );
-    }
-    for (const m of C.messages.filter((x) => x.active))
-      add(
-        "warn",
-        "Meldung",
-        "Meldung steht an: " + m.text.split("/").filter(Boolean).slice(-3).join(" › "),
-        `${m.kind || "Meldung"} kommend ${m.comeTxt || "–"} · Quelle ${m.path}`,
-        m.nodeId && C.nodes.has(m.nodeId) ? { node: m.nodeId } : null
-      );
-    const seen = /* @__PURE__ */ new Map();
-    for (const b of C.bacnet) {
-      if (!b.inst || b.fb === "DEV") continue;
-      const k = b.btype + ":" + b.inst;
-      if (!seen.has(k)) seen.set(k, []);
-      seen.get(k).push(b);
-    }
-    for (const [k, list] of seen) if (list.length > 1) {
-      add(
-        "err",
-        "BACnet",
-        `Doppelte BACnet-Instanz ${list[0].blabel} ${list[0].inst}`,
-        list.map((b) => nodeTitle(C, C.nodes.get(b.nodeId)) + (b.para ? " /" + b.para : "")).join(" · "),
-        { node: list[0].nodeId }
-      );
-    }
-    const lf = [...N.values()].filter((n) => n.loprForeign && n.loprForeign.length);
-    if (lf.length) {
-      const devs = uniq(lf.flatMap((n) => n.loprForeign.map((l) => l.dev)));
-      const localInst = new Set(C.bacnet.map((b) => String(b.inst)));
-      const allLocal = lf.every((n) => n.loprForeign.every((l) => localInst.has(String(l.inst))));
-      add(
-        "warn",
-        "BACnet",
-        `${lf.length} Zeitprogramm${lf.length > 1 ? "e" : ""} mit Objektreferenz auf Device ${devs.join(", ")} statt ${C.meta.bacnetDevId || "eigener Instanz"}`,
-        lf.map((n) => nodePlace(C, n) + " → " + n.loprForeign.map((l) => l.type + ":" + l.inst).join(", ")).join(" · ") + (allLocal ? ". Die Zielobjekte liegen in dieser Station – die Device-Instanz wurde vermutlich nachträglich geändert oder das Programm kopiert. Prüfen, ob die Zeitpläne wirklich schalten." : ". Häufige Ursache: Programm von einer anderen Station kopiert."),
-        { node: lf[0].id, nodes: lf.map((n) => n.id) }
-      );
-    }
-    for (const s2 of C.schedules) {
-      const bad = [];
-      for (const d of s2.days || []) {
-        const times = d.entries.map((e) => e.time);
-        const dup = times.filter((t, i) => times.indexOf(t) !== i);
-        const unsorted = times.some((t, i) => i && t < times[i - 1]);
-        if (dup.length || unsorted) bad.push((WD[d.weekday] || d.weekday) + (dup.length ? " (" + uniq(dup).join(", ") + " doppelt)" : ""));
-      }
-      if (bad.length) add(
-        "warn",
-        "Zeitprogramm",
-        `${s2.name}: Schaltzeiten doppelt oder ungeordnet`,
-        `Betroffen: ${bad.join(" · ")}. Die Einträge überschneiden sich – wirksam ist die zeitlich letzte Schaltung. Programm am Gerät bereinigen.`,
-        { node: s2.nodeId }
-      );
-      if (!s2.consumers.length && C.format !== "DDC3000") add("info", "Zeitprogramm", `${s2.name}: Ausgang nicht im Programm verwendet`, "Nur über BACnet oder gar nicht genutzt.", { node: s2.nodeId });
-    }
-    const pw = C.users.filter((u) => u.password);
-    if (pw.length) add(
-      "warn",
-      "Sicherheit",
-      `${pw.length} Bedienerpasswörter im Klartext in der Sicherung`,
-      "Die Sicherungsdatei enthält die Passwörter der Bedienebenen unverschlüsselt. Vor Weitergabe an Dritte beachten.",
-      null
-    );
-    if (C.meta.battery > 0 && C.meta.battery < 2.8) add("warn", "System", `Pufferbatterie ${fmtNum(C.meta.battery)} V`, "Spannung niedrig – Batteriewechsel einplanen.", null);
-    for (const s2 of C.system.filter((x) => x.warn)) add("warn", "System", s2.k + ": " + s2.v, s2.group, null);
-    for (const n of N.values()) {
-      if (n.type !== "S066" || n.ghost || !/wartung/i.test(n.name + " " + ((paraOf(n, "2") || {}).texts || []).join(" "))) continue;
-      const ist = pe(paraOf(n, "4839")), gw = pv(paraOf(n, "8610")), out = vBool(pv(paraOf(n, "2")));
-      if (ist && gw) add(
-        out ? "warn" : "info",
-        "Wartung",
-        `Wartungszähler: ${fmtNum(ist.text, 0)} von ${fmtNum(gw.text, 0)}`,
-        out ? "Wartung empfohlen – Schwelle erreicht." : `Noch ${fmtNum(parseFloat(gw.text) - parseFloat(ist.text), 0)} bis zur Wartungsempfehlung (${nodePlace(C, n)}).`,
-        { node: n.id }
-      );
-    }
-    const maps = [];
-    for (const n of N.values()) {
-      if (n.type !== "H613" || n.ghost) continue;
-      const m = {};
-      for (const e of edgesOut(C, n.id)) {
-        const t = N.get(e.to);
-        if (!t || !t.pin) continue;
-        const nm = t.pin.name + " " + t.pin.paraText;
-        const w = /\bauf\b/i.test(t.pin.name) ? "auf" : /\bzu\b/i.test(t.pin.name) ? "zu" : null;
-        if (w) m[e.fromRest] = { w, pin: t.pin };
-        void nm;
-      }
-      if (m["7"] && m["8"] && m["7"].w === m["8"].w) add("err", "Logik", nodePlace(C, n) + ": beide 3-Punkt-Ausgänge „" + m["7"].w + "“", `${m["7"].pin.klemme} und ${m["8"].pin.klemme} sind gleich benannt.`, { node: n.id });
-      if (m["7"] || m["8"]) maps.push({ n, m });
-    }
-    const sig = (x) => (x.m["7"] ? x.m["7"].w : "-") + "/" + (x.m["8"] ? x.m["8"].w : "-");
-    const kinds = uniq(maps.map(sig).filter((x) => !x.includes("-")));
-    if (kinds.length > 1) add(
-      "warn",
-      "Logik",
-      "3-Punkt-Stellantriebe uneinheitlich verdrahtet",
-      maps.map((x) => `${nodePlace(C, x.n)}: Ausgang 7 → ${x.m["7"] ? x.m["7"].pin.klemme + " „" + x.m["7"].pin.name + "“" : "–"}, Ausgang 8 → ${x.m["8"] ? x.m["8"].pin.klemme + " „" + x.m["8"].pin.name + "“" : "–"}`).join(" · ") + " – bei einem Antrieb sind Auf/Zu vermutlich vertauscht.",
-      { node: maps[0].n.id }
-    );
-  }
-  function findingsD3(C, add) {
-    for (const p of C.pins) {
-      if (p.dfltName && (p.sources.length || p.consumers.length))
-        add(
-          "warn",
-          "Bezeichnung",
-          `${p.klemme}: ${KIND_INFO[p.kind].name} verknüpft, aber ohne Klartext`,
-          p.sources.length ? "Quelle: " + p.sources.map((e) => edgeLabel(C, e)).join(", ") : "Verwendet von " + p.consumers.length + " Verknüpfung(en).",
-          { pin: p.uid }
-        );
-    }
-    for (const a of C.alarms) if (!a.src) add("info", "Meldung", a.name + ": keine Meldequelle", "Meldeziel " + (a.ziel || "–"), { node: a.nodeId });
-    for (const s2 of C.schedules) if (!s2.consumers.length) {
-      const used = C.edges.some((e) => e.from === s2.nodeId);
-      if (!used) add("info", "Zeitprogramm", s2.name + " (" + s2.nodeId.split(":")[1] + ") wird nicht verwendet", "Kein Kreis und keine Verknüpfung greift auf dieses Wochenprogramm zu.", { node: s2.nodeId });
-    }
-  }
-  function findingsPins(C, add) {
-    const corrs = [];
-    for (const p of C.pins) {
-      if (p.kind === "frei") continue;
-      const users = p.consumers.map((e) => nodeTitle(C, C.nodes.get(e.to))).slice(0, 3).join(" · ");
-      if (p.kind === "AE" && p.value.invalid) {
-        if (p.consumers.length) add("err", "Fühler", `${p.klemme}: Fühler ungültig, wird aber verwendet`, `„${p.name || p.paraText}“ liefert keinen gültigen Wert. Verwendet von: ${users}`, { pin: p.uid });
-        else add("info", "Fühler", `${p.klemme}: Fühlereingang ohne gültigen Wert`, `„${p.name || p.paraText || "ohne Text"}“ – nicht im Programm verwendet.`, { pin: p.uid });
-      }
-      if (p.corr && p.corr.num) {
-        corrs.push(p);
-        if (Math.abs(p.corr.num) >= 2) add(
-          "warn",
-          "Fühler",
-          `${p.klemme}: große Fühlerkorrektur ${p.corr.num > 0 ? "+" : ""}${fmtNum(p.corr.num)} K`,
-          `„${p.name}“ – Fühler oder Einbauort prüfen.`,
-          { pin: p.uid }
-        );
-      }
-      if (!isOutputKind(p.kind) && p.sources.length)
-        add("warn", "Klemmen", `${p.klemme}: Eingang aufgeschaltet`, `„${p.name || p.paraText}“ wird per Verknüpfung von ${p.sources.map((e) => edgeLabel(C, e)).join(", ")} überschrieben – der Messwert der Klemme wirkt nicht.`, { pin: p.uid });
-      if (!isOutputKind(p.kind) && p.value.deleted && p.consumers.length)
-        add("warn", "Fühler", `${p.klemme}: Eingangswert gelöscht, wird aber verwendet`, `„${p.name || p.paraText}“`, { pin: p.uid });
-      if (p.reserve) continue;
-      if (isOutputKind(p.kind) && !p.sources.length) {
-        const fixed = p.value.stored && !p.value.stored.deleted && p.value.stored.text !== "";
-        const bac = p.bacnet.some((b) => /FB_(AO|BO|AV|BV)/.test(b.fb));
-        if (fixed && C.format !== "DDC3000") add("info", "Klemmen", `${p.klemme}: Ausgang mit Festwert ${valText(p.value.stored)}`, `„${p.name}“ – keine Verknüpfung, fester Wert.`, { pin: p.uid });
-        else if (bac) add("info", "Klemmen", `${p.klemme}: Ausgang nur über BACnet`, `„${p.name}“ – im Programm nicht angesteuert.`, { pin: p.uid });
-        else add("warn", "Klemmen", `${p.klemme}: Ausgang belegt, aber nicht angesteuert`, `„${p.name || p.paraText}“ hat keine Quelle im Programm.`, { pin: p.uid });
-      }
-      if (!isOutputKind(p.kind) && !p.consumers.length) {
-        const bac = p.bacnet.some((b) => b.fb !== "FB_TR");
-        add("info", "Klemmen", `${p.klemme}: Eingang ${bac ? "nur auf BACnet" : "im Programm nicht verwendet"}`, `„${p.name || p.paraText}“`, { pin: p.uid });
-      }
-      if (p.name && p.paraText) {
-        const a = norm(p.name), b = norm(p.paraText);
-        if (!(a.startsWith(b) || b.startsWith(a)))
-          add("warn", "Bezeichnung", `${p.klemme}: Klartext uneinheitlich`, `Klemme: „${p.name}“ · Wert: „${p.paraText}“ – Bedienung/GLT zeigt ggf. den falschen Text.`, { pin: p.uid });
-      }
-    }
-    if (corrs.length) add("info", "Fühler", `${corrs.length} Fühler mit Korrekturwert`, corrs.map((p) => `${p.klemme} ${p.corr.num > 0 ? "+" : ""}${fmtNum(p.corr.num)}`).join(" · "), null);
-  }
-  function findingsLogic(C, add) {
-    for (const n of C.nodes.values()) {
-      if (n.ghost) continue;
-      if (n.type === "M" && n.formula) {
-        const used = new Set([...n.formula.matchAll(/\be([1-4])\b/g)].map((m) => m[1]));
-        const ins = edgesIn(C, n.id);
-        const conn = new Set(ins.map((e) => e.toPara));
-        for (const u of used) if (!conn.has(u)) {
-          const p = paraOf(n, u);
-          if (p && pv(p) && C.format !== "DDC3000") add("info", "Logik", `${nodeTitle(C, n)}: e${u} ohne Verknüpfung`, `Formel „${n.formula}“ nutzt e${u}; der Eingang hat nur den festen Wert ${valText(pv(p))}.`, { node: n.id });
-          else add("warn", "Logik", `${nodeTitle(C, n)}: e${u} in Formel, aber nicht verknüpft`, `Formel „${n.formula}“ – e${u} wirkt als 0${/NOT\s*\(?\s*e/.test(n.formula) ? " (unter NOT als 1)" : ""}.`, { node: n.id });
-        }
-        for (const c of conn) if (/^[1-4]$/.test(c) && !used.has(c)) add("info", "Logik", `${nodeTitle(C, n)}: e${c} verknüpft, aber nicht in der Formel`, `Formel „${n.formula}“ ignoriert Eingang e${c} (${ins.filter((e) => e.toPara === c).map((e) => edgeLabel(C, e)).join(", ")}).`, { node: n.id });
-      }
-    }
-    for (const n of C.nodes.values()) {
-      if (!n.ghost) continue;
-      const users = edgesOut(C, n.id);
-      if (!users.length) continue;
-      const who = users.slice(0, 3).map((e) => nodeTitle(C, C.nodes.get(e.to))).join(" · ");
-      if (n.foreign) add("info", "Verknüpfung", `Signal von fremder Zentrale: ${n.id}`, "Verwendet von: " + who, { node: n.id });
-      else if (C.format === "DDC3000") add("warn", "Verknüpfung", `Verweis auf nicht definierten Parameter ${n.kreis ? "Kreis " + n.kreis + " " : ""}${n.addr}`, "Verwendet von: " + who, { node: n.id });
-      else if (n.ghostGroupMissing) add("warn", "Verknüpfung", `Verweis auf Gruppe, die nicht in der Sicherung steht: ${n.id}`, "Verwendet von: " + who + ". Objekt fehlt oder läuft mit Werksstandard – Funktion prüfen.", { node: n.id });
-      else add("info", "Verknüpfung", `Verweis auf Objekt ohne eigene Parameter: ${n.id}`, "Werksstandard. Verwendet von: " + who, { node: n.id });
-    }
-  }
 
-  // src/ui/core/views.js
-  var VIEWS = {};
-  var NAV = [
-    ["start", "Start", "home"],
-    "-",
-    ["overview", "Übersicht", "overview"],
-    ["points", "Datenpunkte", "table"],
-    ["program", "Programm & Wirkkette", "flow"],
-    ["findings", "Befunde", "alert"],
-    ["sched", "Zeit & Meldungen", "clock"],
-    "-",
-    ["wartung", "Wartungsdoku", "doc"],
-    ["compare", "Vergleich", "compare"],
-    "-",
-    ["online", "Online", "bacnet"]
-  ];
+  // src/ui/model/pipeline.js
+  function prepareCentral(C, file, hash) {
+    C.filePath = file.path;
+    C.hash = hash;
+    for (const A of ANALYSES.list()) safely("Auswertung " + A.id, () => A.run(C));
+    runFindings(C);
+    return C;
+  }
+  function textHash(t) {
+    let h1 = 2166136261;
+    for (let i = 0; i < t.length; i++) {
+      h1 ^= t.charCodeAt(i);
+      h1 = Math.imul(h1, 16777619);
+    }
+    return t.length + ":" + (h1 >>> 0).toString(16);
+  }
 
   // src/ui/core/state.js
   var APP = {
@@ -3147,6 +3347,20 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     }
     return isp;
   }
+  FORMATS.add({
+    id: "wtgml",
+    order: 30,
+    icon: "doc",
+    label: "Wartungsdoku-Vorlage",
+    desc: "*.wtgml – Wartungsdokumentation aus dem Wartungsprogramm, leer oder ausgefüllt. Wird verknüpft und direkt bearbeitet.",
+    exts: ["wtgml", "xml"],
+    sniff: (name, head) => /<([\w-]+:)?Maintenance[\s>]/.test(head) || name.toLowerCase().endsWith(".wtgml"),
+    open(text, f, handle) {
+      if (!addTemplate(text, f.name, handle)) return null;
+      APP.wdTab = "doc";
+      return { view: "wartung", msg: "Wartungsdoku geöffnet: " + WDOC.cur.name + (WDOC.cur.handle ? " – zum direkten Speichern im Tab „Wartungsdoku“ verknüpfen." : "") };
+    }
+  });
 
   // src/ui/wartung/air.js
   var AIR_DEFAULT = ["VSR", "BSK"];
@@ -3451,7 +3665,14 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     }
     return "Anlage geprüft." + (lines.length ? "\n" + uniq(lines).join("\n") : " Funktion in Ordnung.");
   }
-  VIEWS.wartung = {
+  VIEWS.add({
+    id: "wartung",
+    label: "Wartungsdoku",
+    icon: "doc",
+    group: 2,
+    order: 210,
+    badge: () => WDOC.cur ? [{ n: WDOC.cur.writable ? "verknüpft" : "WTGML", cls: WDOC.cur.dirty ? "warn" : "soft", title: WDOC.cur.name + (WDOC.cur.dirty ? " – ungespeichert" : "") }] : null,
+    scrollKey: () => "wartung|" + (APP.wdTab || "") + "|" + (WDOC.cur ? WDOC.cur.name : ""),
     render(root, C0, opts) {
       const D = WDOC.cur;
       if (opts.tab) APP.wdTab = opts.tab;
@@ -3504,7 +3725,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       if (APP.wdTab === "mangel") return D ? wdMangelTab(body, D) : wdNoDoc(body);
       return wdGenTab(body, D);
     }
-  };
+  });
   function wdNoDoc(body) {
     body.appendChild(h(
       "div",
@@ -4382,7 +4603,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         e.preventDefault();
         e.stopPropagation();
         d.classList.remove("dragover");
-        const p = W.pins.find((x) => x.uid === e.dataTransfer.getData("text/x-ddcwb-pin"));
+        const p = pinOf(W, e.dataTransfer.getData("text/x-ddcwb-pin"));
         if (p) {
           p.gid = g.gid;
           renderAll();
@@ -4478,7 +4699,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const W = wdModel(C);
     const job = (a, re) => wkids(a, "job").find((j) => re.test(wtxt(j, "jobDescription"))) || wkids(a, "job").find((j) => /Funktion prüfen/.test(wtxt(j, "jobDescription"))) || wkids(a, "job")[0];
     const facByPlant = (name) => wkids(isp, "facility").find((x) => norm(wtxt(x, "facBezeichnung")) === norm(name));
-    let pin = f.ref && f.ref.pin ? C.pins.find((p) => p.uid === f.ref.pin) : null;
+    let pin = f.ref && f.ref.pin ? pinOf(C, f.ref.pin) : null;
     const node = f.ref && f.ref.node ? C.nodes.get(f.ref.node) : null;
     if (!pin && node && node.pin) pin = node.pin;
     const multi = f.ref && f.ref.nodes && f.ref.nodes.length > 1;
@@ -4896,8 +5117,18 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       h("div", { class: "go" }, ignButton(C, [f]), f.ref && !multi ? btn("Anzeigen", "jump", () => openRef(C, f.ref), "sm") : null)
     );
   }
-  VIEWS.findings = {
+  VIEWS.add({
+    id: "findings",
+    label: "Befunde",
+    icon: "alert",
+    group: 1,
+    order: 140,
     needsC: true,
+    badge(C) {
+      if (!C) return null;
+      const fc = findingsCount(C);
+      return [fc.err && { n: fc.err, cls: "err", title: fc.err + " Fehler" }, fc.warn && { n: fc.warn, cls: "warn", title: fc.warn + " Warnungen" }, fc.err && { dot: true }];
+    },
     render(root, C, opts) {
       const S = vstate("findings", C, () => ({ sev: /* @__PURE__ */ new Set(["err", "warn", "info"]), cat: "", q: "", open: null }));
       const fc = findingsCount(C);
@@ -5029,7 +5260,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       }
       draw();
     }
-  };
+  });
   function findingsText(C, list) {
     const L = ["Befundbericht · " + C.meta.name, stationSub(C), "Erstellt " + nowStamp() + " mit der DDC-Werkbank", ""];
     let cat = null;
@@ -5085,7 +5316,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     }
     return g;
   }
-  VIEWS.sched = {
+  VIEWS.add({
+    id: "sched",
+    label: "Zeit & Meldungen",
+    icon: "clock",
+    group: 1,
+    order: 150,
     needsC: true,
     render(root, C, opts) {
       const S = vstate("sched", C, () => ({ tab: C.schedules.length ? "sched" : "alarm", q: "", bsort: "inst" }));
@@ -5233,7 +5469,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       };
       (T[S.tab] || T.sched)();
     }
-  };
+  });
   function table(heads, rows) {
     const t = h("table", { class: "grid card-t" });
     t.appendChild(h("thead", null, h("tr", null, heads.map((x) => h("th", null, x)))));
@@ -5243,6 +5479,16 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     t.appendChild(tb);
     return t;
   }
+  SEARCH.add({
+    id: "befunde",
+    label: "Befunde",
+    order: 30,
+    index: (C) => C.findings.map((f) => [f, norm(f.title + " " + f.detail)]),
+    hit: (C, f) => ({ a: SEV_LABEL[f.sev], n: f.title, w: f.cat + (isIgnored(C, f) ? " · abgehakt" : ""), go: () => {
+      APP.cur = C.cid;
+      go("findings", { focus: f.id });
+    } })
+  });
 
   // src/ui/views/points.js
   function pinValue(p) {
@@ -5261,13 +5507,18 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     if (!p.corr || !p.corr.num) return "";
     return (p.corr.num > 0 ? "+" : "") + fmtNum(p.corr.num) + " " + (p.corr.unitTxt || (p.kind === "AE" ? "K" : unitLabel(p.corr.unit)));
   }
-  VIEWS.points = {
+  VIEWS.add({
+    id: "points",
+    label: "Datenpunkte",
+    icon: "table",
+    group: 1,
+    order: 120,
     needsC: true,
     render(root, C, opts) {
       const S = vstate("points", C, () => ({ q: "", kinds: /* @__PURE__ */ new Set(["AE", "AA", "BE", "BA"]), mod: null, flag: "", sort: { k: "klemme", dir: 1 }, sel: null }));
       if (opts.pin) {
         S.sel = opts.pin;
-        const p = C.pins.find((x) => x.uid === opts.pin);
+        const p = pinOf(C, opts.pin);
         if (p) {
           if (!S.kinds.has(p.kind)) S.kinds.add(p.kind);
           if (S.mod && S.mod !== p.module) S.mod = null;
@@ -5480,7 +5731,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         }
       }
       function drawDrawer() {
-        const p = C.pins.find((x) => x.uid === S.sel);
+        const p = pinOf(C, S.sel);
         drawer.innerHTML = "";
         if (!p) {
           drawer.hidden = true;
@@ -5496,7 +5747,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       drawTable();
       drawDrawer();
     }
-  };
+  });
   function pinDetail(C, p, onClose) {
     const n = C.nodes.get(p.nodeId);
     const frag = h("div");
@@ -5614,6 +5865,13 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     ]);
     download(safeName(C.meta.name) + "_Datenpunkte.csv", csv(rows), "text/csv;charset=utf-8");
   }
+  SEARCH.add({
+    id: "klemmen",
+    label: "Klemmen",
+    order: 10,
+    index: (C) => C.pins.map((p) => [p, norm(p.klemme + " " + p.name + " " + p.paraText)]),
+    hit: (C, p) => ({ a: p.klemme, n: p.name || p.paraText || "–", w: p.kind, go: () => openPin(C.cid, p.uid) })
+  });
 
   // src/ui/views/program.js
   var PG = {
@@ -5684,8 +5942,14 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     if (total <= 140) return new Set(real.flatMap((p) => p.groups.map((g) => g.key)));
     return new Set(real.length ? real[0].groups.map((g) => g.key) : []);
   }
-  VIEWS.program = {
+  VIEWS.add({
+    id: "program",
+    label: "Programm & Wirkkette",
+    icon: "flow",
+    group: 1,
+    order: 130,
     needsC: true,
+    compact: true,
     render(root, C, opts) {
       const S = vstate("program", C, () => ({
         vis: defaultVis(C),
@@ -5857,11 +6121,11 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       const world = s("g", null, svg);
       const panel = h("div", { class: "drawer", style: { width: "400px", position: "relative" } });
       split.appendChild(panel);
-      const viewKey2 = S.mode === "chain" ? "cview" : "view";
+      const viewKey = S.mode === "chain" ? "cview" : "view";
       const V = { x: 0, y: 0, k: 1 };
       const apply = () => {
         world.setAttribute("transform", `translate(${V.x},${V.y}) scale(${V.k})`);
-        S[viewKey2] = { x: V.x, y: V.y, k: V.k };
+        S[viewKey] = { x: V.x, y: V.y, k: V.k };
       };
       let L = null;
       canvas.addEventListener("wheel", (e) => {
@@ -6519,7 +6783,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       drawPanel();
       requestAnimationFrame(() => {
         if (!L) return;
-        const saved = S[viewKey2];
+        const saved = S[viewKey];
         const r = canvas.getBoundingClientRect();
         if (S.mode === "chain" && !saved && S.chain) {
           const b = L.boxes.get(S.chain.target);
@@ -6537,7 +6801,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         } else fit();
       });
     }
-  };
+  });
   var ROLE_MARK = { release: "▷", block: "⛔", hand: "✋", in: "◂", setpoint: "◎", threshold: "⊣", formula: "ƒ", param: "·", out: "▸", time: "⏱", info: "i" };
   function maxSev(list) {
     let m = null;
@@ -6840,6 +7104,13 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     edgesOut(C, n.id).forEach((e) => L.push("► " + nodeTitle(C, C.nodes.get(e.to)) + " · " + portLabel(C.nodes.get(e.to).type, e.toPara)));
     return L.join("\r\n");
   }
+  SEARCH.add({
+    id: "programm",
+    label: "Programm",
+    order: 20,
+    index: (C) => [...C.nodes.values()].filter((n) => !n.isPin && n.type !== "SYS").map((n) => [n, norm(n.addr + " " + n.name + " " + n.type + " " + (TYPE_NAMES[n.type] || "") + " " + (n.formula || "") + " " + nodePlace(C, n))]),
+    hit: (C, n) => ({ a: n.addr, n: n.name || TYPE_NAMES[n.type] || n.type, w: nodePlace(C, n), go: () => openNode(C.cid, n.id) })
+  });
 
   // src/ui/wartung/anlagen.js
   var GENERIC_WORDS = new Set("temperatur temp fuehler raumfuehler raumtemp raumtemperatur betrieb betr betriebsmeldung stoerung stoer stoermeldung ansteuern anst ansteuerung anforderung anf freigabe freig meldung meld meldungen sollwert soll istwert wert ventil regelventil stellventil pumpe zuluft zulu abluft ablu fortluft fort aussenluft aussen umluft vorlauf ruecklauf vl rl raum feuchte rf druck diff differenzdruck min max auf zu stufe eg kg og ug dg res reserve und u des der die das mit von fuer im in am an kl x3 ausgeloest waechter druckwaechter stroemungswaechter regelung steuerung gruppe anlage allgemein klappe klappen filter rep schal schalter reparaturschalter hand auto ein aus lampe sm bm sb ssm signal prim sek primaer sekundaer ext extern intern grad c k v ma eingang ausgang analog binaer kontakt neue neu alt sonstige weitere ansteuern sammelstoermeldung entriegeln quittieren quittierung frostschutz anzeige zustand status ueberwachung wartung ok nicht keine".split(" "));
@@ -7023,7 +7294,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       p.plant = p.plantName = p.pgroup = p.pgroupName = null;
       p.how = "";
       if (!p.include) continue;
-      const cp = C.pins.find((x) => x.uid === p.uid);
+      const cp = pinOf(C, p.uid);
       const a = cp ? assignPlant(C, cp) : { plant: null };
       if (a.shared || a.plant && a.plant.collector && C.format === "DDC3000" || !a.plant && ALLG_RE.test(deUml(p.name))) {
         allg.push(p);
@@ -7784,7 +8055,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   function lkInfoText(C, p, mode) {
     if (mode === "klemmewert") {
       const W = lkW(C);
-      const wp = W.pins.find((x) => x.uid === p.uid);
+      const wp = pinOf(W, p.uid);
       if (wp) return infoValue({ opt: { info: "klemmewert" } }, wp);
     }
     return "Klemme " + p.klemme;
@@ -7908,7 +8179,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   }
   function lkPinText(isp, C, p) {
     if (lkFullNames(isp)) return p.name;
-    const wp = lkW(C).pins.find((x) => x.uid === p.uid);
+    const wp = pinOf(lkW(C), p.uid);
     return wp && wp.klartext ? wp.klartext : p.name;
   }
   function lkAlign(isp, a, C, p) {
@@ -7925,7 +8196,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   }
   function lkAddPin(D, isp, fac, C, p) {
     const W = lkW(C);
-    const wp = W.pins.find((x) => x.uid === p.uid);
+    const wp = pinOf(W, p.uid);
     if (!wp) return null;
     const first = lkArts(isp).find((x) => wtxt(x.a, "standort"));
     const standort = first ? wtxt(first.a, "standort") : lkIspKey(isp);
@@ -8608,7 +8879,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const s2 = h("span", { class: "spin" });
     return s2;
   }
-  VIEWS.online = {
+  VIEWS.add({
+    id: "online",
+    label: "Online",
+    icon: "bacnet",
+    group: 3,
+    order: 310,
     render(root, C) {
       ONLINE.C = C || curC();
       root.appendChild(pageHead("Online", "Mit einer Zentrale verbinden und Live-Werte per BACnet/IP lesen – über den lokalen Dienst. Rein lesend."));
@@ -8619,7 +8895,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       if (ONLINE.health === "unknown") olCheckHealth();
       else if (ONLINE.health === "up" && !ONLINE.cfg) olLoadConfig().then(olLayout);
     }
-  };
+  });
 
   // src/ui/core/persist.js
   var PERSIST = { svc: false, old: false, gen: 1, data: {}, timer: {}, lastTry: 0 };
@@ -8766,7 +9042,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   function findingWhere(C, f) {
     const r = f.ref;
     if (!r) return null;
-    let p = r.pin ? C.pins.find((x) => x.uid === r.pin) : null;
+    let p = r.pin ? pinOf(C, r.pin) : null;
     const n = r.node ? C.nodes.get(r.node) : null;
     if (!p && n && n.pin) p = n.pin;
     if (p) return { pin: p };
@@ -8916,6 +9192,11 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       t.style.opacity = "0";
       setTimeout(() => t.remove(), 300);
     }, ms || 3800);
+    return t;
+  }
+  function setToastText(t, msg) {
+    const d = t && t.lastChild;
+    if (d) d.textContent = msg;
   }
   function flyout(anchor, items) {
     closeFlyout();
@@ -9047,7 +9328,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     app.appendChild(tb);
     app.appendChild(h("div", { class: "main" + (APP.collapsed ? " collapsed" : "") }, nav, content));
     document.body.appendChild(app);
-    document.body.appendChild(h("input", { type: "file", id: "fileIn", multiple: true, hidden: true, accept: ".xml,.d4pml,.wwf,.wtgml,.zip,.rtf,.txt" }));
+    document.body.appendChild(h("input", { type: "file", id: "fileIn", multiple: true, hidden: true, accept: acceptAttr() }));
     document.body.appendChild(h("input", { type: "file", id: "dirIn", multiple: true, hidden: true, webkitdirectory: true }));
     document.body.appendChild(h("div", { class: "drop-overlay" }, h("div", { class: "box" }, icon("upload"), "Loslassen zum Laden")));
     $("#fileIn").addEventListener("change", (e) => {
@@ -9110,26 +9391,18 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const nav = $("#nav");
     nav.innerHTML = "";
     const C = curC();
-    for (const it of NAV) {
-      if (it === "-") {
-        nav.appendChild(h("div", { class: "nav-sep" }));
-        continue;
-      }
-      const [id, label, ico] = it;
-      const needs = id !== "start" && id !== "wartung" && id !== "compare" && id !== "online";
+    let lastGroup = null;
+    for (const V of VIEWS.list((v) => v.nav !== false && v.label)) {
+      if (lastGroup !== null && V.group !== lastGroup) nav.appendChild(h("div", { class: "nav-sep" }));
+      lastGroup = V.group;
       const b = h(
         "button",
-        { class: "nav-item" + (APP.view === id ? " on" : ""), disabled: needs && !C, title: label, onclick: () => go(id) },
-        icon(ico),
-        h("span", { class: "lbl" }, label)
+        { class: "nav-item" + (APP.view === V.id ? " on" : ""), "data-view": V.id, disabled: V.needsC && !C, title: V.label, onclick: () => go(V.id) },
+        icon(V.icon),
+        h("span", { class: "lbl" }, V.label)
       );
-      if (id === "findings" && C) {
-        const fc = findingsCount(C);
-        if (fc.err) b.appendChild(h("span", { class: "badge err", title: fc.err + " Fehler" }, fc.err));
-        if (fc.warn) b.appendChild(h("span", { class: "badge warn", title: fc.warn + " Warnungen" }, fc.warn));
-        if (fc.err) b.appendChild(h("span", { class: "dot" }));
-      }
-      if (id === "wartung" && WDOC.cur) b.appendChild(h("span", { class: "badge " + (WDOC.cur.dirty ? "warn" : "soft"), title: WDOC.cur.name + (WDOC.cur.dirty ? " – ungespeichert" : "") }, WDOC.cur.writable ? "verknüpft" : "WTGML"));
+      const badges = V.badge ? safely("Abzeichen " + V.id, () => V.badge(C), null) : null;
+      for (const x of badges || []) if (x) b.appendChild(x.dot ? h("span", { class: "dot" }) : h("span", { class: "badge " + (x.cls || "soft"), title: x.title || null }, x.n));
       nav.appendChild(b);
     }
     nav.appendChild(h(
@@ -9161,14 +9434,14 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   function renderAll() {
     renderTitle();
     renderNav();
-    $(".main").classList.toggle("compact", APP.view === "program");
+    const V = VIEWS.get(APP.view) || VIEWS.get("start");
+    $(".main").classList.toggle("compact", !!V.compact);
     const content = $("#content");
     if (!APP._scroll) APP._scroll = {};
     if (APP._lastKey && $("#content")) APP._scroll[APP._lastKey] = $$(SCROLL_SEL, content).map((el) => [el.scrollTop, el.scrollLeft]);
     const jump = Object.keys(APP.opts || {}).length > 0;
     content.innerHTML = "";
     hideTip();
-    const V = VIEWS[APP.view] || VIEWS.start;
     const C = curC();
     if (V.needsC && !C) {
       APP.view = "start";
@@ -9185,7 +9458,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         h("div", null, h("b", null, "Diese Ansicht konnte nicht aufgebaut werden. "), String(e && e.message || e))
       )));
     }
-    const key = viewKey();
+    const key = V.scrollKey ? safely("Scroll " + V.id, () => V.scrollKey(), V.id) : APP.view + "|" + (APP.cur || "");
     const pos = !jump && APP._scroll[key];
     if (pos) $$(SCROLL_SEL, content).forEach((el, i) => {
       if (pos[i] && !el.dataset.noRestore) {
@@ -9196,10 +9469,6 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     APP._lastKey = key;
     APP._lastView = APP.view;
     APP.opts = {};
-  }
-  function viewKey() {
-    if (APP.view === "wartung") return "wartung|" + (APP.wdTab || "") + "|" + (WDOC.cur ? WDOC.cur.name : "");
-    return APP.view + "|" + (APP.cur || "");
   }
   function pageHead(title, sub, acts) {
     return h(
@@ -9226,34 +9495,36 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return [m.name, t && !m.name.includes(m.stationType) ? t : C.format === "DDC3000" ? "DDC3000" : "", m.centralAddr ? "Zentrale " + m.centralAddr : "", m.stamp ? "Stand " + m.stamp : ""].filter(Boolean).join("  ·  ");
   }
   var LOADING = false;
+  var tick = () => new Promise((r) => setTimeout(r, 0));
   async function loadFiles(files, handles) {
     if (!files || !files.length || LOADING) return;
     LOADING = true;
-    toast("Lese " + files.length + " Datei(en) …", "inf", 1500);
+    const note = toast("Lese " + files.length + " Datei(en) …", "inf", 6e4);
     try {
       const found = await collectInputs(files);
       if (!found.length) {
-        toast("Keine Sicherung und keine WTGML-Vorlage erkannt. Erwartet: datasave.xml, *.d4pml, *.wwf, *.wtgml oder ZIP/Ordner damit.", "warn", 7e3);
+        toast("Nichts Lesbares erkannt. Erwartet: " + FORMATS.list().map((F) => F.label).join(", ") + " – als Datei, ZIP oder Ordner.", "warn", 7e3);
         return;
       }
-      const added = [], bad = [];
-      let tplAdded = 0;
-      for (const f of found) {
+      const added = [], bad = [], opened = [];
+      for (const [i, f] of found.entries()) {
+        if (found.length > 1) {
+          setToastText(note, "Lese " + (i + 1) + " von " + found.length + ": " + f.name);
+          await tick();
+        }
         try {
-          if (f.kind === "wtgml") {
-            if (addTemplate(f.text, f.name, handles && handles.get(f.name))) tplAdded++;
+          if (f.fmt.open) {
+            const r = f.fmt.open(f.text, f, handles && handles.get(f.name));
+            if (r) opened.push(r);
             continue;
           }
-          const C = f.kind === "ddc3000" ? parseDDC3000(f.text, f.label, f.name) : parseD4PML(f.text, f.label, f.name);
-          C.filePath = f.path;
-          C.hash = textHash(f.text);
-          runFindings(C);
-          refreshSev(C);
-          const dupe = APP.centrals.find((x) => x.hash === C.hash);
-          if (dupe) {
+          const hash = textHash(f.text);
+          if (APP.centrals.some((x) => x.hash === hash)) {
             bad.push(f.name + ": bereits geladen");
             continue;
           }
+          const C = prepareCentral(f.fmt.parse(f.text, f), f, hash);
+          refreshSev(C);
           APP.centrals.push(C);
           added.push(C);
         } catch (e) {
@@ -9268,10 +9539,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         if (APP.view === "start") APP.view = "overview";
         emit("zentralen", { centrals: APP.centrals });
       }
-      if (tplAdded) {
-        toast("Wartungsdoku geöffnet: " + WDOC.cur.name + (WDOC.cur.handle ? " – zum direkten Speichern im Tab „Wartungsdoku“ verknüpfen." : ""), "ok", 6e3);
-        APP.wdTab = "doc";
-        if (!added.length) APP.view = "wartung";
+      for (const r of opened) {
+        if (r.msg) toast(r.msg, "ok", 6e3);
+        if (r.view && !added.length) APP.view = r.view;
       }
       if (bad.length) toast(bad.join(" · "), "warn", 8e3);
       renderAll();
@@ -9280,6 +9550,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       toast("Fehler beim Laden: " + e.message, "err", 8e3);
     } finally {
       LOADING = false;
+      note.remove();
     }
   }
   function removeCentral(cid) {
@@ -9290,20 +9561,14 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     emit("zentralen", { centrals: APP.centrals });
     renderAll();
   }
-  function textHash(t) {
-    let h1 = 2166136261;
-    for (let i = 0; i < t.length; i++) {
-      h1 ^= t.charCodeAt(i);
-      h1 = Math.imul(h1, 16777619);
+  function searchIndex(C, P) {
+    if (!C._sidx) C._sidx = /* @__PURE__ */ new Map();
+    let X = C._sidx.get(P.id);
+    if (!X) {
+      X = safely("Suchindex " + P.id, () => P.index(C), []) || [];
+      C._sidx.set(P.id, X);
     }
-    return t.length + ":" + (h1 >>> 0).toString(16);
-  }
-  function searchIndex(C) {
-    if (C._sidx) return C._sidx;
-    return C._sidx = {
-      pins: C.pins.map((p) => [p, norm(p.klemme + " " + p.name + " " + p.paraText)]),
-      nodes: [...C.nodes.values()].filter((n) => !n.isPin && n.type !== "SYS").map((n) => [n, norm(n.addr + " " + n.name + " " + n.type + " " + (TYPE_NAMES[n.type] || "") + " " + (n.formula || "") + " " + nodePlace(C, n))])
-    };
+    return X;
   }
   function globalSearch() {
     const inp = h("input", { type: "search", placeholder: "Klemme, Baustein, Text suchen …" });
@@ -9335,19 +9600,16 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       let more = 0, hitSt = 0;
       for (const C of cs) {
         const pre = many ? C.meta.name + " · " : "";
-        const X = searchIndex(C);
-        const G = { Klemmen: [], Programm: [], Befunde: [] };
-        for (const [p, hay] of X.pins) if (hay.includes(q)) G.Klemmen.push({ a: p.klemme, n: p.name || p.paraText || "–", w: p.kind, go: () => openPin(C.cid, p.uid) });
-        for (const [n, hay] of X.nodes) if (hay.includes(q)) G.Programm.push({ a: n.addr, n: n.name || TYPE_NAMES[n.type] || n.type, w: nodePlace(C, n), go: () => openNode(C.cid, n.id) });
-        for (const f of C.findings) if (norm(f.title + " " + f.detail).includes(q)) G.Befunde.push({ a: SEV_LABEL[f.sev], n: f.title, w: f.cat + (isIgnored(C, f) ? " · abgehakt" : ""), go: () => {
-          APP.cur = C.cid;
-          go("findings", { focus: f.id });
-        } });
         let cut = 0, tot = 0;
-        for (const [g, list] of Object.entries(G)) {
-          tot += list.length;
-          for (const r of list.slice(0, cap)) res.push(Object.assign(r, { g: pre + g }));
-          cut += Math.max(0, list.length - cap);
+        for (const P of SEARCH.list()) {
+          const hits = [];
+          for (const [it, hay] of searchIndex(C, P)) if (hay.includes(q)) hits.push(it);
+          tot += hits.length;
+          cut += Math.max(0, hits.length - cap);
+          for (const it of hits.slice(0, cap)) {
+            const r = safely("Suche " + P.id, () => P.hit(C, it), null);
+            if (r) res.push(Object.assign(r, { g: pre + P.label }));
+          }
         }
         if (tot) hitSt++;
         if (cut && many) res.push({ g: pre + "mehr", more: true, a: "", n: "Alle " + tot + " Treffer in " + C.meta.name + " zeigen", w: "", go: () => {
@@ -9432,7 +9694,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   }
 
   // src/ui/views/start-overview.js
-  VIEWS.start = {
+  VIEWS.add({
+    id: "start",
+    label: "Start",
+    icon: "home",
+    group: 0,
+    order: 0,
     render(root) {
       root.appendChild(pageHead("Start", "Sicherungen öffnen und verwalten"));
       const body = h("div", { class: "page-body" });
@@ -9539,10 +9806,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       body.appendChild(h("div", { class: "section-title" }, "Was kann geöffnet werden?"));
       const f = h("div", { class: "cards" });
       const fmt = (ico, t, d) => h("div", { class: "card fmt" }, h("div", { class: "ic" }, icon(ico)), h("div", null, h("b", null, t), h("span", null, d)));
-      f.appendChild(fmt("station", "DDC4000-Familie", "datasave.xml aus der Datensicherung (DDC4200, DDC4200e, DDC4400 …), auch im ZIP oder Sicherungsordner."));
-      f.appendChild(fmt("cpu", "BMR / DDC420", "param_backup.d4pml – Parametersicherung der BMR-Raumautomation."));
-      f.appendChild(fmt("list", "DDC3000", "*.wwf – Parameterliste der DDC3000-Zentrale (DDC3200 …) inkl. Kreisen, Logik und Wochenprogrammen."));
-      f.appendChild(fmt("doc", "Wartungsdoku-Vorlage", "*.wtgml – Wartungsdokumentation aus dem Wartungsprogramm, leer oder ausgefüllt. Wird verknüpft und direkt bearbeitet."));
+      for (const F of FORMATS.list((F2) => F2.label)) f.appendChild(fmt(F.icon || "file", F.label, F.desc || (F.exts || []).map((e) => "*." + e).join(", ")));
       body.appendChild(f);
       body.appendChild(h(
         "div",
@@ -9551,8 +9815,13 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         h("div", null, h("b", null, "Alles bleibt auf diesem Rechner. "), "Die Dateien werden nur im Browser gelesen. Es gibt keine Verbindung ins Internet und nichts wird gespeichert – außer dem gewählten Farbschema.")
       ));
     }
-  };
-  VIEWS.overview = {
+  });
+  VIEWS.add({
+    id: "overview",
+    label: "Übersicht",
+    icon: "overview",
+    group: 1,
+    order: 110,
     needsC: true,
     render(root, C) {
       const m = C.meta;
@@ -9562,40 +9831,17 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       ]));
       const body = h("div", { class: "page-body" });
       root.appendChild(body);
-      const kinds = {};
-      C.pins.forEach((p) => kinds[p.kind] = (kinds[p.kind] || 0) + 1);
-      const used = C.pins.length - (kinds.frei || 0);
-      const fc = findingsCount(C);
-      const prog = [...C.nodes.values()].filter((n) => !n.ghost && !n.isPin && !String(n.type).startsWith("SY_") && n.type !== "SYS");
-      const act = C.messages.filter((x) => x.active).length;
-      const tile = (ico, t2, v, small, d, onclick) => h(
+      const tile = (T) => h(
         "div",
-        { class: "tile" + (onclick ? " click" : ""), onclick },
-        h("div", { class: "t" }, icon(ico), t2),
-        h("div", { class: "v" }, v, small ? h("small", null, small) : null),
-        d ? typeof d === "string" ? h("div", { class: "d" }, d) : d : null
+        { class: "tile" + (T.onclick ? " click" : ""), onclick: T.onclick || null },
+        h("div", { class: "t" }, icon(T.icon || "info"), T.title),
+        h("div", { class: "v" }, T.value, T.small ? h("small", null, T.small) : null),
+        T.detail ? typeof T.detail === "string" ? h("div", { class: "d" }, T.detail) : T.detail : null
       );
-      body.appendChild(h(
-        "div",
-        { class: "tiles" },
-        tile("pin", "Klemmen belegt", used, "/ " + C.pins.length, h(
-          "div",
-          { class: "stack", style: { gap: "6px", marginTop: "4px" } },
-          kbar(kinds),
-          h("div", { class: "legend" }, ["AE", "AA", "BE", "BA"].filter((k) => kinds[k]).map((k) => h("span", null, h("i", { style: { background: `var(--k-${k})` } }), k + " " + kinds[k])))
-        ), () => go("points")),
-        tile("flow", "Programmbausteine", prog.length, null, C.edges.length + " Verknüpfungen · " + C.groups.size + " Gruppen", () => go("program")),
-        tile("alert", "Befunde", fc.err + fc.warn, null, h(
-          "div",
-          { class: "row", style: { gap: "6px" } },
-          fc.err ? h("span", { class: "pill err" }, fc.err + " Fehler") : null,
-          fc.warn ? h("span", { class: "pill warn" }, fc.warn + " Warnungen") : null,
-          h("span", { class: "pill inf" }, fc.info + " Hinweise")
-        ), () => go("findings")),
-        tile("clock", "Zeitprogramme", C.schedules.length, null, C.calendars.length ? C.calendars.length + " Kalender" : C.format === "DDC3000" ? "Wochenprogramme N" : "keine Kalender", () => go("sched", { tab: "sched" })),
-        tile("bell", "Meldungen", act, C.messages.length ? "aktiv / " + C.messages.length : null, C.messages.length ? "im Meldungsspeicher" : C.alarms.length + " Meldeobjekte", () => go("sched", { tab: C.messages.length ? "msg" : "alarm" })),
-        C.format !== "DDC3000" ? tile("bacnet", "BACnet-Objekte", C.bacnet.length, null, "Device " + (m.bacnetDevId || "–") + (C.trends.length ? " · " + C.trends.length + " Trends" : ""), () => go("sched", { tab: "bac" })) : null
-      ));
+      body.appendChild(h("div", { class: "tiles" }, OVERVIEW_TILES.list().map((X) => {
+        const T = safely("Kachel " + X.id, () => X.tile(C, go), null);
+        return T ? tile(T) : null;
+      })));
       const top = activeFindings(C).filter((f) => f.sev !== "info").slice(0, 6);
       if (top.length) {
         body.appendChild(h("div", { class: "section-title" }, "Wichtigste Befunde", h("a", { onclick: () => go("findings"), class: "small" }, "alle anzeigen")));
@@ -9688,7 +9934,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       body.appendChild(cards);
       if (C.notes.length) body.appendChild(h("div", { class: "infobar warn", style: { marginTop: "16px" } }, icon("alert"), h("div", null, h("b", null, "Hinweise beim Einlesen: "), C.notes.slice(0, 8).join(" · "))));
     }
-  };
+  });
   function stationProfileText(C) {
     const m = C.meta, L = [];
     const kinds = {};
@@ -9706,6 +9952,67 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     for (const s2 of C.system.filter((x) => !/Neustarts/.test(x.group))) L.push(s2.group + " · " + s2.k + ": " + s2.v);
     return L.join("\r\n");
   }
+  var pinKinds = (C) => {
+    const k = {};
+    C.pins.forEach((p) => k[p.kind] = (k[p.kind] || 0) + 1);
+    return k;
+  };
+  OVERVIEW_TILES.add({ id: "klemmen", order: 10, tile(C, go2) {
+    const kinds = pinKinds(C);
+    return {
+      icon: "pin",
+      title: "Klemmen belegt",
+      value: C.pins.length - (kinds.frei || 0),
+      small: "/ " + C.pins.length,
+      onclick: () => go2("points"),
+      detail: h(
+        "div",
+        { class: "stack", style: { gap: "6px", marginTop: "4px" } },
+        kbar(kinds),
+        h("div", { class: "legend" }, ["AE", "AA", "BE", "BA"].filter((k) => kinds[k]).map((k) => h("span", null, h("i", { style: { background: `var(--k-${k})` } }), k + " " + kinds[k])))
+      )
+    };
+  } });
+  OVERVIEW_TILES.add({ id: "programm", order: 20, tile(C, go2) {
+    let n = 0;
+    for (const x of C.nodes.values()) if (!x.ghost && !x.isPin && !String(x.type).startsWith("SY_") && x.type !== "SYS") n++;
+    return { icon: "flow", title: "Programmbausteine", value: n, detail: C.edges.length + " Verknüpfungen · " + C.groups.size + " Gruppen", onclick: () => go2("program") };
+  } });
+  OVERVIEW_TILES.add({ id: "befunde", order: 30, tile(C, go2) {
+    const fc = findingsCount(C);
+    return {
+      icon: "alert",
+      title: "Befunde",
+      value: fc.err + fc.warn,
+      onclick: () => go2("findings"),
+      detail: h("div", { class: "row", style: { gap: "6px" } }, fc.err ? h("span", { class: "pill err" }, fc.err + " Fehler") : null, fc.warn ? h("span", { class: "pill warn" }, fc.warn + " Warnungen") : null, h("span", { class: "pill inf" }, fc.info + " Hinweise"))
+    };
+  } });
+  OVERVIEW_TILES.add({ id: "zeit", order: 40, tile: (C, go2) => ({
+    icon: "clock",
+    title: "Zeitprogramme",
+    value: C.schedules.length,
+    detail: C.calendars.length ? C.calendars.length + " Kalender" : C.format === "DDC3000" ? "Wochenprogramme N" : "keine Kalender",
+    onclick: () => go2("sched", { tab: "sched" })
+  }) });
+  OVERVIEW_TILES.add({ id: "meldungen", order: 50, tile(C, go2) {
+    const act = C.messages.filter((x) => x.active).length;
+    return {
+      icon: "bell",
+      title: "Meldungen",
+      value: act,
+      small: C.messages.length ? "aktiv / " + C.messages.length : null,
+      detail: C.messages.length ? "im Meldungsspeicher" : C.alarms.length + " Meldeobjekte",
+      onclick: () => go2("sched", { tab: C.messages.length ? "msg" : "alarm" })
+    };
+  } });
+  OVERVIEW_TILES.add({ id: "bacnet", order: 60, tile: (C, go2) => C.format === "DDC3000" ? null : {
+    icon: "bacnet",
+    title: "BACnet-Objekte",
+    value: C.bacnet.length,
+    detail: "Device " + (C.meta.bacnetDevId || "–") + (C.trends.length ? " · " + C.trends.length + " Trends" : ""),
+    onclick: () => go2("sched", { tab: "bac" })
+  } });
 
   // src/ui/views/compare.js
   function cmpGroupLabel(A, B, nid, key) {
@@ -9730,7 +10037,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     rows.sort((x, y) => natCmp(x.g.place, y.g.place) || natCmp(x.g.id, y.g.id) || natCmp(x.key, y.key));
     return rows;
   }
-  VIEWS.compare = {
+  VIEWS.add({
+    id: "compare",
+    label: "Vergleich",
+    icon: "compare",
+    group: 2,
+    order: 220,
     render(root) {
       const S = APP.cmp;
       if (!S.show) Object.assign(S, { show: /* @__PURE__ */ new Set(["chg", "onlyA", "onlyB"]), q: "", noText: false });
@@ -9857,7 +10169,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       }
       draw();
     }
-  };
+  });
 
   // src/ui/main.js
   function boot() {

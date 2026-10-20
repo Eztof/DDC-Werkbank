@@ -1,9 +1,9 @@
 import { openNode, openPin } from "../core/nav.js";
 import { vstate } from "../core/state.js";
 import { liveInfo, livePinText } from "../core/live.js";
-import { VIEWS } from "../core/views.js";
+import { SEARCH, VIEWS } from "../core/ext.js";
 import { $, $$, copyText, csv, download, fmtNum, h, natCmp, norm, safeName, trunc, unitLabel } from "../core/util.js";
-import { KIND_INFO, TYPE_NAMES, describeTransform, edgeLabel, isInvertedEdge, isOutputKind, nodePlace, nodeTitle, portLabel, pv, stateTextsOf, vNum, valText } from "../model/model.js";
+import { KIND_INFO, TYPE_NAMES, describeTransform, edgeLabel, isInvertedEdge, isOutputKind, nodePlace, nodeTitle, pinOf, portLabel, pv, stateTextsOf, vNum, valText } from "../model/model.js";
 import { foVal } from "../model/d4pml.js";
 import { SEV, SEV_LABEL } from "../model/findings.js";
 import { btn, emptyState, icon, kindTag, pageHead, renderAll, searchBox, selectEl, sevIcon, stationSub, toast } from "../shell/shell.js";
@@ -30,11 +30,12 @@ export function pinCorrText(p) {
   return (p.corr.num > 0 ? "+" : "") + fmtNum(p.corr.num) + " " + (p.corr.unitTxt || (p.kind === "AE" ? "K" : unitLabel(p.corr.unit)));
 }
 
-VIEWS.points = {
+VIEWS.add({
+  id: "points", label: "Datenpunkte", icon: "table", group: 1, order: 120,
   needsC: true,
   render(root, C, opts) {
     const S = vstate("points", C, () => ({ q: "", kinds: new Set(["AE", "AA", "BE", "BA"]), mod: null, flag: "", sort: { k: "klemme", dir: 1 }, sel: null }));
-    if (opts.pin) { S.sel = opts.pin; const p = C.pins.find(x => x.uid === opts.pin); if (p) { if (!S.kinds.has(p.kind)) S.kinds.add(p.kind); if (S.mod && S.mod !== p.module) S.mod = null; S.q = ""; } }
+    if (opts.pin) { S.sel = opts.pin; const p = pinOf(C, opts.pin); if (p) { if (!S.kinds.has(p.kind)) S.kinds.add(p.kind); if (S.mod && S.mod !== p.module) S.mod = null; S.q = ""; } }
     if (opts.mod) { S.mod = opts.mod; }
     const hasVals = C.pins.some(p => p.value.eff || p.value.stored);
     const hasBac = C.pins.some(p => p.bacnet.length);
@@ -151,7 +152,7 @@ VIEWS.points = {
       if (on && opts.pin) { on.scrollIntoView({ block: "center" }); if (opts.flash) { on.classList.add("flash"); opts.flash = false; } }
     }
     function drawDrawer() {
-      const p = C.pins.find(x => x.uid === S.sel);
+      const p = pinOf(C, S.sel);
       drawer.innerHTML = "";
       if (!p) { drawer.hidden = true; return; }
       drawer.hidden = false;
@@ -160,7 +161,7 @@ VIEWS.points = {
     drawTable();
     drawDrawer();
   }
-};
+});
 
 function pinDetail(C, p, onClose) {
   const n = C.nodes.get(p.nodeId);
@@ -237,3 +238,10 @@ function exportPinsCsv(C, list) {
   download(safeName(C.meta.name) + "_Datenpunkte.csv", csv(rows), "text/csv;charset=utf-8");
 }
 
+
+/* ---------- Globale Suche: Klemmen ---------- */
+SEARCH.add({
+  id: "klemmen", label: "Klemmen", order: 10,
+  index: C => C.pins.map(p => [p, norm(p.klemme + " " + p.name + " " + p.paraText)]),
+  hit: (C, p) => ({ a: p.klemme, n: p.name || p.paraText || "–", w: p.kind, go: () => openPin(C.cid, p.uid) })
+});

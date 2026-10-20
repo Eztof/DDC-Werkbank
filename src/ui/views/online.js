@@ -1,7 +1,7 @@
 import { liveText, setLive } from "../core/live.js";
 import { openNode, openPin } from "../core/nav.js";
 import { APP, curC } from "../core/state.js";
-import { VIEWS } from "../core/views.js";
+import { VIEWS } from "../core/ext.js";
 import { fmtNum, h, nowStamp, store } from "../core/util.js";
 import { btn, chk, emptyState, icon, pageHead, selectEl, toast } from "../shell/shell.js";
 
@@ -203,7 +203,8 @@ function olJump(C, nodeId) {
 }
 function spinner() { const s = h("span", { class: "spin" }); return s; }
 
-VIEWS.online = {
+VIEWS.add({
+  id: "online", label: "Online", icon: "bacnet", group: 3, order: 310,
   render(root, C) {
     ONLINE.C = C || curC();
     root.appendChild(pageHead("Online", "Mit einer Zentrale verbinden und Live-Werte per BACnet/IP lesen – über den lokalen Dienst. Rein lesend."));
@@ -214,5 +215,5 @@ VIEWS.online = {
     if (ONLINE.health === "unknown") olCheckHealth();
     else if (ONLINE.health === "up" && !ONLINE.cfg) olLoadConfig().then(olLayout);
   }
-};
+});
 

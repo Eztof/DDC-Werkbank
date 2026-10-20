@@ -1,7 +1,7 @@
 import { go } from "../core/nav.js";
 import { APP } from "../core/state.js";
 import { $, h, natCmp, norm, trunc, uniq } from "../core/util.js";
-import { KIND_INFO, isOutputKind } from "../model/model.js";
+import { KIND_INFO, isOutputKind, pinOf } from "../model/model.js";
 import { btn, emptyState, icon, kindTag, renderAll, selectEl, stationLabel, toast } from "../shell/shell.js";
 import { PERSIST, pentry, pput, pref, setPref } from "../core/persist.js";
 import { WTG_NS, dpArtikel, infoValue, wdModel } from "./generator.js";
@@ -355,7 +355,7 @@ function lkIspStats(L) {
 WX.ORDER.installationClass = ["description", "shortkey", "articleProperties"];
 function lkW(C) { return APP.wd[C.cid] || (APP.wd[C.cid] = wdModel(C)); }
 function lkInfoText(C, p, mode) {
-  if (mode === "klemmewert") { const W = lkW(C); const wp = W.pins.find(x => x.uid === p.uid); if (wp) return infoValue({ opt: { info: "klemmewert" } }, wp); }
+  if (mode === "klemmewert") { const W = lkW(C); const wp = pinOf(W, p.uid); if (wp) return infoValue({ opt: { info: "klemmewert" } }, wp); }
   return "Klemme " + p.klemme;
 }
 function lkWriteInfo(a, C, p, mode) {
@@ -448,7 +448,7 @@ function lkFacFor(L, isp, p) {
 function lkFullNames(isp) { const xs = lkArts(isp).filter(x => !x.station); return xs.length ? xs.filter(x => x.feat.aks).length / xs.length > 0.5 : false; }
 function lkPinText(isp, C, p) {
   if (lkFullNames(isp)) return p.name;
-  const wp = lkW(C).pins.find(x => x.uid === p.uid);
+  const wp = pinOf(lkW(C), p.uid);
   return wp && wp.klartext ? wp.klartext : p.name;
 }
 /* Doku-Eintrag an die Klemme angleichen: Klartext und ggf. Signalart */
@@ -465,7 +465,7 @@ function lkAlign(isp, a, C, p) {
 }
 function lkAddPin(D, isp, fac, C, p) {
   const W = lkW(C);
-  const wp = W.pins.find(x => x.uid === p.uid);
+  const wp = pinOf(W, p.uid);
   if (!wp) return null;
   const first = lkArts(isp).find(x => wtxt(x.a, "standort"));
   const standort = first ? wtxt(first.a, "standort") : lkIspKey(isp);
