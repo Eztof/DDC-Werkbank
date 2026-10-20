@@ -95,3 +95,29 @@ const UNITS = {
 };
 export const unitLabel = u => (u == null || u === "") ? "" : (Object.prototype.hasOwnProperty.call(UNITS, u) ? UNITS[u] : "[" + u + "]");
 
+
+/* ---------- Lange Listen schrittweise aufbauen ----------
+   Die ersten Einträge sofort, der Rest in kleinen Häppchen danach – die
+   Oberfläche bleibt bedienbar, auch bei Tausenden Zeilen. Am Ende ist alles
+   da (Strg+F, Drucken und Kopieren funktionieren wie gewohnt).
+   opts: first (sofort, Standard 150), step (je Häppchen, 300), until (Index, der sofort da sein muss),
+         scroller (Element, dessen gemerkte Scrollposition nachgezogen wird), done() */
+export function lazyAppend(parent, items, render, opts) {
+  const o = opts || {}, step = o.step || 300;
+  let i = 0;
+  const more = n => {
+    const end = Math.min(items.length, i + n), frag = document.createDocumentFragment();
+    for (; i < end; i++) { const el = render(items[i], i); if (el) frag.appendChild(el); }
+    parent.appendChild(frag);
+    const sc = o.scroller, want = sc && sc._wantScroll;
+    if (want) { if (sc.scrollHeight - sc.clientHeight >= want[0] || i >= items.length) { sc.scrollTop = want[0]; sc.scrollLeft = want[1]; sc._wantScroll = null; } else sc.scrollTop = want[0]; }
+  };
+  more(Math.max(o.first || 150, (o.until == null ? -1 : o.until) + 1));
+  const next = () => {
+    if (i >= items.length) { if (o.done) o.done(); return; }
+    if (!parent.isConnected) return;            // Ansicht inzwischen neu gezeichnet
+    more(step); setTimeout(next, 0);
+  };
+  if (i < items.length) setTimeout(next, 0); else if (o.done) o.done();
+  return { get count() { return i; } };
+}

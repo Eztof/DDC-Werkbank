@@ -1,6 +1,7 @@
 import { go } from "../core/nav.js";
 import { APP, byCid } from "../core/state.js";
-import { VIEWS } from "../core/ext.js";
+import { VIEWS, WD_TABS } from "../core/ext.js";
+import { safely } from "../core/registry.js";
 import { $, $$, download, h, natCmp, norm, trunc, uniq } from "../core/util.js";
 import { decodeBytes } from "../core/load.js";
 import { edgesIn, edgesOut, isOutputKind, pinOf } from "../model/model.js";
@@ -12,8 +13,7 @@ import { liveInfo, livePinText } from "../core/live.js";
 import { WTG_NS, ispXml, newGid, pinsOfGroup, regroupBy, setKlartext, wdModel } from "./generator.js";
 import { assignPlant, plantOfNode } from "./anlagen.js";
 import { FS_OK, WDOC, wDate, wDateFromInput, wDateToInput, wPersons, wPrueferDefault, wPrueferOf, wRenumber, wSetPruefer, wSnapshot, wUndo, wdocBauteile, wdocChanged, wdocInfo, wdocInsertIsp, wdocOpen, wdocPickAndLink, wdocSave, wdocStatus, wdocText, wkid, wkids, wset, wtxt } from "./wtgml.js";
-import { LK_ON, artRemarkSuggestion, lkCentral, lkDocStats, lkGoto, lkLinks, lkSplitTag, pinOnlyExternal, pinUnlinked, wdLinkTab } from "./link.js";
-import { airOpenCount, wdAirTab } from "./air.js";
+import { LK_ON, artRemarkSuggestion, lkCentral, lkGoto, lkLinks, lkSplitTag, pinOnlyExternal, pinUnlinked } from "./link.js";
 
 /* =========================================================================
    Ansicht: Wartungsdoku – Dokument bearbeiten, aus Sicherung übernehmen,
@@ -97,24 +97,26 @@ VIEWS.add({
       D ? btn("Speichern", "download", () => wdocSave(D), D.dirty ? "accent" : "", "Strg+S") : null,
       D && D.writable ? btn(null, "copy", () => download(D.name.replace(/\.wtgml$/i, "") + "_kopie.wtgml", wdocText(D), "application/xml;charset=utf-8"), "", "Kopie herunterladen") : null]));
     if (D) root.appendChild(h("div", { style: { padding: "0 32px 10px" } }, h("div", { id: "wdStatus", class: "infobar" })));
-    const lkOpenN = D && APP.centrals.length ? lkDocStats(D).open : 0;
-    const airOpenN = D ? airOpenCount(D) : 0;
-    root.appendChild(h("div", { class: "pivot" },
-      [["doc", "Dokument", "doc"], ["link", "Verknüpfung", "swap"], ["air", "Zu-/Abluft", "air"], ["gen", "Aus Sicherung übernehmen", "upload"], ["mangel", "Befunde als Mängel", "alert"]].map(([k, l, ic]) =>
-        h("button", { class: APP.wdTab === k ? "on" : "", onclick: () => { APP.wdTab = k; renderAll(); } }, icon(ic), l,
-          k === "link" && lkOpenN ? h("span", { class: "badge warn", style: { marginLeft: "6px" }, title: lkOpenN + " Einträge offen" }, lkOpenN) : null,
-          k === "air" && airOpenN ? h("span", { class: "badge soft", style: { marginLeft: "6px" }, title: airOpenN + " Geräte ohne Zu-/Abluft-Angabe" }, airOpenN) : null))));
+    if (!WD_TABS.get(APP.wdTab)) APP.wdTab = D ? "doc" : "gen";
+    root.appendChild(h("div", { class: "pivot" }, WD_TABS.list().map(T => {
+      const b = D && T.badge ? safely("Reiter " + T.id, () => T.badge(D), null) : null;
+      return h("button", { class: APP.wdTab === T.id ? "on" : "", "data-tab": T.id, onclick: () => { APP.wdTab = T.id; renderAll(); } }, icon(T.icon), T.label,
+        b && b.n ? h("span", { class: "badge " + (b.cls || "soft"), style: { marginLeft: "6px" }, title: b.title || null }, b.n) : null);
+    })));
     const body = h("div", { class: "page-body", style: { paddingTop: "16px" } });
     root.appendChild(body);
     if (D) wdocStatus();
-    if (D && (APP.wdTab === "doc" || ((APP.wdTab === "link" && APP.centrals.length) || APP.wdTab === "air") && wIsps(D).length)) body.classList.add("fill");
-    if (APP.wdTab === "doc") return D ? wdDocTab(body, D) : wdNoDoc(body);
-    if (APP.wdTab === "link") return D ? wdLinkTab(body, D) : wdNoDoc(body);
-    if (APP.wdTab === "air") return D ? wdAirTab(body, D) : wdNoDoc(body);
-    if (APP.wdTab === "mangel") return D ? wdMangelTab(body, D) : wdNoDoc(body);
-    return wdGenTab(body, D);
+    const T = WD_TABS.get(APP.wdTab);
+    if (T.needsDoc && !D) return wdNoDoc(body);
+    if (D && T.fill && T.fill(D)) body.classList.add("fill");
+    return T.render(body, D);
   }
 });
+
+/* ---------- Reiter (Verknüpfung und Zu-/Abluft melden sich in link.js / air.js an) ---------- */
+WD_TABS.add({ id: "doc", label: "Dokument", icon: "doc", order: 10, needsDoc: true, fill: () => true, render: (body, D) => wdDocTab(body, D) });
+WD_TABS.add({ id: "gen", label: "Aus Sicherung übernehmen", icon: "upload", order: 40, render: (body, D) => wdGenTab(body, D) });
+WD_TABS.add({ id: "mangel", label: "Befunde als Mängel", icon: "alert", order: 50, needsDoc: true, render: (body, D) => wdMangelTab(body, D) });
 
 function wdNoDoc(body) {
   body.appendChild(h("div", { class: "card", style: { maxWidth: "860px" } },

@@ -1,5 +1,6 @@
 import { go } from "../core/nav.js";
 import { APP } from "../core/state.js";
+import { WD_TABS } from "../core/ext.js";
 import { $, h, natCmp, norm, trunc, uniq } from "../core/util.js";
 import { KIND_INFO, isOutputKind, pinOf } from "../model/model.js";
 import { btn, emptyState, icon, kindTag, renderAll, selectEl, stationLabel, toast } from "../shell/shell.js";
@@ -720,3 +721,11 @@ function lkMissingTable(main, D, isp, L, rerender) {
 const LK_OPENDET = new WeakMap();
 function S_open(isp, v) { if (v === undefined) return !!LK_OPENDET.get(isp); LK_OPENDET.set(isp, v); }
 
+
+/* ---------- Reiter „Verknüpfung“ der Wartungsdoku ---------- */
+WD_TABS.add({
+  id: "link", label: "Verknüpfung", icon: "swap", order: 20, needsDoc: true,
+  fill: D => APP.centrals.length > 0 && wIsps(D).length > 0,
+  badge: D => { const n = APP.centrals.length ? lkDocStats(D).open : 0; return n ? { n, cls: "warn", title: n + " Einträge offen" } : null; },
+  render: (body, D) => wdLinkTab(body, D)
+});

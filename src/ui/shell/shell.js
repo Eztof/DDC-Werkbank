@@ -281,10 +281,16 @@ export function renderAll() {
   }
   const key = V.scrollKey ? safely("Scroll " + V.id, () => V.scrollKey(), V.id) : APP.view + "|" + (APP.cur || "");
   const pos = !jump && APP._scroll[key];
-  if (pos) $$(SCROLL_SEL, content).forEach((el, i) => { if (pos[i] && !el.dataset.noRestore) { el.scrollTop = pos[i][0]; el.scrollLeft = pos[i][1]; } });
+  if (pos) $$(SCROLL_SEL, content).forEach((el, i) => { if (pos[i] && !el.dataset.noRestore) { el.scrollTop = pos[i][0]; el.scrollLeft = pos[i][1]; if (el.scrollTop < pos[i][0] - 2) holdScroll(el, pos[i]); } });
   APP._lastKey = key;
   APP._lastView = APP.view;
   APP.opts = {};
+}
+/* Liste wird noch aufgebaut: gemerkte Position nachziehen, bis der Benutzer selbst scrollt */
+function holdScroll(el, pos) {
+  el._wantScroll = pos;
+  const stop = () => { el._wantScroll = null; };
+  for (const ev of ["wheel", "pointerdown", "keydown", "touchstart"]) el.addEventListener(ev, stop, { once: true, passive: true });
 }
 export function pageHead(title, sub, acts) {
   return h("div", { class: "page-head" },

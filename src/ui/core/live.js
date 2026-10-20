@@ -1,37 +1,65 @@
 /* =========================================================================
-   Live-Werte (aus dem Online-Reiter) für alle Ansichten.
-   Online legt die zuletzt gelesenen Werte je Zentrale hier ab; Datenpunkte,
-   Wartungsdoku usw. fragen sie über liveOfPin() ab. Rein lesend.
+   Live-Werte für alle Ansichten.
+   Eine Live-Quelle (z. B. Online/BACnet) legt die zuletzt gelesenen Werte je
+   Zentrale hier ab; Datenpunkte, Wartungsdoku usw. fragen sie über
+   liveOfPin()/livePinText() ab – egal, woher sie kommen. Rein lesend.
+   Neue Quelle: LIVE_SOURCES.add({ id, label, format(o) }) und setLive(…, { source: id }).
    ========================================================================= */
 import { fmtNum, unitLabel } from "./util.js";
-import { emit } from "./events.js";
+import { emit, on } from "./events.js";
+import { LIVE_SOURCES } from "./ext.js";
 
-const LIVE = new Map();   // cid → { stamp, ip, byNode: Map(nodeId → Wert) }
+const LIVE = new Map();   // cid → Map(source → { source, label, stamp, ip, t, byNode: Map(nodeId → Wert) })
 
-/* Anzeige eines gelesenen BACnet-Werts: { t: Text, cls: CSS-Klasse } */
-export function liveText(o) {
+/* Standard-Anzeige eines gelesenen Werts: { t: Text, cls: CSS-Klasse }
+   o = { ok, value, err, type (BACnet-Objekttyp, optional), text (fertiger Text, optional) } */
+export function defaultLiveText(o) {
   if (!o.ok) return { t: o.err === "timeout" ? "keine Antwort" : (o.err || "Fehler"), cls: "muted" };
+  if (o.text != null) return { t: String(o.text), cls: "" };
   if (o.value == null) return { t: "—", cls: "muted" };
-  const t = o.type;
-  if (t === 3 || t === 4 || t === 5) { const on = o.value === true || o.value === 1 || o.value === "1"; return { t: on ? "EIN" : "AUS", cls: on ? "liveon" : "liveoff" }; }
-  if (t === 13 || t === 14 || t === 19) return { t: String(o.value), cls: "" };
+  if (typeof o.value === "boolean") return { t: o.value ? "EIN" : "AUS", cls: o.value ? "liveon" : "liveoff" };
   if (typeof o.value === "number") return { t: fmtNum(o.value), cls: "num" };
   return { t: String(o.value), cls: "" };
 }
-
-/* values: [{ type, inst, nodeId, ok, value, err }] wie vom Dienst gelesen */
-export function setLive(cid, ip, values, stamp) {
-  const byNode = new Map();
-  for (const v of values) if (v.nodeId && !byNode.has(v.nodeId)) byNode.set(v.nodeId, v);
-  LIVE.set(cid, { ip, stamp, byNode });
-  emit("live", { cid, stamp });
+export function liveText(o) {
+  const S = o && o.source && LIVE_SOURCES.get(o.source);
+  if (S && S.format) { try { return S.format(o); } catch (e) { console.error("Live-Quelle " + S.id + ":", e); } }
+  return defaultLiveText(o);
 }
-export const liveInfo = cid => LIVE.get(cid) || null;
-export function liveOfNode(cid, nodeId) { const L = LIVE.get(cid); return L ? L.byNode.get(nodeId) || null : null; }
+
+/* values: [{ nodeId, ok, value, err, … }]   opt: { source, stamp, ip } */
+export function setLive(cid, values, opt) {
+  const o = opt || {}, source = o.source || "bacnet", S = LIVE_SOURCES.get(source);
+  const byNode = new Map();
+  for (const v of values || []) if (v && v.nodeId && !byNode.has(v.nodeId)) byNode.set(v.nodeId, Object.assign({ source }, v));
+  if (!LIVE.has(cid)) LIVE.set(cid, new Map());
+  LIVE.get(cid).set(source, { source, label: S ? S.label : source, ip: o.ip || "", stamp: o.stamp || "", t: Date.now(), byNode });
+  emit("live", { cid, source, stamp: o.stamp });
+}
+export function clearLive(cid, source) {
+  const M = LIVE.get(cid); if (!M) return;
+  if (source) M.delete(source); else LIVE.delete(cid);
+  emit("live", { cid, source: source || null, stamp: null });
+}
+/* Neueste Lesung einer Zentrale (mit Liste aller Quellen) oder null */
+export function liveInfo(cid) {
+  const M = LIVE.get(cid); if (!M || !M.size) return null;
+  const all = [...M.values()].sort((a, b) => b.t - a.t);
+  return Object.assign({ sources: all }, all[0]);
+}
+export function liveOfNode(cid, nodeId) {
+  const M = LIVE.get(cid); if (!M) return null;
+  let best = null, bt = -1;
+  for (const L of M.values()) { const v = L.byNode.get(nodeId); if (v && L.t > bt) { best = v; bt = L.t; } }
+  return best;
+}
 export const liveOfPin = (C, p) => liveOfNode(C.cid, p.nodeId);
 /* Live-Wert einer Klemme als Text, Zahlen mit der Einheit aus der Sicherung; null wenn keiner gelesen */
 export function livePinText(C, p) {
   const o = liveOfPin(C, p); if (!o) return null;
   const f = liveText(o), v = p.value && (p.value.eff || p.value.stored), u = v && v.unit ? unitLabel(v.unit) : "";
-  return Object.assign(f, { ok: o.ok, t: o.ok && f.cls === "num" && u ? f.t + " " + u : f.t });
+  return Object.assign({}, f, { ok: o.ok, t: o.ok && f.cls === "num" && u ? f.t + " " + u : f.t });
 }
+
+/* Zentrale entfernt → ihre Live-Werte auch */
+on("zentralen", ({ centrals }) => { const keep = new Set(centrals.map(c => c.cid)); for (const cid of [...LIVE.keys()]) if (!keep.has(cid)) LIVE.delete(cid); });

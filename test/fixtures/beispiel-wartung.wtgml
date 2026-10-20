@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Maintenance prjServiceNumber="TEST-26-00" prjType="Wartung" xmlns="http://wtg.domain.core.wtg.kup">
+    <prjName>Künstliche Testwartung</prjName>
+    <customerName>Testkunde</customerName>
+    <prjObjekt objId="999">
+        <objBezeichnung>Testhalle</objBezeichnung>
+    </prjObjekt>
+    <selBauteil>
+        <bteBezeichnung>MSR-Technik</bteBezeichnung>
+        <Isp sortId="1">
+            <ispBezeichnung>Testzentrale Halle</ispBezeichnung>
+            <facility sortId="1">
+                <facBezeichnung>RLT 1 Halle</facBezeichnung>
+                <Artikel active="true" sortId="1">
+                    <nummer>#AE</nummer>
+                    <installationClass>
+                        <description>N/V</description>
+                        <shortkey>NV</shortkey>
+                        <articleProperties>
+                            <description>Info</description>
+                            <value>Klemme 001/P.01</value>
+                            <length>0</length>
+                            <type>Text</type>
+                            <checked>true</checked>
+                        </articleProperties>
+                    </installationClass>
+                    <artBezeichnung>Analogeingang</artBezeichnung>
+                    <artKlartext>RLT1 Zulufttemperatur</artKlartext>
+                    <artLbnr>#AE</artLbnr>
+                    <standort>Testzentrale Halle</standort>
+                    <job remoteMaintenanceActivitie="false" teamActivitie="true">
+                        <jobDescription>Funktion prüfen</jobDescription>
+                        <targetTime>0</targetTime>
+                    </job>
+                </Artikel>
+                <Artikel active="true" sortId="2">
+                    <nummer>#AA</nummer>
+                    <installationClass>
+                        <description>N/V</description>
+                        <shortkey>NV</shortkey>
+                    </installationClass>
+                    <artBezeichnung>Analogausgang</artBezeichnung>
+                    <artKlartext>RLT1 Heizventil</artKlartext>
+                    <standort>Testzentrale Halle</standort>
+                    <job remoteMaintenanceActivitie="false" teamActivitie="true">
+                        <jobDescription>Funktion prüfen</jobDescription>
+                        <executed>Ja</executed>
+                        <targetTime>0</targetTime>
+                    </job>
+                </Artikel>
+            </facility>
+        </Isp>
+    </selBauteil>
+</Maintenance>

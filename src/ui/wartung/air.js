@@ -1,4 +1,5 @@
 import { APP } from "../core/state.js";
+import { WD_TABS } from "../core/ext.js";
 import { h, natCmp, trunc, uniq } from "../core/util.js";
 import { btn, emptyState, icon, renderAll, selectEl } from "../shell/shell.js";
 import { pref, setPref } from "../core/persist.js";
@@ -176,3 +177,11 @@ export function wdAirTab(body, D) {
   }
 }
 
+
+/* ---------- Reiter „Zu-/Abluft“ der Wartungsdoku ---------- */
+WD_TABS.add({
+  id: "air", label: "Zu-/Abluft", icon: "air", order: 30, needsDoc: true,
+  fill: D => wIsps(D).length > 0,
+  badge: D => { const n = airOpenCount(D); return n ? { n, cls: "soft", title: n + " Geräte ohne Zu-/Abluft-Angabe" } : null; },
+  render: (body, D) => wdAirTab(body, D)
+});

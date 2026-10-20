@@ -22,6 +22,7 @@ import "./wartung/wtgml.js";
 import "./wartung/view.js";
 import "./wartung/link.js";
 import "./wartung/air.js";
+import "./wartung/in-datenpunkten.js";
 import "./views/online.js";
 import { buildShell } from "./shell/shell.js";
 import { persistInit } from "./core/persist.js";

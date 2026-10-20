@@ -1,7 +1,7 @@
-import { liveText, setLive } from "../core/live.js";
+import { defaultLiveText, setLive } from "../core/live.js";
 import { openNode, openPin } from "../core/nav.js";
 import { APP, curC } from "../core/state.js";
-import { VIEWS } from "../core/ext.js";
+import { LIVE_SOURCES, VIEWS } from "../core/ext.js";
 import { fmtNum, h, nowStamp, store } from "../core/util.js";
 import { btn, chk, emptyState, icon, pageHead, selectEl, toast } from "../shell/shell.js";
 
@@ -14,6 +14,17 @@ export const ONLINE_BASE = location.protocol === "file:" ? "http://localhost:479
 const OBJT = { 0: "AI", 1: "AO", 2: "AV", 3: "BI", 4: "BO", 5: "BV", 13: "MI", 14: "MO", 19: "MV", 8: "DEV", 17: "SCHED", 6: "CAL", 20: "TR" };
 const OBJT_LONG = { 0: "Analog-Eingang", 1: "Analog-Ausgang", 2: "Analog-Wert", 3: "Binär-Eingang", 4: "Binär-Ausgang", 5: "Binär-Wert", 13: "Multistate-Eingang", 14: "Multistate-Ausgang", 19: "Multistate-Wert" };
 const READ_TYPES = new Set([0, 1, 2, 3, 4, 5, 13, 14, 19]);
+
+/* Live-Quelle BACnet/IP: Anzeige der gelesenen Present-Values */
+function bacnetText(o) {
+  if (!o.ok || o.value == null) return defaultLiveText(o);
+  const t = o.type;
+  if (t === 3 || t === 4 || t === 5) { const on = o.value === true || o.value === 1 || o.value === "1"; return { t: on ? "EIN" : "AUS", cls: on ? "liveon" : "liveoff" }; }
+  if (t === 13 || t === 14 || t === 19) return { t: String(o.value), cls: "" };
+  if (typeof o.value === "number") return { t: fmtNum(o.value), cls: "num" };
+  return { t: String(o.value), cls: "" };
+}
+LIVE_SOURCES.add({ id: "bacnet", label: "BACnet/IP", format: bacnetText });
 
 const ONLINE = { health: "unknown", cfg: null, ip: store.get("onlineIp", ""), dev: null, objs: null, values: [], stamp: "", busy: null, err: "", auto: false, _root: null, _mounted: 0 };
 
@@ -91,7 +102,7 @@ async function olRefresh(silent) {
   const vmap = new Map(r.values.map(v => [v.type + ":" + v.inst, v]));
   ONLINE.values = ONLINE.objs.map(o => Object.assign({}, o, vmap.get(o.type + ":" + o.inst) || { ok: false, err: "?" }));
   ONLINE.stamp = nowStamp(); ONLINE.err = "";
-  if (ONLINE.C) setLive(ONLINE.C.cid, ip, ONLINE.values, ONLINE.stamp);   // für Datenpunkte, Wartungsdoku …
+  if (ONLINE.C) setLive(ONLINE.C.cid, ONLINE.values, { source: "bacnet", ip, stamp: ONLINE.stamp });   // für Datenpunkte, Wartungsdoku …
   olLayout();
   // Auto-Refresh
   clearTimeout(ONLINE._timer);
@@ -182,7 +193,7 @@ function olLayout() {
   const tbl = h("table", { class: "grid card-t" },
     h("thead", null, h("tr", null, h("th", null, "Objekt"), h("th", null, "Name"), h("th", { class: "num" }, "Wert"), C ? h("th", null, "") : null)),
     h("tbody", null, ONLINE.values.map(o => {
-      const f = liveText(o);
+      const f = bacnetText(o);
       const node = C && o.nodeId ? C.nodes.get(o.nodeId) : null;
       return h("tr", { class: o.ok ? "" : "dim" },
         h("td", { class: "mono" }, h("span", { class: "badge soft", title: OBJT_LONG[o.type] || "" }, OBJT[o.type] || o.type), " " + o.inst),
