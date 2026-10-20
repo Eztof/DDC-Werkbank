@@ -85,6 +85,7 @@ function labelOf(path) {
 
 export async function collectInputs(files) {
   const found = [];   // {fmt, kind, label, name, path, text}
+  found.skipped = [];  // Texte für die Meldung „übersprungen“
   const consider = (name, path, text) => {
     const fmt = sniffFormat(name, text);
     if (fmt) found.push({ fmt, kind: fmt.id, label: fmt.open ? name : labelOf(path), name, path, text });
@@ -102,10 +103,10 @@ export async function collectInputs(files) {
           consider(base, f.name.replace(/\.zip$/i, "") + "/" + zname, decodeBytes(data));
         }
       } else if (wantExt().test(lower) || !/\./.test(lower)) {
-        if (f.size > 60 * 1024 * 1024) continue;
+        if (f.size > 60 * 1024 * 1024) { found.skipped.push(f.name + ": zu groß (" + Math.round(f.size / 1048576) + " MB)"); continue; }
         consider(f.name, path, decodeBytes(new Uint8Array(await f.arrayBuffer())));
       }
-    } catch (e) { console.warn("Datei übersprungen", f.name, e); }
+    } catch (e) { console.warn("Datei übersprungen", f.name, e); found.skipped.push(f.name + ": nicht lesbar (" + (e && e.message || e) + ")"); }
   }
   return found;
 }

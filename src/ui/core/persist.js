@@ -5,7 +5,7 @@ import { TYPE_NAMES, nodePlace, pinOf } from "../model/model.js";
 import { SEV } from "../model/findings.js";
 import { icon, kindTag, renderAll, selectEl } from "../shell/shell.js";
 import { lkAks, lkCanon, lkInvalidate } from "../wartung/link.js";
-import { ONLINE_BASE } from "../views/online.js";
+import { svcJson } from "./service.js";
 
 /* =========================================================================
    Merkliste der Werkbank
@@ -43,8 +43,7 @@ function psave(name) {
 }
 async function psync(name) {
   try {
-    const r = await fetch(ONLINE_BASE + "/api/data/" + name, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(pfile(name)) });
-    const j = await r.json();
+    const j = await svcJson("/api/data/" + name, pfile(name));
     if (j && j.ok && j.data) { PERSIST.data[name] = pmerge(pfile(name), j.data); store.set("p." + name, PERSIST.data[name]); }
   } catch (e) { PERSIST.svc = false; }
 }
@@ -53,18 +52,18 @@ export async function persistInit() {
   PERSIST.lastTry = Date.now();
   persistMigrate();
   let h = null;
-  try { h = await (await fetch(ONLINE_BASE + "/api/health")).json(); } catch (e) { h = null; }
+  try { h = await svcJson("/api/health", undefined, 4000); } catch (e) { h = null; }
   if (!h || !h.ok) { PERSIST.svc = false; return; }
   if (!h.data) { PERSIST.old = true; PERSIST.svc = false; return; }        // Dienst zu alt (ohne Merkliste)
   let changed = false;
   for (const name of PERSIST_FILES) {
     try {
-      const j = await (await fetch(ONLINE_BASE + "/api/data/" + name)).json();
+      const j = await svcJson("/api/data/" + name);
       const local = pfile(name), merged = pmerge(local, j && j.data);
       if (JSON.stringify(merged) !== JSON.stringify(local)) changed = true;
       PERSIST.data[name] = merged; store.set("p." + name, merged);
       if (JSON.stringify(merged) !== JSON.stringify((j && j.data) || { entries: {} })) {
-        await fetch(ONLINE_BASE + "/api/data/" + name, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(merged) });
+        await svcJson("/api/data/" + name, merged);
       }
     } catch (e) { return; }
   }

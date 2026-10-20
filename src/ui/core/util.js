@@ -42,7 +42,8 @@ export const xesc = v => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&
 export const kids = (n, t) => { const a = []; if (n) for (const c of n.children) if (c.tagName === t) a.push(c); return a; };
 export const kid  = (n, t) => { if (n) for (const c of n.children) if (c.tagName === t) return c; return null; };
 export const textOf = n => { const t = kid(n, "Text"); return t ? (t.textContent || "").trim() : ""; };
-export const natCmp = (a, b) => String(a).localeCompare(String(b), "de", { numeric: true });
+const COLL = new Intl.Collator("de", { numeric: true });   // einmal anlegen – localeCompare mit Optionen ist je Aufruf teuer
+export const natCmp = (a, b) => COLL.compare(String(a), String(b));
 export const trunc = (v, n) => { v = String(v ?? ""); return v.length > n ? v.slice(0, n - 1) + "…" : v; };
 export const uniq = a => [...new Set(a)];
 export const norm = v => String(v || "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -51,8 +52,11 @@ export function fmtNum(v, dec) {
   const f = parseFloat(v);
   if (isNaN(f)) return String(v ?? "");
   if (dec == null) dec = Math.abs(f) >= 1000 || Number.isInteger(f) ? 0 : (Math.abs(f) < 10 ? 2 : 1);
-  return f.toLocaleString("de-DE", { minimumFractionDigits: 0, maximumFractionDigits: dec });
+  let nf = NUMF.get(dec);
+  if (!nf) NUMF.set(dec, nf = new Intl.NumberFormat("de-DE", { minimumFractionDigits: 0, maximumFractionDigits: dec }));
+  return nf.format(f);
 }
+const NUMF = new Map();
 export function fmtUnix(sec) {
   const n = parseInt(sec, 10);
   if (!n || n < 100000000) return "";
@@ -83,7 +87,10 @@ export function copyText(t) {
 }
 export const store = {
   get(k, d) { try { const v = localStorage.getItem("ddcwb." + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
-  set(k, v) { try { localStorage.setItem("ddcwb." + k, JSON.stringify(v)); } catch (e) {} }
+  set(k, v) {
+    try { localStorage.setItem("ddcwb." + k, JSON.stringify(v)); return true; }
+    catch (e) { if (!store._warned) { store._warned = true; console.warn("Browser-Speicher voll oder gesperrt:", e); } return false; }
+  }
 };
 
 /* ---------- Einheiten (BACnet-Engineering-Units, wie von K&P verwendet) ---------- */
@@ -97,27 +104,45 @@ export const unitLabel = u => (u == null || u === "") ? "" : (Object.prototype.h
 
 
 /* ---------- Lange Listen schrittweise aufbauen ----------
-   Die ersten Einträge sofort, der Rest in kleinen Häppchen danach – die
-   Oberfläche bleibt bedienbar, auch bei Tausenden Zeilen. Am Ende ist alles
-   da (Strg+F, Drucken und Kopieren funktionieren wie gewohnt).
-   opts: first (sofort, Standard 150), step (je Häppchen, 300), until (Index, der sofort da sein muss),
-         scroller (Element, dessen gemerkte Scrollposition nachgezogen wird), done() */
+   Die ersten Einträge sofort, weitere beim Herunterscrollen – die Oberfläche
+   bleibt bedienbar, auch bei Tausenden Zeilen. Vor Strg+F und Drucken wird
+   der Rest auf einmal gezeichnet (lazyFillAll).
+   opts: first (sofort, Standard 150), step (je Nachschub, 300), until (Index, der sofort da sein muss),
+         scroller (scrollendes Element; sonst das nächste umgebende) */
+export const LAZY = { all: false };   // true: alles sofort zeichnen
+const LAZY_OPEN = new Set();
+const SCROLLERS = ".page-body, .grid-wrap, .center, .rail, .drawer, .wd-main";
 export function lazyAppend(parent, items, render, opts) {
   const o = opts || {}, step = o.step || 300;
-  let i = 0;
+  let i = 0, sc = null, queued = false, tries = 0;
   const more = n => {
     const end = Math.min(items.length, i + n), frag = document.createDocumentFragment();
     for (; i < end; i++) { const el = render(items[i], i); if (el) frag.appendChild(el); }
     parent.appendChild(frag);
-    const sc = o.scroller, want = sc && sc._wantScroll;
-    if (want) { if (sc.scrollHeight - sc.clientHeight >= want[0] || i >= items.length) { sc.scrollTop = want[0]; sc.scrollLeft = want[1]; sc._wantScroll = null; } else sc.scrollTop = want[0]; }
   };
-  more(Math.max(o.first || 150, (o.until == null ? -1 : o.until) + 1));
-  const next = () => {
-    if (i >= items.length) { if (o.done) o.done(); return; }
-    if (!parent.isConnected) return;            // Ansicht inzwischen neu gezeichnet
-    more(step); setTimeout(next, 0);
+  const L = { fill: () => { more(items.length); finish(); } };
+  const finish = () => { LAZY_OPEN.delete(L); delete parent.dataset.lazy; if (sc) sc.removeEventListener("scroll", onScroll); };
+  const pump = () => {
+    queued = false;
+    if (!parent.isConnected) { if (sc || ++tries > 3) finish(); else schedule(); return; }   // verworfen – oder noch nicht eingehängt
+    if (!sc) { sc = o.scroller || parent.closest(SCROLLERS); if (sc) sc.addEventListener("scroll", onScroll, { passive: true }); }
+    const want = sc && sc._wantScroll;
+    const need = !sc || want || sc.scrollTop + sc.clientHeight > sc.scrollHeight - 1500;
+    if (!need) return;                       // weiter erst beim Scrollen
+    more(step);
+    if (want) { sc.scrollTop = want[0]; sc.scrollLeft = want[1]; if (sc.scrollTop >= want[0] - 2) sc._wantScroll = null; }
+    if (i >= items.length) { if (want) sc._wantScroll = null; finish(); return; }
+    schedule();
   };
-  if (i < items.length) setTimeout(next, 0); else if (o.done) o.done();
-  return { get count() { return i; } };
+  const schedule = () => { if (!queued) { queued = true; setTimeout(pump, 0); } };
+  const onScroll = () => schedule();
+  more(LAZY.all ? items.length : Math.max(o.first || 150, (o.until == null ? -1 : o.until) + 1));
+  if (i < items.length) { parent.dataset.lazy = "1"; LAZY_OPEN.add(L); schedule(); }
+  return L;
 }
+/* Alle noch offenen Listen sofort fertig zeichnen */
+export function lazyFillAll() {
+  for (const L of [...LAZY_OPEN]) L.fill();
+}
+/* Scrollposition soll wiederhergestellt werden: Listen in diesem Bereich nachladen */
+export function lazyKick(sc) { sc.dispatchEvent(new Event("scroll")); }

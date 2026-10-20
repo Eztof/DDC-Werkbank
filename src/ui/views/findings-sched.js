@@ -1,7 +1,7 @@
 import { go, openNode, openPin, openRef } from "../core/nav.js";
 import { APP, vstate } from "../core/state.js";
 import { SEARCH, VIEWS } from "../core/ext.js";
-import { $, copyText, csv, download, fmtNum, h, natCmp, norm, nowStamp, safeName, trunc, uniq } from "../core/util.js";
+import { $, copyText, csv, download, fmtNum, LAZY, h, lazyAppend, natCmp, norm, nowStamp, safeName, trunc, uniq } from "../core/util.js";
 import { nodePlace, valText } from "../model/model.js";
 import { WD } from "../model/d4pml.js";
 import { SEV, SEV_LABEL } from "../model/findings.js";
@@ -45,7 +45,7 @@ VIEWS.add({
         list().forEach(f => rows.push([SEV_LABEL[f.sev], f.cat, f.title, f.detail, f.ref ? (f.ref.pin || f.ref.node || "") : ""]));
         download(safeName(C.meta.name) + "_Befunde.csv", csv(rows), "text/csv;charset=utf-8");
       }),
-      btn("Drucken", "print", () => { S.open = new Set(cats()); renderAll(); setTimeout(() => window.print(), 100); })]));
+      btn("Drucken", "print", () => { S.open = new Set(cats()); LAZY.all = true; try { renderAll(); } finally { LAZY.all = false; } setTimeout(() => window.print(), 100); })]));
     const cats = () => uniq(C.findings.map(f => f.cat));
     const list = () => {
       const q = norm(S.q);
@@ -87,13 +87,18 @@ VIEWS.add({
       for (const [cat, fs] of order) {
         const open = S.open.has(cat) || !!S.q || APP.ignView === "nur";
         const c = { err: 0, warn: 0, info: 0 }; fs.forEach(f => c[f.sev]++);
+        /* Zeilen erst bauen, wenn die Gruppe offen ist – große Gruppen schrittweise */
+        const bd = h("div", { class: "bd" });
+        let built = false;
+        const build = () => { if (built) return; built = true; const fi = opts.focus != null ? fs.findIndex(f => f.id === opts.focus) : -1; lazyAppend(bd, fs, f => findingRow(C, f), { first: 60, until: fi >= 0 ? fi : null }); };
+        if (open) build();
         const g = h("div", { class: "card tight fgroup" + (open ? " open" : "") },
-          h("div", { class: "hd", onclick: () => { S.open.has(cat) ? S.open.delete(cat) : S.open.add(cat); g.classList.toggle("open"); } },
+          h("div", { class: "hd", onclick: () => { S.open.has(cat) ? S.open.delete(cat) : S.open.add(cat); build(); g.classList.toggle("open"); } },
             h("span", { class: "tw" }, icon("chev")), h("span", { class: "t" }, cat),
             c.err ? h("span", { class: "pill err" }, c.err + " Fehler") : null, c.warn ? h("span", { class: "pill warn" }, c.warn + " Warnung" + (c.warn > 1 ? "en" : "")) : null,
             c.info ? h("span", { class: "pill inf" }, c.info + " Hinweis" + (c.info > 1 ? "e" : "")) : null,
             h("span", { class: "grow" }), ignButton(C, fs)),
-          h("div", { class: "bd" }, fs.map(f => findingRow(C, f))));
+          bd);
         box.appendChild(g);
       }
       if (opts.focus != null) {

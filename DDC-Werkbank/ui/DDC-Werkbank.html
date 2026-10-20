@@ -711,7 +711,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const t = kid(n, "Text");
     return t ? (t.textContent || "").trim() : "";
   };
-  var natCmp = (a, b) => String(a).localeCompare(String(b), "de", { numeric: true });
+  var COLL = new Intl.Collator("de", { numeric: true });
+  var natCmp = (a, b) => COLL.compare(String(a), String(b));
   var trunc = (v, n) => {
     v = String(v ?? "");
     return v.length > n ? v.slice(0, n - 1) + "…" : v;
@@ -722,8 +723,11 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const f = parseFloat(v);
     if (isNaN(f)) return String(v ?? "");
     if (dec == null) dec = Math.abs(f) >= 1e3 || Number.isInteger(f) ? 0 : Math.abs(f) < 10 ? 2 : 1;
-    return f.toLocaleString("de-DE", { minimumFractionDigits: 0, maximumFractionDigits: dec });
+    let nf = NUMF.get(dec);
+    if (!nf) NUMF.set(dec, nf = new Intl.NumberFormat("de-DE", { minimumFractionDigits: 0, maximumFractionDigits: dec }));
+    return nf.format(f);
   }
+  var NUMF = /* @__PURE__ */ new Map();
   function fmtUnix(sec) {
     const n = parseInt(sec, 10);
     if (!n || n < 1e8) return "";
@@ -775,7 +779,13 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     set(k, v) {
       try {
         localStorage.setItem("ddcwb." + k, JSON.stringify(v));
+        return true;
       } catch (e) {
+        if (!store._warned) {
+          store._warned = true;
+          console.warn("Browser-Speicher voll oder gesperrt:", e);
+        }
+        return false;
       }
     }
   };
@@ -812,9 +822,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     "135": "m³/h"
   };
   var unitLabel = (u) => u == null || u === "" ? "" : Object.prototype.hasOwnProperty.call(UNITS, u) ? UNITS[u] : "[" + u + "]";
+  var LAZY = { all: false };
+  var LAZY_OPEN = /* @__PURE__ */ new Set();
+  var SCROLLERS = ".page-body, .grid-wrap, .center, .rail, .drawer, .wd-main";
   function lazyAppend(parent, items, render, opts) {
     const o = opts || {}, step = o.step || 300;
-    let i = 0;
+    let i = 0, sc = null, queued = false, tries = 0;
     const more = (n) => {
       const end = Math.min(items.length, i + n), frag = document.createDocumentFragment();
       for (; i < end; i++) {
@@ -822,30 +835,63 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         if (el) frag.appendChild(el);
       }
       parent.appendChild(frag);
-      const sc = o.scroller, want = sc && sc._wantScroll;
-      if (want) {
-        if (sc.scrollHeight - sc.clientHeight >= want[0] || i >= items.length) {
-          sc.scrollTop = want[0];
-          sc.scrollLeft = want[1];
-          sc._wantScroll = null;
-        } else sc.scrollTop = want[0];
-      }
     };
-    more(Math.max(o.first || 150, (o.until == null ? -1 : o.until) + 1));
-    const next = () => {
-      if (i >= items.length) {
-        if (o.done) o.done();
+    const L = { fill: () => {
+      more(items.length);
+      finish();
+    } };
+    const finish = () => {
+      LAZY_OPEN.delete(L);
+      delete parent.dataset.lazy;
+      if (sc) sc.removeEventListener("scroll", onScroll);
+    };
+    const pump = () => {
+      queued = false;
+      if (!parent.isConnected) {
+        if (sc || ++tries > 3) finish();
+        else schedule();
         return;
       }
-      if (!parent.isConnected) return;
+      if (!sc) {
+        sc = o.scroller || parent.closest(SCROLLERS);
+        if (sc) sc.addEventListener("scroll", onScroll, { passive: true });
+      }
+      const want = sc && sc._wantScroll;
+      const need = !sc || want || sc.scrollTop + sc.clientHeight > sc.scrollHeight - 1500;
+      if (!need) return;
       more(step);
-      setTimeout(next, 0);
+      if (want) {
+        sc.scrollTop = want[0];
+        sc.scrollLeft = want[1];
+        if (sc.scrollTop >= want[0] - 2) sc._wantScroll = null;
+      }
+      if (i >= items.length) {
+        if (want) sc._wantScroll = null;
+        finish();
+        return;
+      }
+      schedule();
     };
-    if (i < items.length) setTimeout(next, 0);
-    else if (o.done) o.done();
-    return { get count() {
-      return i;
-    } };
+    const schedule = () => {
+      if (!queued) {
+        queued = true;
+        setTimeout(pump, 0);
+      }
+    };
+    const onScroll = () => schedule();
+    more(LAZY.all ? items.length : Math.max(o.first || 150, (o.until == null ? -1 : o.until) + 1));
+    if (i < items.length) {
+      parent.dataset.lazy = "1";
+      LAZY_OPEN.add(L);
+      schedule();
+    }
+    return L;
+  }
+  function lazyFillAll() {
+    for (const L of [...LAZY_OPEN]) L.fill();
+  }
+  function lazyKick(sc) {
+    sc.dispatchEvent(new Event("scroll"));
   }
 
   // src/ui/core/registry.js
@@ -1007,6 +1053,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   }
   async function collectInputs(files) {
     const found = [];
+    found.skipped = [];
     const consider = (name, path, text) => {
       const fmt = sniffFormat(name, text);
       if (fmt) found.push({ fmt, kind: fmt.id, label: fmt.open ? name : labelOf(path), name, path, text });
@@ -1024,11 +1071,15 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
             consider(base, f.name.replace(/\.zip$/i, "") + "/" + zname, decodeBytes(data));
           }
         } else if (wantExt().test(lower) || !/\./.test(lower)) {
-          if (f.size > 60 * 1024 * 1024) continue;
+          if (f.size > 60 * 1024 * 1024) {
+            found.skipped.push(f.name + ": zu groß (" + Math.round(f.size / 1048576) + " MB)");
+            continue;
+          }
           consider(f.name, path, decodeBytes(new Uint8Array(await f.arrayBuffer())));
         }
       } catch (e) {
         console.warn("Datei übersprungen", f.name, e);
+        found.skipped.push(f.name + ": nicht lesbar (" + (e && e.message || e) + ")");
       }
     }
     return found;
@@ -4386,11 +4437,18 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       })
     ));
     const gbox = h("div", { class: "wgroups" });
+    const glist = h("div", { class: "stack", style: { gap: "10px" } });
+    gbox.appendChild(glist);
     const gOpts = () => W.groups.map((g) => [g.gid, g.name]);
-    W.groups.forEach((g, gi) => {
-      const all = W.pins.filter((p) => p.gid === g.gid);
+    const byGid = /* @__PURE__ */ new Map();
+    for (const p of W.pins) {
+      if (!byGid.has(p.gid)) byGid.set(p.gid, []);
+      byGid.get(p.gid).push(p);
+    }
+    lazyAppend(glist, W.groups, (g, gi) => {
+      const all = byGid.get(g.gid) || [];
       const pins = pinsOfGroup(W, g.gid);
-      if (!all.length && !pins.length && g.name !== "Neue Gruppe") return;
+      if (!all.length && !pins.length && g.name !== "Neue Gruppe") return null;
       const gn = h("input", { class: "in gn", value: g.name });
       gn.addEventListener("input", () => {
         g.name = gn.value;
@@ -4467,7 +4525,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
             h("td", null, kindTag(p.kind)),
             h("td", null, ik),
             h("td", { class: "muted small", title: why }, p.name || "–", W.opt.mode === "anlage" ? h("span", { class: "sub", style: { color: p.how === "Programm" ? "var(--ok)" : p.how === "Name" ? "var(--warn)" : "var(--text-3)" } }, p.how === "Programm" ? "● Programm" : p.how === "Name" ? "● Name" : "○ ohne Bezug") : null),
-            h("td", null, selectEl(gOpts(), p.gid, (v) => {
+            h("td", null, lazySelectEl(gOpts, p.gid, (v) => {
               p.gid = v;
               renderAll();
             }))
@@ -4481,8 +4539,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         t.appendChild(tb);
         d.appendChild(t);
       } else d.appendChild(h("div", { class: "small muted", style: { padding: "10px 12px" } }, "Leer – Datenpunkte hierher ziehen."));
-      gbox.appendChild(d);
-    });
+      return d;
+    }, { first: 4, step: 3, scroller: body });
     gbox.appendChild(h("div", null, btn("Gruppe hinzufügen", "plus", () => {
       W.groups.push({ gid: newGid(), name: "Neue Gruppe" });
       renderAll();
@@ -4976,7 +5034,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         }),
         btn("Drucken", "print", () => {
           S.open = new Set(cats());
-          renderAll();
+          LAZY.all = true;
+          try {
+            renderAll();
+          } finally {
+            LAZY.all = false;
+          }
           setTimeout(() => window.print(), 100);
         })
       ]));
@@ -5064,6 +5127,15 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           const open = S.open.has(cat) || !!S.q || APP.ignView === "nur";
           const c = { err: 0, warn: 0, info: 0 };
           fs.forEach((f) => c[f.sev]++);
+          const bd = h("div", { class: "bd" });
+          let built = false;
+          const build = () => {
+            if (built) return;
+            built = true;
+            const fi = opts.focus != null ? fs.findIndex((f) => f.id === opts.focus) : -1;
+            lazyAppend(bd, fs, (f) => findingRow(C, f), { first: 60, until: fi >= 0 ? fi : null });
+          };
+          if (open) build();
           const g = h(
             "div",
             { class: "card tight fgroup" + (open ? " open" : "") },
@@ -5071,6 +5143,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
               "div",
               { class: "hd", onclick: () => {
                 S.open.has(cat) ? S.open.delete(cat) : S.open.add(cat);
+                build();
                 g.classList.toggle("open");
               } },
               h("span", { class: "tw" }, icon("chev")),
@@ -5081,7 +5154,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
               h("span", { class: "grow" }),
               ignButton(C, fs)
             ),
-            h("div", { class: "bd" }, fs.map((f) => findingRow(C, f)))
+            bd
           );
           box.appendChild(g);
         }
@@ -6991,34 +7064,45 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return { alpha, comp };
   }
   var pfx = (a, b) => a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a));
+  function basesOf(F) {
+    if (F._bases) return F._bases;
+    const m = /* @__PURE__ */ new Map();
+    for (const q of F.comp) {
+      const [b, n] = q.split("#");
+      if (!m.has(b)) m.set(b, /* @__PURE__ */ new Set());
+      m.get(b).add(n);
+    }
+    F._alphaArr = [...F.alpha];
+    return F._bases = m;
+  }
   function nameScore(P, Q) {
     let s2 = 0, hits = 0, conflict = false, strong = false;
+    const qBases = basesOf(Q), pBases = basesOf(P), qArr = Q._alphaArr;
     for (const p of P.alpha) {
       if (Q.alpha.has(p)) {
         s2 += 1;
         hits++;
         if (p.length >= 6) strong = true;
-      } else if ([...Q.alpha].some((q) => pfx(p, q))) {
+      } else if (p.length >= 4 && qArr.some((q) => pfx(p, q))) {
         s2 += 0.6;
         hits++;
       }
     }
-    const qBases = /* @__PURE__ */ new Map();
-    for (const q of Q.comp) {
-      const [b, n] = q.split("#");
-      if (!qBases.has(b)) qBases.set(b, /* @__PURE__ */ new Set());
-      qBases.get(b).add(n);
-    }
-    const pBases = /* @__PURE__ */ new Map();
-    for (const p of P.comp) {
-      const [b, n] = p.split("#");
-      if (!pBases.has(b)) pBases.set(b, /* @__PURE__ */ new Set());
-      pBases.get(b).add(n);
-    }
-    for (const [b, ns] of pBases) {
-      const qb = qBases.get(b) || [...qBases.keys()].filter((x) => pfx(x, b)).map((x) => qBases.get(x))[0];
+    if (pBases.size && qBases.size) for (const [b, ns] of pBases) {
+      let qb = qBases.get(b);
+      if (!qb) {
+        for (const [x, v] of qBases) if (pfx(x, b)) {
+          qb = v;
+          break;
+        }
+      }
       if (!qb) continue;
-      if ([...ns].some((n) => qb.has(n))) {
+      let any = false;
+      for (const n of ns) if (qb.has(n)) {
+        any = true;
+        break;
+      }
+      if (any) {
         s2 += 1.5;
         strong = true;
       } else {
@@ -7056,14 +7140,14 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       P.groups.set(g.key, { key: g.key, name: gname, collector: collector || /sammel|ssm|st(ö|oe)rmeld|lampen?\b|meldungen/i.test(gname), feat: nameFeatures(name + " " + gname) });
     }
     for (const P of plants.values()) P.feat = nameFeatures(P.name);
+    plants.byGroup = /* @__PURE__ */ new Map();
+    for (const P of plants.values()) for (const G of P.groups.values()) if (!plants.byGroup.has(G.key)) plants.byGroup.set(G.key, { P, G });
     C._plants = plants;
     return plants;
   }
   function plantOfNode(C, n) {
     if (!n || n.isPin || n.ghost) return null;
-    const plants = plantsOf(C);
-    for (const P of plants.values()) if (P.groups.has(n.gKey)) return { P, G: P.groups.get(n.gKey) };
-    return null;
+    return plantsOf(C).byGroup.get(n.gKey) || null;
   }
   function assignPlant(C, pin) {
     const plants = plantsOf(C);
@@ -8475,307 +8559,23 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     render: (body, D) => wdLinkTab(body, D)
   });
 
-  // src/ui/views/online.js
-  var ONLINE_BASE = location.protocol === "file:" ? "http://localhost:47902" : "";
-  var OBJT = { 0: "AI", 1: "AO", 2: "AV", 3: "BI", 4: "BO", 5: "BV", 13: "MI", 14: "MO", 19: "MV", 8: "DEV", 17: "SCHED", 6: "CAL", 20: "TR" };
-  var OBJT_LONG = { 0: "Analog-Eingang", 1: "Analog-Ausgang", 2: "Analog-Wert", 3: "Binär-Eingang", 4: "Binär-Ausgang", 5: "Binär-Wert", 13: "Multistate-Eingang", 14: "Multistate-Ausgang", 19: "Multistate-Wert" };
-  var READ_TYPES = /* @__PURE__ */ new Set([0, 1, 2, 3, 4, 5, 13, 14, 19]);
-  function bacnetText(o) {
-    if (!o.ok || o.value == null) return defaultLiveText(o);
-    const t = o.type;
-    if (t === 3 || t === 4 || t === 5) {
-      const on2 = o.value === true || o.value === 1 || o.value === "1";
-      return { t: on2 ? "EIN" : "AUS", cls: on2 ? "liveon" : "liveoff" };
-    }
-    if (t === 13 || t === 14 || t === 19) return { t: String(o.value), cls: "" };
-    if (typeof o.value === "number") return { t: fmtNum(o.value), cls: "num" };
-    return { t: String(o.value), cls: "" };
-  }
-  LIVE_SOURCES.add({ id: "bacnet", label: "BACnet/IP", format: bacnetText });
-  var ONLINE = { health: "unknown", cfg: null, ip: store.get("onlineIp", ""), dev: null, objs: null, values: [], stamp: "", busy: null, err: "", auto: false, _root: null, _mounted: 0 };
-  async function olFetch(path, opts) {
+  // src/ui/core/service.js
+  var SERVICE_BASE = location.protocol === "file:" ? "http://localhost:47902" : "";
+  async function svcJson(path, body, ms) {
+    const ctl = typeof AbortController === "function" ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), ms || 8e3) : null;
     try {
-      const r = await fetch(ONLINE_BASE + path, opts);
-      const j = await r.json();
-      if (ONLINE.health !== "up") {
-        ONLINE.health = "up";
-      }
-      return j;
+      const opts = { signal: ctl ? ctl.signal : void 0 };
+      if (body !== void 0) Object.assign(opts, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const r = await fetch(SERVICE_BASE + path, opts);
+      return await r.json();
     } catch (e) {
-      ONLINE.health = "down";
-      return null;
+      if (e && e.name === "AbortError") throw new Error("Zeitüberschreitung (" + path + ")");
+      throw e;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
-  async function olCheckHealth() {
-    const r = await olFetch("/api/health");
-    if (r && r.ok) {
-      ONLINE.health = "up";
-      if (!ONLINE.cfg) await olLoadConfig();
-    } else ONLINE.health = "down";
-    olLayout();
-  }
-  async function olLoadConfig() {
-    const r = await olFetch("/api/config");
-    ONLINE.cfg = r && r.centrals ? r : { centrals: [], settings: {} };
-    if (!ONLINE.ip && ONLINE.cfg.centrals[0]) ONLINE.ip = ONLINE.cfg.centrals[0].ip;
-  }
-  function olBacnetObjects(C) {
-    if (!C || !C.bacnet || !C.bacnet.length) return null;
-    const seen = /* @__PURE__ */ new Set(), out = [];
-    for (const b of C.bacnet) {
-      const t = b.btype, inst = parseInt(b.inst, 10);
-      if (!READ_TYPES.has(t) || isNaN(inst)) continue;
-      const key = t + ":" + inst;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({ type: t, inst, name: (b.name || "").trim() || "Objekt " + inst, nodeId: b.nodeId || null });
-    }
-    return out.length ? out : null;
-  }
-  async function olConnect() {
-    const ip = (ONLINE.ip || "").trim();
-    if (!ip) {
-      toast("Bitte IP-Adresse der Zentrale eingeben.", "warn");
-      return;
-    }
-    store.set("onlineIp", ip);
-    ONLINE.dev = null;
-    ONLINE.values = [];
-    ONLINE.objs = null;
-    ONLINE.err = "";
-    ONLINE.busy = "connect";
-    olLayout();
-    const C = ONLINE.C;
-    const known = C && C.meta && C.meta.bacnetDevId ? "&inst=" + encodeURIComponent(C.meta.bacnetDevId) : "";
-    const r = await olFetch("/api/identify?ip=" + encodeURIComponent(ip) + known);
-    ONLINE.busy = null;
-    if (!r) {
-      olLayout();
-      return;
-    }
-    if (!r.ok) {
-      ONLINE.err = r.err || "Keine Verbindung.";
-      olLayout();
-      return;
-    }
-    ONLINE.dev = r;
-    olLayout();
-    olRefresh();
-  }
-  async function olRefresh(silent) {
-    if (!ONLINE.dev) return;
-    const ip = ONLINE.ip.trim();
-    if (!ONLINE.objs) {
-      const fromBackup = olBacnetObjects(ONLINE.C);
-      if (fromBackup) ONLINE.objs = fromBackup;
-      else {
-        ONLINE.busy = "browse";
-        if (!silent) olLayout();
-        const b = await olFetch("/api/browse?ip=" + encodeURIComponent(ip) + "&inst=" + ONLINE.dev.inst);
-        ONLINE.busy = null;
-        if (!b || !b.ok) {
-          ONLINE.err = b && b.err || "Objektliste nicht lesbar.";
-          olLayout();
-          return;
-        }
-        ONLINE.objs = b.objects.filter((o) => READ_TYPES.has(o.type)).map((o) => ({ type: o.type, inst: o.inst, name: (o.name || "").trim() || OBJT[o.type] + " " + o.inst, nodeId: null }));
-      }
-    }
-    ONLINE.busy = "live";
-    if (!silent) olLayout();
-    const payload = { ip, objects: ONLINE.objs.map((o) => ({ type: o.type, inst: o.inst })) };
-    const r = await olFetch("/api/live", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    ONLINE.busy = null;
-    if (!r || !r.ok) {
-      ONLINE.err = r && r.err || "Werte konnten nicht gelesen werden.";
-      olLayout();
-      return;
-    }
-    const vmap = new Map(r.values.map((v) => [v.type + ":" + v.inst, v]));
-    ONLINE.values = ONLINE.objs.map((o) => Object.assign({}, o, vmap.get(o.type + ":" + o.inst) || { ok: false, err: "?" }));
-    ONLINE.stamp = nowStamp();
-    ONLINE.err = "";
-    if (ONLINE.C) setLive(ONLINE.C.cid, ONLINE.values, { source: "bacnet", ip, stamp: ONLINE.stamp });
-    olLayout();
-    clearTimeout(ONLINE._timer);
-    if (ONLINE.auto) ONLINE._timer = setTimeout(() => {
-      if (document.body.contains(ONLINE._root) && APP.view === "online") olRefresh(true);
-    }, 5e3);
-  }
-  async function olSaveCentral() {
-    const ip = (ONLINE.ip || "").trim();
-    if (!ip) return;
-    const dflt = ONLINE.dev && ONLINE.dev.name ? ONLINE.dev.name : "";
-    const name = (prompt("Name für diese Zentrale:", dflt) || "").trim();
-    if (!name) return;
-    if (!ONLINE.cfg) ONLINE.cfg = { centrals: [], settings: {} };
-    const ex = ONLINE.cfg.centrals.find((c) => c.ip === ip);
-    if (ex) ex.name = name;
-    else ONLINE.cfg.centrals.push({ name, ip });
-    const r = await olFetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(ONLINE.cfg) });
-    toast(r && r.ok ? "Zentrale gespeichert." : "Speichern fehlgeschlagen.", r && r.ok ? "ok" : "err");
-    olLayout();
-  }
-  function olLayout() {
-    const root = ONLINE._root;
-    if (!root || !document.body.contains(root)) return;
-    root.innerHTML = "";
-    if (ONLINE.health === "down") {
-      root.appendChild(h(
-        "div",
-        { class: "infobar warn" },
-        icon("alert"),
-        h(
-          "div",
-          null,
-          h("b", null, "Der Hintergrunddienst läuft nicht. "),
-          "Der Online-Modus braucht das Programm ",
-          h("code", null, "DDC-Werkbank.exe"),
-          " aus deinem Werkbank-Ordner. ",
-          "Starte es (Doppelklick) und prüfe dann erneut. Alle übrigen Funktionen der Werkbank laufen ohne den Dienst wie gewohnt.",
-          h("div", { class: "row", style: { marginTop: "10px" } }, btn("Erneut prüfen", "clock", () => {
-            ONLINE.health = "unknown";
-            olLayout();
-            olCheckHealth();
-          }, "accent"))
-        )
-      ));
-      return;
-    }
-    if (ONLINE.health === "unknown") {
-      root.appendChild(h("div", { class: "card" }, h("div", { class: "row" }, spinner(), "Suche den lokalen Dienst …")));
-      return;
-    }
-    const ipIn = h("input", { class: "in", style: { width: "180px" }, placeholder: "z. B. 192.168.24.210", value: ONLINE.ip, onkeydown: (e) => {
-      if (e.key === "Enter") {
-        ONLINE.ip = e.target.value;
-        olConnect();
-      }
-    }, oninput: (e) => ONLINE.ip = e.target.value });
-    const bar = h(
-      "div",
-      { class: "card", style: { marginBottom: "14px" } },
-      h(
-        "div",
-        { class: "row" },
-        h("span", { class: "muted" }, "Zentrale:"),
-        ipIn,
-        btn(ONLINE.busy === "connect" ? "Verbinde …" : "Verbinden", "swap", () => olConnect(), "accent"),
-        ONLINE.cfg && ONLINE.cfg.centrals.length ? selectEl([["", "— gespeicherte Zentrale —"]].concat(ONLINE.cfg.centrals.map((c) => [c.ip, c.name + " · " + c.ip])), "", (v) => {
-          if (v) {
-            ONLINE.ip = v;
-            ipIn.value = v;
-            olConnect();
-          }
-        }, "sm") : null,
-        h("span", { class: "grow" }),
-        ONLINE.dev ? btn("Zentrale speichern", "pin", () => olSaveCentral()) : null
-      )
-    );
-    root.appendChild(bar);
-    if (ONLINE.err && !ONLINE.dev) root.appendChild(h("div", { class: "infobar err", style: { marginBottom: "14px" } }, icon("error"), h("div", null, ONLINE.err)));
-    if (!ONLINE.dev) {
-      root.appendChild(h("div", { class: "card" }, emptyState(
-        "bacnet",
-        "Noch nicht verbunden",
-        "IP-Adresse der Zentrale eingeben und auf „Verbinden“ tippen. Der Dienst schickt ein BACnet Who-Is und liest anschließend die Live-Werte. Es wird nur gelesen."
-      )));
-      return;
-    }
-    const d = ONLINE.dev, C = ONLINE.C;
-    const kv = h(
-      "dl",
-      { class: "kv" },
-      h("dt", null, "Objektname"),
-      h("dd", null, d.name || "—"),
-      h("dt", null, "Modell"),
-      h("dd", null, d.model || "—"),
-      h("dt", null, "Firmware"),
-      h("dd", null, d.firmware || "—"),
-      h("dt", null, "Software"),
-      h("dd", null, d.software || "—"),
-      h("dt", null, "Device-Instanz"),
-      h("dd", null, String(d.inst) + (d.vendor != null ? "  ·  Hersteller-ID " + d.vendor : ""))
-    );
-    const dcard = h("div", { class: "card", style: { marginBottom: "14px" } }, h("h3", null, icon("station"), "Verbundene Zentrale ", h("span", { class: "badge soft" }, ONLINE.ip)), kv);
-    if (C && C.meta && C.meta.bacnetDevId && String(C.meta.bacnetDevId) !== String(d.inst))
-      dcard.appendChild(h("div", { class: "infobar warn", style: { marginTop: "10px" } }, icon("alert"), h("div", null, "Die geladene Sicherung gehört zu Device-Instanz ", h("b", null, String(C.meta.bacnetDevId)), ", verbunden ist aber ", h("b", null, String(d.inst)), ". Eventuell eine andere Zentrale.")));
-    root.appendChild(dcard);
-    const src = olBacnetObjects(C) ? "aus der Sicherung" : "vom Gerät gelesen";
-    const head = h(
-      "div",
-      { class: "row", style: { marginBottom: "8px" } },
-      h("h3", { style: { margin: "0" } }, icon("bacnet"), "Live-Werte"),
-      ONLINE.values.length ? h("span", { class: "muted small" }, ONLINE.values.length + " Objekte " + src) : null,
-      h("span", { class: "grow" }),
-      ONLINE.stamp ? h("span", { class: "muted small" }, "Stand " + ONLINE.stamp) : null,
-      chk("alle 5 s", ONLINE.auto, (v) => {
-        ONLINE.auto = v;
-        if (v) olRefresh(true);
-        else clearTimeout(ONLINE._timer);
-      }),
-      btn(ONLINE.busy ? "Lese …" : "Aktualisieren", "clock", () => olRefresh(false), ONLINE.busy ? "" : "accent")
-    );
-    root.appendChild(head);
-    if (ONLINE.busy === "browse") {
-      root.appendChild(h("div", { class: "card" }, h("div", { class: "row" }, spinner(), "Objektliste wird vom Gerät gelesen …")));
-      return;
-    }
-    if (!ONLINE.values.length && ONLINE.busy === "live") {
-      root.appendChild(h("div", { class: "card" }, h("div", { class: "row" }, spinner(), "Live-Werte werden gelesen …")));
-      return;
-    }
-    if (ONLINE.err) root.appendChild(h("div", { class: "infobar err", style: { marginBottom: "10px" } }, icon("error"), h("div", null, ONLINE.err)));
-    if (!ONLINE.values.length) return;
-    const okN = ONLINE.values.filter((v) => v.ok).length;
-    const tbl = h(
-      "table",
-      { class: "grid card-t" },
-      h("thead", null, h("tr", null, h("th", null, "Objekt"), h("th", null, "Name"), h("th", { class: "num" }, "Wert"), C ? h("th", null, "") : null)),
-      h("tbody", null, ONLINE.values.map((o) => {
-        const f = bacnetText(o);
-        const node = C && o.nodeId ? C.nodes.get(o.nodeId) : null;
-        return h(
-          "tr",
-          { class: o.ok ? "" : "dim" },
-          h("td", { class: "mono" }, h("span", { class: "badge soft", title: OBJT_LONG[o.type] || "" }, OBJT[o.type] || o.type), " " + o.inst),
-          h("td", null, o.name),
-          h("td", { class: "num " + (f.cls || "") }, f.t),
-          C ? h("td", null, node ? h("a", { class: "klink", title: "Zum Datenpunkt springen", onclick: () => olJump(C, o.nodeId) }, icon("jump")) : null) : null
-        );
-      }))
-    );
-    const wrap = h("div", { class: "card tight" }, h("div", { class: "grid-wrap", style: { maxHeight: "calc(100vh - 360px)" } }, tbl));
-    root.appendChild(h("div", { class: "muted small", style: { margin: "0 0 6px" } }, okN + " von " + ONLINE.values.length + " Objekten antworten"));
-    root.appendChild(wrap);
-  }
-  function olJump(C, nodeId) {
-    if (APP.cur !== C.cid) APP.cur = C.cid;
-    const n = C.nodes.get(nodeId);
-    if (n && n.pin) return openPin(C.cid, n.pin.uid);
-    return openNode(C.cid, nodeId);
-  }
-  function spinner() {
-    const s2 = h("span", { class: "spin" });
-    return s2;
-  }
-  VIEWS.add({
-    id: "online",
-    label: "Online",
-    icon: "bacnet",
-    group: 3,
-    order: 310,
-    render(root, C) {
-      ONLINE.C = C || curC();
-      root.appendChild(pageHead("Online", "Mit einer Zentrale verbinden und Live-Werte per BACnet/IP lesen – über den lokalen Dienst. Rein lesend."));
-      const body = h("div", { class: "page-body" });
-      root.appendChild(body);
-      ONLINE._root = body;
-      olLayout();
-      if (ONLINE.health === "unknown") olCheckHealth();
-      else if (ONLINE.health === "up" && !ONLINE.cfg) olLoadConfig().then(olLayout);
-    }
-  });
 
   // src/ui/core/persist.js
   var PERSIST = { svc: false, old: false, gen: 1, data: {}, timer: {}, lastTry: 0 };
@@ -8810,8 +8610,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   }
   async function psync(name) {
     try {
-      const r = await fetch(ONLINE_BASE + "/api/data/" + name, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(pfile(name)) });
-      const j = await r.json();
+      const j = await svcJson("/api/data/" + name, pfile(name));
       if (j && j.ok && j.data) {
         PERSIST.data[name] = pmerge(pfile(name), j.data);
         store.set("p." + name, PERSIST.data[name]);
@@ -8825,7 +8624,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     persistMigrate();
     let h2 = null;
     try {
-      h2 = await (await fetch(ONLINE_BASE + "/api/health")).json();
+      h2 = await svcJson("/api/health", void 0, 4e3);
     } catch (e) {
       h2 = null;
     }
@@ -8841,13 +8640,13 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     let changed = false;
     for (const name of PERSIST_FILES) {
       try {
-        const j = await (await fetch(ONLINE_BASE + "/api/data/" + name)).json();
+        const j = await svcJson("/api/data/" + name);
         const local = pfile(name), merged = pmerge(local, j && j.data);
         if (JSON.stringify(merged) !== JSON.stringify(local)) changed = true;
         PERSIST.data[name] = merged;
         store.set("p." + name, merged);
         if (JSON.stringify(merged) !== JSON.stringify(j && j.data || { entries: {} })) {
-          await fetch(ONLINE_BASE + "/api/data/" + name, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(merged) });
+          await svcJson("/api/data/" + name, merged);
         }
       } catch (e) {
         return;
@@ -9161,6 +8960,23 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     s2.addEventListener("change", () => onchange(s2.value));
     return s2;
   }
+  function lazySelectEl(options, value, onchange, cls) {
+    const s2 = h("select", { class: "in " + (cls || "") });
+    const cur = options().find((o) => String(o[0]) === String(value));
+    s2.appendChild(h("option", { value: cur ? cur[0] : value }, cur ? cur[1] : String(value ?? "")));
+    let full = false;
+    const fill = () => {
+      if (full) return;
+      full = true;
+      const v = s2.value;
+      s2.innerHTML = "";
+      for (const [ov, t] of options()) s2.appendChild(h("option", { value: ov }, t));
+      s2.value = v;
+    };
+    for (const ev of ["mousedown", "focus", "keydown", "touchstart"]) s2.addEventListener(ev, fill, { passive: true });
+    s2.addEventListener("change", () => onchange(s2.value));
+    return s2;
+  }
   function kbar(kinds, total) {
     const b = h("div", { class: "kbar", title: Object.entries(kinds).map(([k, n]) => k + " " + n).join(" · ") });
     const sum = total || Object.values(kinds).reduce((a, n) => a + n, 0) || 1;
@@ -9261,7 +9077,21 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         closeFlyout();
         hideTip();
       }
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "f" || e.key.toLowerCase() === "p")) lazyFillAll();
     });
+    let lastErr = "", lastT = 0;
+    const report = (msg) => {
+      msg = String(msg || "unbekannter Fehler");
+      if (msg === lastErr && Date.now() - lastT < 1e4) return;
+      lastErr = msg;
+      lastT = Date.now();
+      toast("Interner Fehler: " + msg + " – die Werkbank läuft weiter. Bei Wiederholung bitte Bescheid geben.", "err", 8e3);
+    };
+    window.addEventListener("error", (e) => {
+      if (e && e.message) report(e.message);
+    });
+    window.addEventListener("unhandledrejection", (e) => report(e && e.reason && (e.reason.message || e.reason)));
+    window.addEventListener("beforeprint", () => lazyFillAll());
     if (window.matchMedia) matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(APP.theme));
     applyTheme(APP.theme);
     renderAll();
@@ -9353,6 +9183,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   }
   function holdScroll(el, pos) {
     el._wantScroll = pos;
+    lazyKick(el);
     const stop = () => {
       el._wantScroll = null;
     };
@@ -9390,11 +9221,15 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const note = toast("Lese " + files.length + " Datei(en) …", "inf", 6e4);
     try {
       const found = await collectInputs(files);
+      if (!found.length && found.skipped.length) {
+        toast(found.skipped.join(" · "), "warn", 8e3);
+        return;
+      }
       if (!found.length) {
         toast("Nichts Lesbares erkannt. Erwartet: " + FORMATS.list().map((F) => F.label).join(", ") + " – als Datei, ZIP oder Ordner.", "warn", 7e3);
         return;
       }
-      const added = [], bad = [], opened = [];
+      const added = [], bad = [...found.skipped], opened = [];
       for (const [i, f] of found.entries()) {
         if (found.length > 1) {
           setToastText(note, "Lese " + (i + 1) + " von " + found.length + ": " + f.name);
@@ -10336,6 +10171,305 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     button(C, p) {
       const hit = artForPin(C, p);
       return hit ? btn("In der Wartungsdoku", "doc", () => jumpToArt(hit), "sm", "Zum Eintrag dieses Datenpunkts in der verknüpften Wartungsdoku") : null;
+    }
+  });
+
+  // src/ui/views/online.js
+  var OBJT = { 0: "AI", 1: "AO", 2: "AV", 3: "BI", 4: "BO", 5: "BV", 13: "MI", 14: "MO", 19: "MV", 8: "DEV", 17: "SCHED", 6: "CAL", 20: "TR" };
+  var OBJT_LONG = { 0: "Analog-Eingang", 1: "Analog-Ausgang", 2: "Analog-Wert", 3: "Binär-Eingang", 4: "Binär-Ausgang", 5: "Binär-Wert", 13: "Multistate-Eingang", 14: "Multistate-Ausgang", 19: "Multistate-Wert" };
+  var READ_TYPES = /* @__PURE__ */ new Set([0, 1, 2, 3, 4, 5, 13, 14, 19]);
+  function bacnetText(o) {
+    if (!o.ok || o.value == null) return defaultLiveText(o);
+    const t = o.type;
+    if (t === 3 || t === 4 || t === 5) {
+      const on2 = o.value === true || o.value === 1 || o.value === "1";
+      return { t: on2 ? "EIN" : "AUS", cls: on2 ? "liveon" : "liveoff" };
+    }
+    if (t === 13 || t === 14 || t === 19) return { t: String(o.value), cls: "" };
+    if (typeof o.value === "number") return { t: fmtNum(o.value), cls: "num" };
+    return { t: String(o.value), cls: "" };
+  }
+  LIVE_SOURCES.add({ id: "bacnet", label: "BACnet/IP", format: bacnetText });
+  var ONLINE = { health: "unknown", cfg: null, ip: store.get("onlineIp", ""), dev: null, objs: null, values: [], stamp: "", busy: null, err: "", auto: false, _root: null, _mounted: 0 };
+  async function olFetch(path, body, ms) {
+    try {
+      const j = await svcJson(path, body, ms || 15e3);
+      ONLINE.health = "up";
+      return j;
+    } catch (e) {
+      console.warn("Dienst:", e.message || e);
+      ONLINE.health = "down";
+      return null;
+    }
+  }
+  async function olCheckHealth() {
+    const r = await olFetch("/api/health");
+    if (r && r.ok) {
+      ONLINE.health = "up";
+      if (!ONLINE.cfg) await olLoadConfig();
+    } else ONLINE.health = "down";
+    olLayout();
+  }
+  async function olLoadConfig() {
+    const r = await olFetch("/api/config");
+    ONLINE.cfg = r && r.centrals ? r : { centrals: [], settings: {} };
+    if (!ONLINE.ip && ONLINE.cfg.centrals[0]) ONLINE.ip = ONLINE.cfg.centrals[0].ip;
+  }
+  function olBacnetObjects(C) {
+    if (!C || !C.bacnet || !C.bacnet.length) return null;
+    const seen = /* @__PURE__ */ new Set(), out = [];
+    for (const b of C.bacnet) {
+      const t = b.btype, inst = parseInt(b.inst, 10);
+      if (!READ_TYPES.has(t) || isNaN(inst)) continue;
+      const key = t + ":" + inst;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ type: t, inst, name: (b.name || "").trim() || "Objekt " + inst, nodeId: b.nodeId || null });
+    }
+    return out.length ? out : null;
+  }
+  async function olConnect() {
+    const ip = (ONLINE.ip || "").trim();
+    if (!ip) {
+      toast("Bitte IP-Adresse der Zentrale eingeben.", "warn");
+      return;
+    }
+    store.set("onlineIp", ip);
+    ONLINE.dev = null;
+    ONLINE.values = [];
+    ONLINE.objs = null;
+    ONLINE.err = "";
+    ONLINE.busy = "connect";
+    olLayout();
+    const C = ONLINE.C;
+    const known = C && C.meta && C.meta.bacnetDevId ? "&inst=" + encodeURIComponent(C.meta.bacnetDevId) : "";
+    const r = await olFetch("/api/identify?ip=" + encodeURIComponent(ip) + known);
+    ONLINE.busy = null;
+    if (!r) {
+      olLayout();
+      return;
+    }
+    if (!r.ok) {
+      ONLINE.err = r.err || "Keine Verbindung.";
+      olLayout();
+      return;
+    }
+    ONLINE.dev = r;
+    olLayout();
+    olRefresh();
+  }
+  async function olRefresh(silent) {
+    if (!ONLINE.dev) return;
+    const ip = ONLINE.ip.trim();
+    if (!ONLINE.objs) {
+      const fromBackup = olBacnetObjects(ONLINE.C);
+      if (fromBackup) ONLINE.objs = fromBackup;
+      else {
+        ONLINE.busy = "browse";
+        if (!silent) olLayout();
+        const b = await olFetch("/api/browse?ip=" + encodeURIComponent(ip) + "&inst=" + ONLINE.dev.inst, void 0, 12e4);
+        ONLINE.busy = null;
+        if (!b || !b.ok) {
+          ONLINE.err = b && b.err || "Objektliste nicht lesbar.";
+          olLayout();
+          return;
+        }
+        ONLINE.objs = b.objects.filter((o) => READ_TYPES.has(o.type)).map((o) => ({ type: o.type, inst: o.inst, name: (o.name || "").trim() || OBJT[o.type] + " " + o.inst, nodeId: null }));
+      }
+    }
+    ONLINE.busy = "live";
+    if (!silent) olLayout();
+    const payload = { ip, objects: ONLINE.objs.map((o) => ({ type: o.type, inst: o.inst })) };
+    const r = await olFetch("/api/live", payload, 3e4 + payload.objects.length * 200);
+    ONLINE.busy = null;
+    if (!r || !r.ok) {
+      ONLINE.err = r && r.err || "Werte konnten nicht gelesen werden.";
+      olLayout();
+      return;
+    }
+    const vmap = new Map(r.values.map((v) => [v.type + ":" + v.inst, v]));
+    ONLINE.values = ONLINE.objs.map((o) => Object.assign({}, o, vmap.get(o.type + ":" + o.inst) || { ok: false, err: "?" }));
+    ONLINE.stamp = nowStamp();
+    ONLINE.err = "";
+    if (ONLINE.C) setLive(ONLINE.C.cid, ONLINE.values, { source: "bacnet", ip, stamp: ONLINE.stamp });
+    olLayout();
+    clearTimeout(ONLINE._timer);
+    if (ONLINE.auto) ONLINE._timer = setTimeout(() => {
+      if (document.body.contains(ONLINE._root) && APP.view === "online") olRefresh(true);
+    }, 5e3);
+  }
+  async function olSaveCentral() {
+    const ip = (ONLINE.ip || "").trim();
+    if (!ip) return;
+    const dflt = ONLINE.dev && ONLINE.dev.name ? ONLINE.dev.name : "";
+    const name = (prompt("Name für diese Zentrale:", dflt) || "").trim();
+    if (!name) return;
+    if (!ONLINE.cfg) ONLINE.cfg = { centrals: [], settings: {} };
+    const ex = ONLINE.cfg.centrals.find((c) => c.ip === ip);
+    if (ex) ex.name = name;
+    else ONLINE.cfg.centrals.push({ name, ip });
+    const r = await olFetch("/api/config", ONLINE.cfg);
+    toast(r && r.ok ? "Zentrale gespeichert." : "Speichern fehlgeschlagen.", r && r.ok ? "ok" : "err");
+    olLayout();
+  }
+  function olLayout() {
+    const root = ONLINE._root;
+    if (!root || !document.body.contains(root)) return;
+    root.innerHTML = "";
+    if (ONLINE.health === "down") {
+      root.appendChild(h(
+        "div",
+        { class: "infobar warn" },
+        icon("alert"),
+        h(
+          "div",
+          null,
+          h("b", null, "Der Hintergrunddienst läuft nicht. "),
+          "Der Online-Modus braucht das Programm ",
+          h("code", null, "DDC-Werkbank.exe"),
+          " aus deinem Werkbank-Ordner. ",
+          "Starte es (Doppelklick) und prüfe dann erneut. Alle übrigen Funktionen der Werkbank laufen ohne den Dienst wie gewohnt.",
+          h("div", { class: "row", style: { marginTop: "10px" } }, btn("Erneut prüfen", "clock", () => {
+            ONLINE.health = "unknown";
+            olLayout();
+            olCheckHealth();
+          }, "accent"))
+        )
+      ));
+      return;
+    }
+    if (ONLINE.health === "unknown") {
+      root.appendChild(h("div", { class: "card" }, h("div", { class: "row" }, spinner(), "Suche den lokalen Dienst …")));
+      return;
+    }
+    const ipIn = h("input", { class: "in", style: { width: "180px" }, placeholder: "z. B. 192.168.24.210", value: ONLINE.ip, onkeydown: (e) => {
+      if (e.key === "Enter") {
+        ONLINE.ip = e.target.value;
+        olConnect();
+      }
+    }, oninput: (e) => ONLINE.ip = e.target.value });
+    const bar = h(
+      "div",
+      { class: "card", style: { marginBottom: "14px" } },
+      h(
+        "div",
+        { class: "row" },
+        h("span", { class: "muted" }, "Zentrale:"),
+        ipIn,
+        btn(ONLINE.busy === "connect" ? "Verbinde …" : "Verbinden", "swap", () => olConnect(), "accent"),
+        ONLINE.cfg && ONLINE.cfg.centrals.length ? selectEl([["", "— gespeicherte Zentrale —"]].concat(ONLINE.cfg.centrals.map((c) => [c.ip, c.name + " · " + c.ip])), "", (v) => {
+          if (v) {
+            ONLINE.ip = v;
+            ipIn.value = v;
+            olConnect();
+          }
+        }, "sm") : null,
+        h("span", { class: "grow" }),
+        ONLINE.dev ? btn("Zentrale speichern", "pin", () => olSaveCentral()) : null
+      )
+    );
+    root.appendChild(bar);
+    if (ONLINE.err && !ONLINE.dev) root.appendChild(h("div", { class: "infobar err", style: { marginBottom: "14px" } }, icon("error"), h("div", null, ONLINE.err)));
+    if (!ONLINE.dev) {
+      root.appendChild(h("div", { class: "card" }, emptyState(
+        "bacnet",
+        "Noch nicht verbunden",
+        "IP-Adresse der Zentrale eingeben und auf „Verbinden“ tippen. Der Dienst schickt ein BACnet Who-Is und liest anschließend die Live-Werte. Es wird nur gelesen."
+      )));
+      return;
+    }
+    const d = ONLINE.dev, C = ONLINE.C;
+    const kv = h(
+      "dl",
+      { class: "kv" },
+      h("dt", null, "Objektname"),
+      h("dd", null, d.name || "—"),
+      h("dt", null, "Modell"),
+      h("dd", null, d.model || "—"),
+      h("dt", null, "Firmware"),
+      h("dd", null, d.firmware || "—"),
+      h("dt", null, "Software"),
+      h("dd", null, d.software || "—"),
+      h("dt", null, "Device-Instanz"),
+      h("dd", null, String(d.inst) + (d.vendor != null ? "  ·  Hersteller-ID " + d.vendor : ""))
+    );
+    const dcard = h("div", { class: "card", style: { marginBottom: "14px" } }, h("h3", null, icon("station"), "Verbundene Zentrale ", h("span", { class: "badge soft" }, ONLINE.ip)), kv);
+    if (C && C.meta && C.meta.bacnetDevId && String(C.meta.bacnetDevId) !== String(d.inst))
+      dcard.appendChild(h("div", { class: "infobar warn", style: { marginTop: "10px" } }, icon("alert"), h("div", null, "Die geladene Sicherung gehört zu Device-Instanz ", h("b", null, String(C.meta.bacnetDevId)), ", verbunden ist aber ", h("b", null, String(d.inst)), ". Eventuell eine andere Zentrale.")));
+    root.appendChild(dcard);
+    const src = olBacnetObjects(C) ? "aus der Sicherung" : "vom Gerät gelesen";
+    const head = h(
+      "div",
+      { class: "row", style: { marginBottom: "8px" } },
+      h("h3", { style: { margin: "0" } }, icon("bacnet"), "Live-Werte"),
+      ONLINE.values.length ? h("span", { class: "muted small" }, ONLINE.values.length + " Objekte " + src) : null,
+      h("span", { class: "grow" }),
+      ONLINE.stamp ? h("span", { class: "muted small" }, "Stand " + ONLINE.stamp) : null,
+      chk("alle 5 s", ONLINE.auto, (v) => {
+        ONLINE.auto = v;
+        if (v) olRefresh(true);
+        else clearTimeout(ONLINE._timer);
+      }),
+      btn(ONLINE.busy ? "Lese …" : "Aktualisieren", "clock", () => olRefresh(false), ONLINE.busy ? "" : "accent")
+    );
+    root.appendChild(head);
+    if (ONLINE.busy === "browse") {
+      root.appendChild(h("div", { class: "card" }, h("div", { class: "row" }, spinner(), "Objektliste wird vom Gerät gelesen …")));
+      return;
+    }
+    if (!ONLINE.values.length && ONLINE.busy === "live") {
+      root.appendChild(h("div", { class: "card" }, h("div", { class: "row" }, spinner(), "Live-Werte werden gelesen …")));
+      return;
+    }
+    if (ONLINE.err) root.appendChild(h("div", { class: "infobar err", style: { marginBottom: "10px" } }, icon("error"), h("div", null, ONLINE.err)));
+    if (!ONLINE.values.length) return;
+    const okN = ONLINE.values.filter((v) => v.ok).length;
+    const tbl = h(
+      "table",
+      { class: "grid card-t" },
+      h("thead", null, h("tr", null, h("th", null, "Objekt"), h("th", null, "Name"), h("th", { class: "num" }, "Wert"), C ? h("th", null, "") : null)),
+      h("tbody", null, ONLINE.values.map((o) => {
+        const f = bacnetText(o);
+        const node = C && o.nodeId ? C.nodes.get(o.nodeId) : null;
+        return h(
+          "tr",
+          { class: o.ok ? "" : "dim" },
+          h("td", { class: "mono" }, h("span", { class: "badge soft", title: OBJT_LONG[o.type] || "" }, OBJT[o.type] || o.type), " " + o.inst),
+          h("td", null, o.name),
+          h("td", { class: "num " + (f.cls || "") }, f.t),
+          C ? h("td", null, node ? h("a", { class: "klink", title: "Zum Datenpunkt springen", onclick: () => olJump(C, o.nodeId) }, icon("jump")) : null) : null
+        );
+      }))
+    );
+    const wrap = h("div", { class: "card tight" }, h("div", { class: "grid-wrap", style: { maxHeight: "calc(100vh - 360px)" } }, tbl));
+    root.appendChild(h("div", { class: "muted small", style: { margin: "0 0 6px" } }, okN + " von " + ONLINE.values.length + " Objekten antworten"));
+    root.appendChild(wrap);
+  }
+  function olJump(C, nodeId) {
+    if (APP.cur !== C.cid) APP.cur = C.cid;
+    const n = C.nodes.get(nodeId);
+    if (n && n.pin) return openPin(C.cid, n.pin.uid);
+    return openNode(C.cid, nodeId);
+  }
+  function spinner() {
+    const s2 = h("span", { class: "spin" });
+    return s2;
+  }
+  VIEWS.add({
+    id: "online",
+    label: "Online",
+    icon: "bacnet",
+    group: 3,
+    order: 310,
+    render(root, C) {
+      ONLINE.C = C || curC();
+      root.appendChild(pageHead("Online", "Mit einer Zentrale verbinden und Live-Werte per BACnet/IP lesen – über den lokalen Dienst. Rein lesend."));
+      const body = h("div", { class: "page-body" });
+      root.appendChild(body);
+      ONLINE._root = body;
+      olLayout();
+      if (ONLINE.health === "unknown") olCheckHealth();
+      else if (ONLINE.health === "up" && !ONLINE.cfg) olLoadConfig().then(olLayout);
     }
   });
 

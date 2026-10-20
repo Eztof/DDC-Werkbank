@@ -30,21 +30,28 @@ function nameFeatures(s) {
   return { alpha, comp };
 }
 const pfx = (a, b) => a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a));
+/* Wort+Nummer-Merkmale nach Wortstamm gruppiert (einmal je Merkmalsatz berechnet) */
+function basesOf(F) {
+  if (F._bases) return F._bases;
+  const m = new Map();
+  for (const q of F.comp) { const [b, n] = q.split("#"); if (!m.has(b)) m.set(b, new Set()); m.get(b).add(n); }
+  F._alphaArr = [...F.alpha];
+  return (F._bases = m);
+}
 function nameScore(P, Q) {
   /* je Wort der Klemme der beste Treffer in der Anlage – jedes Wort zählt nur einmal */
   let s = 0, hits = 0, conflict = false, strong = false;
+  const qBases = basesOf(Q), pBases = basesOf(P), qArr = Q._alphaArr;
   for (const p of P.alpha) {
     if (Q.alpha.has(p)) { s += 1; hits++; if (p.length >= 6) strong = true; }
-    else if ([...Q.alpha].some(q => pfx(p, q))) { s += 0.6; hits++; }
+    else if (p.length >= 4 && qArr.some(q => pfx(p, q))) { s += 0.6; hits++; }
   }
-  const qBases = new Map();
-  for (const q of Q.comp) { const [b, n] = q.split("#"); if (!qBases.has(b)) qBases.set(b, new Set()); qBases.get(b).add(n); }
-  const pBases = new Map();
-  for (const p of P.comp) { const [b, n] = p.split("#"); if (!pBases.has(b)) pBases.set(b, new Set()); pBases.get(b).add(n); }
-  for (const [b, ns] of pBases) {
-    const qb = qBases.get(b) || [...qBases.keys()].filter(x => pfx(x, b)).map(x => qBases.get(x))[0];
+  if (pBases.size && qBases.size) for (const [b, ns] of pBases) {
+    let qb = qBases.get(b);
+    if (!qb) for (const [x, v] of qBases) if (pfx(x, b)) { qb = v; break; }
     if (!qb) continue;
-    if ([...ns].some(n => qb.has(n))) { s += 1.5; strong = true; }
+    let any = false; for (const n of ns) if (qb.has(n)) { any = true; break; }
+    if (any) { s += 1.5; strong = true; }
     else { s -= 2.5; conflict = true; }
   }
   return { s, hits, conflict, strong };
@@ -74,14 +81,15 @@ function plantsOf(C) {
     P.groups.set(g.key, { key: g.key, name: gname, collector: collector || /sammel|ssm|st(ö|oe)rmeld|lampen?\b|meldungen/i.test(gname), feat: nameFeatures(name + " " + gname) });
   }
   for (const P of plants.values()) P.feat = nameFeatures(P.name);
+  /* Gruppe → Anlage, für plantOfNode */
+  plants.byGroup = new Map();
+  for (const P of plants.values()) for (const G of P.groups.values()) if (!plants.byGroup.has(G.key)) plants.byGroup.set(G.key, { P, G });
   C._plants = plants;
   return plants;
 }
 export function plantOfNode(C, n) {
   if (!n || n.isPin || n.ghost) return null;
-  const plants = plantsOf(C);
-  for (const P of plants.values()) if (P.groups.has(n.gKey)) return { P, G: P.groups.get(n.gKey) };
-  return null;
+  return plantsOf(C).byGroup.get(n.gKey) || null;
 }
 
 /* Zuordnung einer Klemme */

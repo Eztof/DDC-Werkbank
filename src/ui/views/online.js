@@ -3,6 +3,7 @@ import { openNode, openPin } from "../core/nav.js";
 import { APP, curC } from "../core/state.js";
 import { LIVE_SOURCES, VIEWS } from "../core/ext.js";
 import { fmtNum, h, nowStamp, store } from "../core/util.js";
+import { svcJson } from "../core/service.js";
 import { btn, chk, emptyState, icon, pageHead, selectEl, toast } from "../shell/shell.js";
 
 /* =========================================================================
@@ -10,7 +11,6 @@ import { btn, chk, emptyState, icon, pageHead, selectEl, toast } from "../shell/
    Liest per BACnet/IP Live-Werte. Funktioniert nur, wenn das
    Hintergrundprogramm (DDC-Werkbank.exe) läuft. Rein lesend.
    ========================================================================= */
-export const ONLINE_BASE = location.protocol === "file:" ? "http://localhost:47902" : "";
 const OBJT = { 0: "AI", 1: "AO", 2: "AV", 3: "BI", 4: "BO", 5: "BV", 13: "MI", 14: "MO", 19: "MV", 8: "DEV", 17: "SCHED", 6: "CAL", 20: "TR" };
 const OBJT_LONG = { 0: "Analog-Eingang", 1: "Analog-Ausgang", 2: "Analog-Wert", 3: "Binär-Eingang", 4: "Binär-Ausgang", 5: "Binär-Wert", 13: "Multistate-Eingang", 14: "Multistate-Ausgang", 19: "Multistate-Wert" };
 const READ_TYPES = new Set([0, 1, 2, 3, 4, 5, 13, 14, 19]);
@@ -28,13 +28,14 @@ LIVE_SOURCES.add({ id: "bacnet", label: "BACnet/IP", format: bacnetText });
 
 const ONLINE = { health: "unknown", cfg: null, ip: store.get("onlineIp", ""), dev: null, objs: null, values: [], stamp: "", busy: null, err: "", auto: false, _root: null, _mounted: 0 };
 
-async function olFetch(path, opts) {
+/* Anfrage an den Dienst; null wenn er nicht antwortet. Lesen vieler Objekte darf länger dauern. */
+async function olFetch(path, body, ms) {
   try {
-    const r = await fetch(ONLINE_BASE + path, opts);
-    const j = await r.json();
-    if (ONLINE.health !== "up") { ONLINE.health = "up"; }
+    const j = await svcJson(path, body, ms || 15000);
+    ONLINE.health = "up";
     return j;
   } catch (e) {
+    console.warn("Dienst:", e.message || e);
     ONLINE.health = "down";
     return null;
   }
@@ -88,7 +89,7 @@ async function olRefresh(silent) {
     if (fromBackup) ONLINE.objs = fromBackup;
     else {
       ONLINE.busy = "browse"; if (!silent) olLayout();
-      const b = await olFetch("/api/browse?ip=" + encodeURIComponent(ip) + "&inst=" + ONLINE.dev.inst);
+      const b = await olFetch("/api/browse?ip=" + encodeURIComponent(ip) + "&inst=" + ONLINE.dev.inst, undefined, 120000);
       ONLINE.busy = null;
       if (!b || !b.ok) { ONLINE.err = (b && b.err) || "Objektliste nicht lesbar."; olLayout(); return; }
       ONLINE.objs = b.objects.filter(o => READ_TYPES.has(o.type)).map(o => ({ type: o.type, inst: o.inst, name: (o.name || "").trim() || (OBJT[o.type] + " " + o.inst), nodeId: null }));
@@ -96,7 +97,7 @@ async function olRefresh(silent) {
   }
   ONLINE.busy = "live"; if (!silent) olLayout();
   const payload = { ip, objects: ONLINE.objs.map(o => ({ type: o.type, inst: o.inst })) };
-  const r = await olFetch("/api/live", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  const r = await olFetch("/api/live", payload, 30000 + payload.objects.length * 200);   // Dienst: 10 parallel, je 1,5 s Zeitlimit
   ONLINE.busy = null;
   if (!r || !r.ok) { ONLINE.err = (r && r.err) || "Werte konnten nicht gelesen werden."; olLayout(); return; }
   const vmap = new Map(r.values.map(v => [v.type + ":" + v.inst, v]));
@@ -117,7 +118,7 @@ async function olSaveCentral() {
   if (!ONLINE.cfg) ONLINE.cfg = { centrals: [], settings: {} };
   const ex = ONLINE.cfg.centrals.find(c => c.ip === ip);
   if (ex) ex.name = name; else ONLINE.cfg.centrals.push({ name, ip });
-  const r = await olFetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(ONLINE.cfg) });
+  const r = await olFetch("/api/config", ONLINE.cfg);
   toast(r && r.ok ? "Zentrale gespeichert." : "Speichern fehlgeschlagen.", r && r.ok ? "ok" : "err");
   olLayout();
 }

@@ -2,11 +2,11 @@ import { go } from "../core/nav.js";
 import { APP, byCid } from "../core/state.js";
 import { VIEWS, WD_TABS } from "../core/ext.js";
 import { safely } from "../core/registry.js";
-import { $, $$, download, h, natCmp, norm, trunc, uniq } from "../core/util.js";
+import { $, $$, download, h, lazyAppend, natCmp, norm, trunc, uniq } from "../core/util.js";
 import { decodeBytes } from "../core/load.js";
 import { edgesIn, edgesOut, isOutputKind, pinOf } from "../model/model.js";
 import { SEV_LABEL } from "../model/findings.js";
-import { btn, chk, emptyState, findingsCount, flyout, icon, kindTag, pageHead, renderAll, searchBox, selectEl, sevIcon, stationLabel, toast } from "../shell/shell.js";
+import { btn, chk, emptyState, findingsCount, flyout, icon, kindTag, lazySelectEl, pageHead, renderAll, searchBox, selectEl, sevIcon, stationLabel, toast } from "../shell/shell.js";
 import { findingWhere, ignButton, ignFilterEl, ignPass, isIgnored, persistWhere, pref, setIgnored, setPref, whereLine } from "../core/persist.js";
 import { pinCorrText, pinValue } from "../views/points.js";
 import { liveInfo, livePinText } from "../core/live.js";
@@ -554,11 +554,16 @@ function wdGenTab(body, D) {
     chk("nach Art sortieren", W.opt.sortKind, v => { W.opt.sortKind = v; renderAll(); })));
 
   const gbox = h("div", { class: "wgroups" });
+  const glist = h("div", { class: "stack", style: { gap: "10px" } });
+  gbox.appendChild(glist);
   const gOpts = () => W.groups.map(g => [g.gid, g.name]);
-  W.groups.forEach((g, gi) => {
-    const all = W.pins.filter(p => p.gid === g.gid);
+  /* Klemmen je Gruppe einmal einsammeln statt je Gruppe alle durchzugehen */
+  const byGid = new Map();
+  for (const p of W.pins) { if (!byGid.has(p.gid)) byGid.set(p.gid, []); byGid.get(p.gid).push(p); }
+  lazyAppend(glist, W.groups, (g, gi) => {
+    const all = byGid.get(g.gid) || [];
     const pins = pinsOfGroup(W, g.gid);
-    if (!all.length && !pins.length && g.name !== "Neue Gruppe") return;
+    if (!all.length && !pins.length && g.name !== "Neue Gruppe") return null;
     const gn = h("input", { class: "in gn", value: g.name });
     gn.addEventListener("input", () => { g.name = gn.value; });
     gn.addEventListener("change", () => renderAll());
@@ -594,15 +599,15 @@ function wdGenTab(body, D) {
           h("td", null, chk("", p.include, v => { p.include = v; renderAll(); })),
           h("td", { class: "mono" }, p.klemme), h("td", null, kindTag(p.kind)), h("td", null, ik),
           h("td", { class: "muted small", title: why }, p.name || "–", W.opt.mode === "anlage" ? h("span", { class: "sub", style: { color: p.how === "Programm" ? "var(--ok)" : p.how === "Name" ? "var(--warn)" : "var(--text-3)" } }, p.how === "Programm" ? "● Programm" : p.how === "Name" ? "● Name" : "○ ohne Bezug") : null),
-          h("td", null, selectEl(gOpts(), p.gid, v => { p.gid = v; renderAll(); })));
+          h("td", null, lazySelectEl(gOpts, p.gid, v => { p.gid = v; renderAll(); })));
         tr.addEventListener("dragstart", e => { e.dataTransfer.setData("text/x-ddcwb-pin", p.uid); e.dataTransfer.effectAllowed = "move"; });
         tb.appendChild(tr);
       }
       t.appendChild(tb);
       d.appendChild(t);
     } else d.appendChild(h("div", { class: "small muted", style: { padding: "10px 12px" } }, "Leer – Datenpunkte hierher ziehen."));
-    gbox.appendChild(d);
-  });
+    return d;
+  }, { first: 4, step: 3, scroller: body });
   gbox.appendChild(h("div", null, btn("Gruppe hinzufügen", "plus", () => { W.groups.push({ gid: newGid(), name: "Neue Gruppe" }); renderAll(); })));
   ed.appendChild(gbox);
   if (W.opt.mode === "anlage") ed.appendChild(h("div", { class: "small muted", style: { marginTop: "10px" } }, "● Programm = die Klemme hängt im Programm an dieser Anlage · ● Name = unverknüpft, über die Bezeichnung zugeordnet · Maus auf die Bezeichnung zeigt die Zuordnung."));

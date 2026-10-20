@@ -3,7 +3,7 @@ import { emit } from "../core/events.js";
 import { APP, curC } from "../core/state.js";
 import { FORMATS, SEARCH, VIEWS } from "../core/ext.js";
 import { safely } from "../core/registry.js";
-import { $, $$, SVGNS, h, natCmp, norm, store, trunc } from "../core/util.js";
+import { $, $$, SVGNS, h, lazyFillAll, lazyKick, natCmp, norm, store, trunc } from "../core/util.js";
 import { acceptAttr, collectInputs, entriesFromDrop } from "../core/load.js";
 import { KIND_INFO } from "../model/model.js";
 import { SEV_LABEL } from "../model/findings.js";
@@ -158,6 +158,23 @@ export function selectEl(options, value, onchange, cls) {
   s.addEventListener("change", () => onchange(s.value));
   return s;
 }
+/* Auswahlliste, deren Einträge erst beim Aufklappen entstehen – für Tabellen mit
+   Hunderten gleicher Auswahlfelder. options: Funktion → [[wert, text], …] */
+export function lazySelectEl(options, value, onchange, cls) {
+  const s = h("select", { class: "in " + (cls || "") });
+  const cur = options().find(o => String(o[0]) === String(value));
+  s.appendChild(h("option", { value: cur ? cur[0] : value }, cur ? cur[1] : String(value ?? "")));
+  let full = false;
+  const fill = () => {
+    if (full) return; full = true;
+    const v = s.value; s.innerHTML = "";
+    for (const [ov, t] of options()) s.appendChild(h("option", { value: ov }, t));
+    s.value = v;
+  };
+  for (const ev of ["mousedown", "focus", "keydown", "touchstart"]) s.addEventListener(ev, fill, { passive: true });
+  s.addEventListener("change", () => onchange(s.value));
+  return s;
+}
 export function kbar(kinds, total) {
   const b = h("div", { class: "kbar", title: Object.entries(kinds).map(([k, n]) => k + " " + n).join(" · ") });
   const sum = total || Object.values(kinds).reduce((a, n) => a + n, 0) || 1;
@@ -223,7 +240,20 @@ export function buildShell() {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") { e.preventDefault(); $("#fileIn").click(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); const i = $("#tbSearch input"); if (i) i.focus(); }
     if (e.key === "Escape") { closeFlyout(); hideTip(); }
+    if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "f" || e.key.toLowerCase() === "p")) lazyFillAll();   // Browser-Suche/Drucken findet alles
   });
+  /* Unerwartete Fehler sichtbar machen, statt still zu scheitern (gleiche Meldung höchstens alle 10 s) */
+  let lastErr = "", lastT = 0;
+  const report = msg => {
+    msg = String(msg || "unbekannter Fehler");
+    if (msg === lastErr && Date.now() - lastT < 10000) return;
+    lastErr = msg; lastT = Date.now();
+    toast("Interner Fehler: " + msg + " – die Werkbank läuft weiter. Bei Wiederholung bitte Bescheid geben.", "err", 8000);
+  };
+  window.addEventListener("error", e => { if (e && e.message) report(e.message); });
+  window.addEventListener("unhandledrejection", e => report(e && e.reason && (e.reason.message || e.reason)));
+  /* Drucken: schrittweise aufgebaute Listen vorher vollständig zeichnen */
+  window.addEventListener("beforeprint", () => lazyFillAll());
   if (window.matchMedia) matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(APP.theme));
   applyTheme(APP.theme);
   renderAll();
@@ -289,6 +319,7 @@ export function renderAll() {
 /* Liste wird noch aufgebaut: gemerkte Position nachziehen, bis der Benutzer selbst scrollt */
 function holdScroll(el, pos) {
   el._wantScroll = pos;
+  lazyKick(el);
   const stop = () => { el._wantScroll = null; };
   for (const ev of ["wheel", "pointerdown", "keydown", "touchstart"]) el.addEventListener(ev, stop, { once: true, passive: true });
 }
@@ -323,8 +354,9 @@ async function loadFiles(files, handles) {
   const note = toast("Lese " + files.length + " Datei(en) …", "inf", 60000);
   try {
     const found = await collectInputs(files);
+    if (!found.length && found.skipped.length) { toast(found.skipped.join(" · "), "warn", 8000); return; }
     if (!found.length) { toast("Nichts Lesbares erkannt. Erwartet: " + FORMATS.list().map(F => F.label).join(", ") + " – als Datei, ZIP oder Ordner.", "warn", 7000); return; }
-    const added = [], bad = [], opened = [];
+    const added = [], bad = [...found.skipped], opened = [];
     for (const [i, f] of found.entries()) {
       if (found.length > 1) { setToastText(note, "Lese " + (i + 1) + " von " + found.length + ": " + f.name); await tick(); }
       try {
