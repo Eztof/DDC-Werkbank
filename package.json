@@ -1,6 +1,6 @@
 {
   "name": "ddc-werkbank",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "DDC-Werkbank: Sicherungen von Kieback&Peter-Zentralen auswerten und Wartungsdokus erstellen",
   "type": "module",

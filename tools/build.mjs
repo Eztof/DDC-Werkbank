@@ -11,12 +11,14 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const UI = path.join(ROOT, "src", "ui");
 const OUT = path.join(ROOT, "DDC-Werkbank", "ui", "DDC-Werkbank.html");
+const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
 
 async function build() {
   const js = await esbuild.build({
     entryPoints: [path.join(UI, "main.js")],
     bundle: true, write: false, format: "iife", target: "es2020",
-    charset: "utf8", legalComments: "none", logLevel: "warning"
+    charset: "utf8", legalComments: "none", logLevel: "warning",
+    define: { __WB_VERSION__: JSON.stringify(PKG.version) }
   });
   const stylesDir = path.join(UI, "styles");
   const css = fs.readdirSync(stylesDir).filter(f => f.endsWith(".css")).sort()

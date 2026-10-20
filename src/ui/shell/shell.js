@@ -275,7 +275,8 @@ function renderNav() {
   }
   nav.appendChild(h("div", { class: "nav-foot" },
     h("div", { class: "nav-sep" }),
-    h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung"))));
+    h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
+    h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version " + __WB_VERSION__)));
 }
 
 function renderTitle() {

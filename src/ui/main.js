@@ -1,6 +1,7 @@
 /* =========================================================================
-   Einstieg: lädt alle Module (Ansichten tragen sich dabei in VIEWS ein)
-   und startet die Oberfläche.
+   Einstieg: lädt alle Module (sie tragen sich dabei in die Register aus
+   core/ext.js ein), stellt die Schnittstelle für Erweiterungen bereit und
+   startet die Oberfläche.
    ========================================================================= */
 import "./core/util.js";
 import "./core/load.js";
@@ -24,11 +25,46 @@ import "./wartung/link.js";
 import "./wartung/air.js";
 import "./wartung/in-datenpunkten.js";
 import "./views/online.js";
-import { buildShell } from "./shell/shell.js";
+import { ALL } from "./core/ext.js";
+import { APP, byCid, curC } from "./core/state.js";
+import { emit, on } from "./core/events.js";
+import { go, openNode, openPin, openRef } from "./core/nav.js";
+import { liveOfPin, livePinText, setLive } from "./core/live.js";
+import * as util from "./core/util.js";
+import * as model from "./model/model.js";
+import { btn, buildShell, icon, kindTag, pageHead, renderAll, toast } from "./shell/shell.js";
 import { persistInit } from "./core/persist.js";
 
+/* ---------- Schnittstelle für Erweiterungen ----------
+   Erweiterungen ohne Neubauen: Datei  ui\erweiterungen.js  neben die HTML legen, z. B.
+     DDCWerkbank.register.CHECKS.add({ id: "meine", label: "Meine Prüfung", run(C, add) { … } });
+   oder vor dem Start in die Warteschlange:
+     (window.DDCWerkbankErweiterungen = window.DDCWerkbankErweiterungen || []).push(api => { … });  */
+const api = {
+  version: __WB_VERSION__,
+  register: ALL,
+  state: APP, curC, byCid,
+  on, emit, go, openPin, openNode, openRef, renderAll,
+  live: { setLive, liveOfPin, livePinText },
+  ui: { h: util.h, icon, btn, toast, pageHead, kindTag },
+  util, model
+};
+window.DDCWerkbank = api;
+const geladen = [];
+function runExtension(fn) {
+  if (typeof fn !== "function") return;
+  try { fn(api); geladen.push(fn.name || "Erweiterung"); }
+  catch (e) { console.error("Erweiterung:", e); setTimeout(() => toast("Eine Erweiterung konnte nicht geladen werden: " + (e && e.message || e), "err", 8000), 500); }
+}
+api.erweiterungen = geladen;
+
 /* ---------- Start ---------- */
-function boot() { buildShell(); persistInit(); }
+function boot() {
+  const q = window.DDCWerkbankErweiterungen;
+  if (Array.isArray(q)) q.forEach(runExtension);
+  window.DDCWerkbankErweiterungen = { push: runExtension };   // später eingereihte sofort ausführen
+  buildShell();
+  persistInit();
+}
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
 else boot();
-

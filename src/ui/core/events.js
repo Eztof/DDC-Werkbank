@@ -7,7 +7,7 @@
      "zentralen"     Sicherungen geladen oder entfernt         { centrals }
      "zentrale"      andere Zentrale ausgewählt                 { cid }
      "ansicht"       Ansicht gewechselt (go)                    { view, opts }
-     "live"          neue Live-Werte einer Zentrale (Online)    { cid, stamp }
+     "live"          neue Live-Werte einer Zentrale              { cid, source, stamp }
    ========================================================================= */
 const LISTENERS = new Map();
 

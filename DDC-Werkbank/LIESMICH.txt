@@ -1,4 +1,4 @@
-DDC-Werkbank – Version 0.2
+DDC-Werkbank – Version 0.4
 ==========================
 
 Aktualisieren
@@ -8,11 +8,15 @@ Aktualisieren
    „Ersetzen“ bestätigen. Ersetzt werden nur DDC-Werkbank.exe, ui\ und
    diese Datei. config.json (gespeicherte Zentralen) und daten\ bleiben.
 3. DDC-Werkbank.exe starten.
+Nur die Oberfläche geändert? Dann reicht es, ui\DDC-Werkbank.html zu
+ersetzen und im Browser F5 zu drücken.
 
 Was liegt wo?
 -------------
 DDC-Werkbank.exe   Hintergrunddienst: Oberfläche, BACnet-Lesen, Merkliste
 ui\                die Oberfläche (DDC-Werkbank.html – geht auch ohne Dienst)
+ui\erweiterungen.js  optional: eigene Prüfungen/Ansichten ohne Neubau
+                   (fehlt die Datei, passiert nichts)
 config.json        gespeicherte Zentralen für den Online-Reiter
 daten\             Merkliste – wird beim ersten Abhaken angelegt:
   befunde.json       abgehakte Befunde („kann ignoriert werden“)

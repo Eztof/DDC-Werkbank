@@ -658,7 +658,43 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
 <noscript>Die DDC-Werkbank braucht JavaScript.</noscript>
 <script>
 (() => {
+  var __defProp = Object.defineProperty;
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+
   // src/ui/core/util.js
+  var util_exports = {};
+  __export(util_exports, {
+    $: () => $,
+    $$: () => $$,
+    LAZY: () => LAZY,
+    SVGNS: () => SVGNS,
+    copyText: () => copyText,
+    csv: () => csv,
+    download: () => download,
+    esc: () => esc,
+    fmtNum: () => fmtNum,
+    fmtUnix: () => fmtUnix,
+    h: () => h,
+    kid: () => kid,
+    kids: () => kids,
+    lazyAppend: () => lazyAppend,
+    lazyFillAll: () => lazyFillAll,
+    lazyKick: () => lazyKick,
+    natCmp: () => natCmp,
+    norm: () => norm,
+    nowStamp: () => nowStamp,
+    s: () => s,
+    safeName: () => safeName,
+    store: () => store,
+    textOf: () => textOf,
+    trunc: () => trunc,
+    uniq: () => uniq,
+    unitLabel: () => unitLabel,
+    xesc: () => xesc
+  });
   var $ = (s2, r) => (r || document).querySelector(s2);
   var $$ = (s2, r) => [...(r || document).querySelectorAll(s2)];
   function h(tag, attrs, ...children) {
@@ -951,6 +987,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   var PIN_ACTIONS = registry("Datenpunkte-Knöpfe");
   var WD_TABS = registry("Wartungsdoku-Reiter");
   var LIVE_SOURCES = registry("Live-Quellen");
+  var ALL = { FORMATS, ANALYSES, CHECKS, VIEWS, OVERVIEW_TILES, SEARCH, PIN_COLUMNS, PIN_FILTERS, PIN_SECTIONS, PIN_ACTIONS, WD_TABS, LIVE_SOURCES };
 
   // src/ui/core/load.js
   async function readZip(buf) {
@@ -1086,6 +1123,34 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   }
 
   // src/ui/model/model.js
+  var model_exports = {};
+  __export(model_exports, {
+    FB_TYPES: () => FB_TYPES,
+    FUNC_NAMES: () => FUNC_NAMES,
+    KIND_INFO: () => KIND_INFO,
+    TYPE_NAMES: () => TYPE_NAMES,
+    describeTransform: () => describeTransform,
+    dictFor: () => dictFor,
+    edgeLabel: () => edgeLabel,
+    edgesIn: () => edgesIn,
+    edgesOut: () => edgesOut,
+    indexEdges: () => indexEdges,
+    isInvertedEdge: () => isInvertedEdge,
+    isOutputKind: () => isOutputKind,
+    newCentral: () => newCentral,
+    nodePlace: () => nodePlace,
+    nodeTitle: () => nodeTitle,
+    pe: () => pe,
+    pinOf: () => pinOf,
+    portLabel: () => portLabel,
+    pv: () => pv,
+    roleFromText: () => roleFromText,
+    roleOf: () => roleOf,
+    stateTextsOf: () => stateTextsOf,
+    vBool: () => vBool,
+    vNum: () => vNum,
+    valText: () => valText
+  });
   var TYPE_NAMES = {
     M: "Logikmodul",
     T: "Zeitglied",
@@ -2873,6 +2938,11 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   var SEV = { err: 3, warn: 2, info: 1 };
   var SEV_LABEL = { err: "Fehler", warn: "Warnung", info: "Hinweis" };
   var checksOff = () => new Set(store.get("checksOff", []));
+  function setCheckOff(id, off) {
+    const s2 = checksOff();
+    off ? s2.add(id) : s2.delete(id);
+    store.set("checksOff", [...s2]);
+  }
   var checksFor = (C) => CHECKS.list((K) => !K.formats || K.formats.includes(C.format));
   function runFindings(C) {
     const F = [], off = checksOff();
@@ -5032,6 +5102,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           list().forEach((f) => rows.push([SEV_LABEL[f.sev], f.cat, f.title, f.detail, f.ref ? f.ref.pin || f.ref.node || "" : ""]));
           download(safeName(C.meta.name) + "_Befunde.csv", csv(rows), "text/csv;charset=utf-8");
         }),
+        btn("Prüfungen", "sliders", (e) => checksMenu(e.currentTarget, C), "", "Welche automatischen Prüfungen laufen sollen"),
         btn("Drucken", "print", () => {
           S.open = new Set(cats());
           LAZY.all = true;
@@ -5169,6 +5240,22 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       draw();
     }
   });
+  function checksMenu(anchor, C) {
+    const off = checksOff();
+    flyout(anchor, [{ head: "Prüfungen für " + C.meta.name }, ...checksFor(C).map((K) => ({
+      label: (K.label || K.id) + (C.checkErrors && C.checkErrors.includes(K.id) ? " (Fehler)" : ""),
+      on: !off.has(K.id),
+      run: () => {
+        setCheckOff(K.id, !off.has(K.id));
+        for (const X of APP.centrals) {
+          runFindings(X);
+          refreshSev(X);
+        }
+        toast("Prüfung „" + (K.label || K.id) + "“ " + (off.has(K.id) ? "eingeschaltet." : "ausgeschaltet."), "inf", 2500);
+        renderAll();
+      }
+    }))]);
+  }
   function findingsText(C, list) {
     const L = ["Befundbericht · " + C.meta.name, stationSub(C), "Erstellt " + nowStamp() + " mit der DDC-Werkbank", ""];
     let cat = null;
@@ -9119,7 +9206,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       "div",
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
-      h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung"))
+      h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.4.0")
     ));
   }
   function renderTitle() {
@@ -10474,7 +10562,41 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   });
 
   // src/ui/main.js
+  var api = {
+    version: "0.4.0",
+    register: ALL,
+    state: APP,
+    curC,
+    byCid,
+    on,
+    emit,
+    go,
+    openPin,
+    openNode,
+    openRef,
+    renderAll,
+    live: { setLive, liveOfPin, livePinText },
+    ui: { h, icon, btn, toast, pageHead, kindTag },
+    util: util_exports,
+    model: model_exports
+  };
+  window.DDCWerkbank = api;
+  var geladen = [];
+  function runExtension(fn) {
+    if (typeof fn !== "function") return;
+    try {
+      fn(api);
+      geladen.push(fn.name || "Erweiterung");
+    } catch (e) {
+      console.error("Erweiterung:", e);
+      setTimeout(() => toast("Eine Erweiterung konnte nicht geladen werden: " + (e && e.message || e), "err", 8e3), 500);
+    }
+  }
+  api.erweiterungen = geladen;
   function boot() {
+    const q = window.DDCWerkbankErweiterungen;
+    if (Array.isArray(q)) q.forEach(runExtension);
+    window.DDCWerkbankErweiterungen = { push: runExtension };
     buildShell();
     persistInit();
   }
@@ -10482,5 +10604,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   else boot();
 })();
 </script>
+<!-- Optionale Erweiterungen ohne Neubauen: ui\erweiterungen.js (fehlt sie, passiert nichts) -->
+<script src="erweiterungen.js"></script>
 </body>
 </html>

@@ -4,9 +4,9 @@ import { SEARCH, VIEWS } from "../core/ext.js";
 import { $, copyText, csv, download, fmtNum, LAZY, h, lazyAppend, natCmp, norm, nowStamp, safeName, trunc, uniq } from "../core/util.js";
 import { nodePlace, valText } from "../model/model.js";
 import { WD } from "../model/d4pml.js";
-import { SEV, SEV_LABEL } from "../model/findings.js";
-import { btn, emptyState, findingsCount, icon, pageHead, renderAll, searchBox, selectEl, sevIcon, stationSub, toast } from "../shell/shell.js";
-import { PERSIST, activeFindings, ignButton, ignFilterEl, ignPass, isIgnored, persistWhere, setIgnored, whereLine } from "../core/persist.js";
+import { SEV, SEV_LABEL, checksFor, checksOff, runFindings, setCheckOff } from "../model/findings.js";
+import { btn, emptyState, findingsCount, flyout, icon, pageHead, renderAll, searchBox, selectEl, sevIcon, stationSub, toast } from "../shell/shell.js";
+import { PERSIST, activeFindings, ignButton, ignFilterEl, ignPass, isIgnored, persistWhere, refreshSev, setIgnored, whereLine } from "../core/persist.js";
 import { findingDocState } from "../wartung/view.js";
 
 /* =========================================================================
@@ -45,6 +45,7 @@ VIEWS.add({
         list().forEach(f => rows.push([SEV_LABEL[f.sev], f.cat, f.title, f.detail, f.ref ? (f.ref.pin || f.ref.node || "") : ""]));
         download(safeName(C.meta.name) + "_Befunde.csv", csv(rows), "text/csv;charset=utf-8");
       }),
+      btn("Prüfungen", "sliders", e => checksMenu(e.currentTarget, C), "", "Welche automatischen Prüfungen laufen sollen"),
       btn("Drucken", "print", () => { S.open = new Set(cats()); LAZY.all = true; try { renderAll(); } finally { LAZY.all = false; } setTimeout(() => window.print(), 100); })]));
     const cats = () => uniq(C.findings.map(f => f.cat));
     const list = () => {
@@ -109,6 +110,19 @@ VIEWS.add({
     draw();
   }
 });
+/* Auswahl der Prüfungen (gilt für alle Zentralen, wird im Browser gemerkt) */
+function checksMenu(anchor, C) {
+  const off = checksOff();
+  flyout(anchor, [{ head: "Prüfungen für " + C.meta.name }, ...checksFor(C).map(K => ({
+    label: (K.label || K.id) + (C.checkErrors && C.checkErrors.includes(K.id) ? " (Fehler)" : ""), on: !off.has(K.id),
+    run: () => {
+      setCheckOff(K.id, !off.has(K.id));
+      for (const X of APP.centrals) { runFindings(X); refreshSev(X); }
+      toast("Prüfung „" + (K.label || K.id) + "“ " + (off.has(K.id) ? "eingeschaltet." : "ausgeschaltet."), "inf", 2500);
+      renderAll();
+    }
+  }))]);
+}
 function findingsText(C, list) {
   const L = ["Befundbericht · " + C.meta.name, stationSub(C), "Erstellt " + nowStamp() + " mit der DDC-Werkbank", ""];
   let cat = null;
