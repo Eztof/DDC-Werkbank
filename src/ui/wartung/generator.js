@@ -1,6 +1,7 @@
+import { APP } from "../core/state.js";
 import { natCmp, unitLabel, xesc } from "../core/util.js";
 import { KIND_INFO } from "../model/model.js";
-import { APP } from "../shell/shell.js";
+
 import { nameGroups, regroupPlants } from "./anlagen.js";
 
 /* =========================================================================

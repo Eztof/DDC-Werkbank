@@ -1,9 +1,11 @@
+import { go, openPin } from "../core/nav.js";
+import { curC, vstate } from "../core/state.js";
 import { VIEWS } from "../core/views.js";
 import { copyText, esc, h, natCmp, norm, s, trunc, uniq } from "../core/util.js";
 import { FB_TYPES, FUNC_NAMES, KIND_INFO, TYPE_NAMES, describeTransform, dictFor, edgeLabel, edgesIn, edgesOut, isInvertedEdge, isOutputKind, nodePlace, nodeTitle, pe, portLabel, pv, roleFromText, roleOf, stateTextsOf, valText } from "../model/model.js";
 import { foVal, paraOf, schedText } from "../model/d4pml.js";
 import { SEV } from "../model/findings.js";
-import { btn, chk, curC, emptyState, go, hideTip, icon, kindTag, openPin, pageHead, renderAll, sevIcon, showTip, stationSub, toast, vstate } from "../shell/shell.js";
+import { btn, chk, emptyState, hideTip, icon, kindTag, pageHead, renderAll, sevIcon, showTip, stationSub, toast } from "../shell/shell.js";
 import { pinValue } from "./points.js";
 import { findingRow, weekGrid } from "./findings-sched.js";
 

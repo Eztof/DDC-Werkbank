@@ -1,6 +1,8 @@
+import { go } from "../core/nav.js";
+import { APP } from "../core/state.js";
 import { VIEWS } from "../core/views.js";
 import { $, copyText, h, trunc } from "../core/util.js";
-import { APP, btn, findingsCount, go, icon, kbar, logoSvg, pageHead, removeCentral, stationSub, toast } from "../shell/shell.js";
+import { btn, findingsCount, icon, kbar, logoSvg, pageHead, removeCentral, stationSub, toast } from "../shell/shell.js";
 import { activeFindings } from "../core/persist.js";
 import { findingRow } from "./findings-sched.js";
 import { WDOC, wdocInfo } from "../wartung/wtgml.js";

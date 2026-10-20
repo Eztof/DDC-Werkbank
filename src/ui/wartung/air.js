@@ -1,5 +1,6 @@
+import { APP } from "../core/state.js";
 import { h, natCmp, trunc, uniq } from "../core/util.js";
-import { APP, btn, emptyState, icon, renderAll, selectEl } from "../shell/shell.js";
+import { btn, emptyState, icon, renderAll, selectEl } from "../shell/shell.js";
 import { pref, setPref } from "../core/persist.js";
 import { wSnapshot, wdocChanged, wset, wtxt } from "./wtgml.js";
 import { jumpToArt, wIsps } from "./view.js";

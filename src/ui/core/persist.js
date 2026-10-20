@@ -1,7 +1,9 @@
+import { openNode, openPin } from "./nav.js";
+import { APP } from "./state.js";
 import { $, h, store } from "./util.js";
 import { TYPE_NAMES, nodePlace } from "../model/model.js";
 import { SEV } from "../model/findings.js";
-import { APP, icon, kindTag, openNode, openPin, renderAll, selectEl } from "../shell/shell.js";
+import { icon, kindTag, renderAll, selectEl } from "../shell/shell.js";
 import { lkAks, lkCanon, lkInvalidate } from "../wartung/link.js";
 import { ONLINE_BASE } from "../views/online.js";
 

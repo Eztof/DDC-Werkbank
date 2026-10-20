@@ -1,9 +1,12 @@
+import { openNode, openPin } from "../core/nav.js";
+import { vstate } from "../core/state.js";
+import { liveInfo, livePinText } from "../core/live.js";
 import { VIEWS } from "../core/views.js";
 import { $, $$, copyText, csv, download, fmtNum, h, natCmp, norm, safeName, trunc, unitLabel } from "../core/util.js";
 import { KIND_INFO, TYPE_NAMES, describeTransform, edgeLabel, isInvertedEdge, isOutputKind, nodePlace, nodeTitle, portLabel, pv, stateTextsOf, vNum, valText } from "../model/model.js";
 import { foVal } from "../model/d4pml.js";
 import { SEV, SEV_LABEL } from "../model/findings.js";
-import { btn, emptyState, icon, kindTag, openNode, openPin, pageHead, renderAll, searchBox, selectEl, sevIcon, stationSub, toast, vstate } from "../shell/shell.js";
+import { btn, emptyState, icon, kindTag, pageHead, renderAll, searchBox, selectEl, sevIcon, stationSub, toast } from "../shell/shell.js";
 import { findingRow } from "./findings-sched.js";
 import { WDOC, wtxt } from "../wartung/wtgml.js";
 import { artForPin, artName, jumpToArt } from "../wartung/view.js";
@@ -35,6 +38,7 @@ VIEWS.points = {
     if (opts.mod) { S.mod = opts.mod; }
     const hasVals = C.pins.some(p => p.value.eff || p.value.stored);
     const hasBac = C.pins.some(p => p.bacnet.length);
+    const live = liveInfo(C.cid);              // Live-Werte aus dem Online-Reiter, falls gelesen
     let DM = new Map();                       // Klemme → Eintrag in der Wartungsdoku
 
     root.appendChild(pageHead("Datenpunkte", stationSub(C), [
@@ -111,7 +115,7 @@ VIEWS.points = {
       const hasDoc = DM.size > 0;
       const t = h("table", { class: "grid" });
       t.appendChild(h("thead", null, h("tr", null, th("Klemme", "klemme"), th("Art", "kind"), th("Bezeichnung", "name"),
-        hasVals ? th("Wert", "val", "num") : null, th("Korr.", "corr", "num"), th("Signalweg", "sig"), hasBac ? h("th", null, "BACnet") : null, hasDoc ? th("Wartungsdoku", "doc") : null, th("", "sev"))));
+        hasVals ? th("Wert", "val", "num") : null, live ? h("th", { class: "num", title: "Live-Wert aus dem Online-Reiter, Stand " + live.stamp }, "Live") : null, th("Korr.", "corr", "num"), th("Signalweg", "sig"), hasBac ? h("th", null, "BACnet") : null, hasDoc ? th("Wartungsdoku", "doc") : null, th("", "sev"))));
       const tb = h("tbody");
       for (const p of list) {
         const sg = pinSignal(C, p);
@@ -125,6 +129,7 @@ VIEWS.points = {
           h("td", null, kindTag(p.kind)),
           h("td", null, p.name || (p.paraText ? h("span", { class: "muted" }, p.paraText) : h("span", { class: "faint" }, "–")), sub.length ? h("span", { class: "sub" }, sub.join(" · ")) : null),
           hasVals ? h("td", { class: "num nowrap" }, p.value.invalid ? h("span", { class: "pill err" }, "ungültig") : v) : null,
+          live ? (() => { const f = livePinText(C, p); return f ? h("td", { class: "num nowrap " + f.cls }, f.t) : h("td"); })() : null,
           h("td", { class: "num nowrap" }, pinCorrText(p)),
           h("td", { class: "small" }, sg.src.length ? h("div", { class: "nowrap mono", title: sg.src.join("\n") }, "◄ " + trunc(sg.src[0], 34) + (sg.src.length > 1 ? " +" + (sg.src.length - 1) : "")) : null,
             sg.users ? h("div", { class: "muted" }, "► " + sg.users + (sg.users === 1 ? " Verbraucher" : " Verbraucher")) : null,

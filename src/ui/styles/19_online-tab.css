@@ -4,3 +4,7 @@
 table.grid td.liveon { color: var(--ok); font-weight: 600; }
 table.grid td.liveoff { color: var(--text-2); }
 table.grid td.num.liveon, table.grid td.num.liveoff { text-align: right; }
+/* Live-Werte in anderen Ansichten (Wartungsdoku-Zeile) */
+.wdoc .artval .live { color: var(--accent-text); font-size: 11px; }
+.wdoc .artval .live.liveon { color: var(--ok); font-weight: 600; }
+.wdoc .artval .live.liveoff { color: var(--text-2); }

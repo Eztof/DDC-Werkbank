@@ -12,7 +12,13 @@ Auf dem Arbeitsrechner wird nichts installiert. Die fertige ZIP kommt aus GitHub
 src/ui/                 Oberfläche (wird zu EINER HTML-Datei gebaut)
   index.html            Gerüst, Platzhalter für CSS und JS
   main.js               Einstieg: lädt alle Module, startet die Oberfläche
-  core/                 Grundlagen: DOM-Helfer, Dateien laden, Merkliste, Ansichten-Registry
+  core/                 Grundlagen, von allen genutzt:
+    state.js            gemeinsamer Zustand (APP, aktuelle Zentrale)
+    events.js           Ereignisse (on/emit) zum Verknüpfen ohne direkte Abhängigkeit
+    nav.js              Navigation und Sprungziele (go, openPin, openNode, openRef)
+    live.js             Live-Werte aus dem Online-Reiter für alle Ansichten
+    views.js            Ansichten-Registry (VIEWS, NAV)
+    util.js, load.js, persist.js   DOM-Helfer, Dateien laden, Merkliste
   model/                Einlesen und Auswerten: Modell, DDC4000/BMR, DDC3000, Befunde
   shell/                Fenster-Gerüst, Navigation, Zustand (APP), Suche, Sprungziele
   views/                Ansichten: Start/Übersicht, Datenpunkte, Programm, Befunde/Zeit, Vergleich, Online
@@ -21,9 +27,17 @@ src/ui/                 Oberfläche (wird zu EINER HTML-Datei gebaut)
 src/service/            Hintergrunddienst (Node, wird zur .exe): server.js, bacnet.js
 tools/build.mjs         baut DDC-Werkbank/ui/DDC-Werkbank.html
 tools/package.mjs       baut dist/DDC-Werkbank/ mit .exe und ZIP
-test/                   Rauchtest im Browser mit künstlicher Beispiel-Sicherung
+test/                   Tests im Browser mit künstlicher Beispiel-Sicherung (Ansichten, Online→Datenpunkte)
 DDC-Werkbank/           Auslieferungsordner (gebaute HTML, LIESMICH)
 ```
+
+## Funktionen verknüpfen
+
+- **Daten teilen:** gemeinsame Daten liegen in `core/` (z. B. `APP` in `state.js`, Live-Werte in `live.js`) und werden per `import` gelesen.
+- **Auf etwas reagieren:** `on("live", ({ cid }) => …)` – wer etwas Neues hat, meldet es mit `emit(...)`. Die bekannten Ereignisse stehen oben in `core/events.js`.
+- **Hinspringen:** `openPin(cid, uid)`, `openNode(cid, nodeId)`, `go("ansicht", { … })` aus `core/nav.js`.
+
+Beispiel: Der Online-Reiter legt gelesene Werte mit `setLive()` ab; Datenpunkte (Spalte „Live“) und Wartungsdoku-Zeilen zeigen sie über `livePinText()` an.
 
 Jedes Modul holt sich, was es braucht, per `import` und gibt per `export` frei, was andere nutzen. Neue Ansicht: Datei unter `views/` anlegen, `VIEWS.name = { … }` setzen, in `core/views.js` (NAV) eintragen und in `main.js` importieren.
 

@@ -1,6 +1,8 @@
+import { go } from "../core/nav.js";
+import { APP } from "../core/state.js";
 import { $, download, h, natCmp, nowStamp, store } from "../core/util.js";
 import { decodeBytes } from "../core/load.js";
-import { APP, btn, chk, go, icon, renderAll, toast } from "../shell/shell.js";
+import { btn, chk, icon, renderAll, toast } from "../shell/shell.js";
 import { pref } from "../core/persist.js";
 import { WTG_NS } from "./generator.js";
 

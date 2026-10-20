@@ -1,9 +1,11 @@
+import { go, openNode, openPin, openRef } from "../core/nav.js";
+import { APP, vstate } from "../core/state.js";
 import { VIEWS } from "../core/views.js";
 import { $, copyText, csv, download, fmtNum, h, natCmp, norm, nowStamp, safeName, trunc, uniq } from "../core/util.js";
 import { nodePlace, valText } from "../model/model.js";
 import { WD } from "../model/d4pml.js";
 import { SEV, SEV_LABEL } from "../model/findings.js";
-import { APP, btn, emptyState, findingsCount, go, icon, openNode, openPin, openRef, pageHead, renderAll, searchBox, selectEl, sevIcon, stationSub, toast, vstate } from "../shell/shell.js";
+import { btn, emptyState, findingsCount, icon, pageHead, renderAll, searchBox, selectEl, sevIcon, stationSub, toast } from "../shell/shell.js";
 import { PERSIST, activeFindings, ignButton, ignFilterEl, ignPass, isIgnored, persistWhere, setIgnored, whereLine } from "../core/persist.js";
 import { findingDocState } from "../wartung/view.js";
 

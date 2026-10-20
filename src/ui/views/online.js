@@ -1,6 +1,9 @@
+import { liveText, setLive } from "../core/live.js";
+import { openNode, openPin } from "../core/nav.js";
+import { APP, curC } from "../core/state.js";
 import { VIEWS } from "../core/views.js";
 import { fmtNum, h, nowStamp, store } from "../core/util.js";
-import { APP, btn, chk, curC, emptyState, icon, openNode, openPin, pageHead, selectEl, toast } from "../shell/shell.js";
+import { btn, chk, emptyState, icon, pageHead, selectEl, toast } from "../shell/shell.js";
 
 /* =========================================================================
    Ansicht: Online – Verbindung zur Zentrale über den lokalen Dienst
@@ -50,16 +53,6 @@ function olBacnetObjects(C) {
   return out.length ? out : null;
 }
 
-function olFmt(o) {
-  if (!o.ok) return { t: o.err === "timeout" ? "keine Antwort" : (o.err || "Fehler"), cls: "muted" };
-  if (o.value == null) return { t: "—", cls: "muted" };
-  const t = o.type;
-  if (t === 3 || t === 4 || t === 5) { const on = o.value === true || o.value === 1 || o.value === "1"; return { t: on ? "EIN" : "AUS", cls: on ? "liveon" : "liveoff" }; }
-  if (t === 13 || t === 14 || t === 19) return { t: String(o.value), cls: "" };
-  if (typeof o.value === "number") return { t: fmtNum(o.value), cls: "num" };
-  return { t: String(o.value), cls: "" };
-}
-
 async function olConnect() {
   const ip = (ONLINE.ip || "").trim();
   if (!ip) { toast("Bitte IP-Adresse der Zentrale eingeben.", "warn"); return; }
@@ -97,7 +90,9 @@ async function olRefresh(silent) {
   if (!r || !r.ok) { ONLINE.err = (r && r.err) || "Werte konnten nicht gelesen werden."; olLayout(); return; }
   const vmap = new Map(r.values.map(v => [v.type + ":" + v.inst, v]));
   ONLINE.values = ONLINE.objs.map(o => Object.assign({}, o, vmap.get(o.type + ":" + o.inst) || { ok: false, err: "?" }));
-  ONLINE.stamp = nowStamp(); ONLINE.err = ""; olLayout();
+  ONLINE.stamp = nowStamp(); ONLINE.err = "";
+  if (ONLINE.C) setLive(ONLINE.C.cid, ip, ONLINE.values, ONLINE.stamp);   // für Datenpunkte, Wartungsdoku …
+  olLayout();
   // Auto-Refresh
   clearTimeout(ONLINE._timer);
   if (ONLINE.auto) ONLINE._timer = setTimeout(() => { if (document.body.contains(ONLINE._root) && APP.view === "online") olRefresh(true); }, 5000);
@@ -187,7 +182,7 @@ function olLayout() {
   const tbl = h("table", { class: "grid card-t" },
     h("thead", null, h("tr", null, h("th", null, "Objekt"), h("th", null, "Name"), h("th", { class: "num" }, "Wert"), C ? h("th", null, "") : null)),
     h("tbody", null, ONLINE.values.map(o => {
-      const f = olFmt(o);
+      const f = liveText(o);
       const node = C && o.nodeId ? C.nodes.get(o.nodeId) : null;
       return h("tr", { class: o.ok ? "" : "dim" },
         h("td", { class: "mono" }, h("span", { class: "badge soft", title: OBJT_LONG[o.type] || "" }, OBJT[o.type] || o.type), " " + o.inst),

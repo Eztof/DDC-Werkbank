@@ -1,6 +1,8 @@
+import { go } from "../core/nav.js";
+import { APP } from "../core/state.js";
 import { $, h, natCmp, norm, trunc, uniq } from "../core/util.js";
 import { KIND_INFO, isOutputKind } from "../model/model.js";
-import { APP, btn, emptyState, go, icon, kindTag, renderAll, selectEl, stationLabel, toast } from "../shell/shell.js";
+import { btn, emptyState, icon, kindTag, renderAll, selectEl, stationLabel, toast } from "../shell/shell.js";
 import { PERSIST, pentry, pput, pref, setPref } from "../core/persist.js";
 import { WTG_NS, dpArtikel, infoValue, wdModel } from "./generator.js";
 import { assignPlant } from "./anlagen.js";

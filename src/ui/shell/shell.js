@@ -1,3 +1,6 @@
+import { go, openNode, openPin, setRenderer } from "../core/nav.js";
+import { emit } from "../core/events.js";
+import { APP, curC } from "../core/state.js";
 import { NAV, VIEWS } from "../core/views.js";
 import { $, $$, SVGNS, h, natCmp, norm, store, trunc } from "../core/util.js";
 import { collectInputs, entriesFromDrop } from "../core/load.js";
@@ -80,19 +83,6 @@ export function icon(name, cls) {
 export function logoSvg(cls) {
   const d = h("span", { html: `<svg class="${cls || "logo"}" viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="lg1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2b88d8"/><stop offset="1" stop-color="#005fb8"/></linearGradient></defs><rect x="4" y="4" width="40" height="40" rx="9" fill="url(#lg1)"/><path d="M13 16h9v6h-9zM26 26h9v6h-9zM22 19h6v10" fill="none" stroke="#fff" stroke-width="2.6" stroke-linejoin="round"/><circle cx="35" cy="16" r="3.2" fill="#9fd8ff"/></svg>` });
   return d.firstChild;
-}
-
-/* ---------- Zustand ---------- */
-export const APP = {
-  centrals: [], cur: null, templates: [], view: "start", opts: {}, vs: {}, wd: {}, cmp: {},
-  theme: store.get("theme", "system"), collapsed: store.get("navCollapsed", false)
-};
-export const curC = () => APP.centrals.find(c => c.cid === APP.cur) || null;
-export const byCid = cid => APP.centrals.find(c => c.cid === cid) || null;
-export function vstate(view, C, init) {
-  const k = view + ":" + (C ? C.cid : "-");
-  if (!APP.vs[k]) APP.vs[k] = init();
-  return APP.vs[k];
 }
 
 /* ---------- Farbschema ---------- */
@@ -185,6 +175,7 @@ export function findingsCount(C) {
 /* ---------- Ansichten-Registry ---------- */
 
 export function buildShell() {
+  setRenderer(renderAll);
   document.body.innerHTML = "";
   const app = h("div", { id: "app" });
   /* Titelleiste */
@@ -265,7 +256,7 @@ function renderTitle() {
   const st = $("#tbStation"); st.innerHTML = "";
   if (APP.centrals.length) {
     const opts = APP.centrals.map(c => [c.cid, stationLabel(c)]);
-    const s = selectEl(opts, APP.cur, v => { APP.cur = v; if (APP.view === "start") APP.view = "overview"; renderAll(); }, "tb-station");
+    const s = selectEl(opts, APP.cur, v => { APP.cur = v; emit("zentrale", { cid: v }); if (APP.view === "start") APP.view = "overview"; renderAll(); }, "tb-station");
     s.title = "Geladene Sicherung wählen";
     st.appendChild(s);
   }
@@ -304,7 +295,6 @@ function viewKey() {
   if (APP.view === "wartung") return "wartung|" + (APP.wdTab || "") + "|" + (WDOC.cur ? WDOC.cur.name : "");
   return APP.view + "|" + (APP.cur || "");
 }
-export function go(view, opts) { APP.view = view; APP.opts = opts || {}; renderAll(); }
 export function pageHead(title, sub, acts) {
   return h("div", { class: "page-head" },
     h("div", { class: "grow" }, h("h1", null, title), sub ? h("div", { class: "sub" }, sub) : null),
@@ -325,17 +315,6 @@ export function stationSub(C) {
   const m = C.meta;
   const t = C.format === "DDC3000" ? "DDC3000 " + (m.stationType || "") : m.stationType;
   return [m.name, t && !m.name.includes(m.stationType) ? t : (C.format === "DDC3000" ? "DDC3000" : ""), m.centralAddr ? "Zentrale " + m.centralAddr : "", m.stamp ? "Stand " + m.stamp : ""].filter(Boolean).join("  ·  ");
-}
-
-/* ---------- Sprungziele ---------- */
-export function openPin(cid, uid) { if (cid) APP.cur = cid; go("points", { pin: uid }); }
-export function openNode(cid, nid, chain) { if (cid) APP.cur = cid; go("program", { node: nid, chain: chain || null }); }
-export function openRef(C, ref) {
-  if (!ref) return;
-  if (ref.pin) return openPin(C.cid, ref.pin);
-  const n = C.nodes.get(ref.node);
-  if (n && n.pin) return openPin(C.cid, n.pin.uid);
-  if (ref.node) return openNode(C.cid, ref.node);
 }
 
 /* ---------- Laden ---------- */
@@ -368,6 +347,7 @@ async function loadFiles(files, handles) {
       toast(added.length === 1 ? `„${added[0].meta.name}“ geladen – ${added[0].pins.filter(p => p.kind !== "frei").length} belegte Klemmen, ${activeFindings(added[0]).filter(f => f.sev !== "info").length} Befunde.`
         : `${added.length} Sicherungen geladen.`, "ok");
       if (APP.view === "start") APP.view = "overview";
+      emit("zentralen", { centrals: APP.centrals });
     }
     if (tplAdded) { toast("Wartungsdoku geöffnet: " + WDOC.cur.name + (WDOC.cur.handle ? " – zum direkten Speichern im Tab „Wartungsdoku“ verknüpfen." : ""), "ok", 6000); APP.wdTab = "doc"; if (!added.length) APP.view = "wartung"; }
     if (bad.length) toast(bad.join(" · "), "warn", 8000);
@@ -380,6 +360,7 @@ export function removeCentral(cid) {
   for (const k of Object.keys(APP.vs)) if (k.endsWith(":" + cid)) delete APP.vs[k];
   delete APP.wd[cid];
   if (APP.cur === cid) APP.cur = APP.centrals.length ? APP.centrals[0].cid : null;
+  emit("zentralen", { centrals: APP.centrals });
   renderAll();
 }
 

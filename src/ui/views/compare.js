@@ -1,7 +1,9 @@
+import { openNode } from "../core/nav.js";
+import { APP, byCid } from "../core/state.js";
 import { VIEWS } from "../core/views.js";
 import { $, csv, download, h, natCmp, norm, safeName, trunc } from "../core/util.js";
 import { nodePlace } from "../model/model.js";
-import { APP, btn, byCid, chk, emptyState, icon, openNode, pageHead, renderAll, searchBox, selectEl, stationLabel } from "../shell/shell.js";
+import { btn, chk, emptyState, icon, pageHead, renderAll, searchBox, selectEl, stationLabel } from "../shell/shell.js";
 
 /* =========================================================================
    Ansicht: Vergleich zweier Sicherungen

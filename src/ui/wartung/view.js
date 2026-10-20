@@ -1,11 +1,14 @@
+import { go } from "../core/nav.js";
+import { APP, byCid } from "../core/state.js";
 import { VIEWS } from "../core/views.js";
 import { $, $$, download, h, natCmp, norm, trunc, uniq } from "../core/util.js";
 import { decodeBytes } from "../core/load.js";
 import { edgesIn, edgesOut, isOutputKind } from "../model/model.js";
 import { SEV_LABEL } from "../model/findings.js";
-import { APP, btn, byCid, chk, emptyState, findingsCount, flyout, go, icon, kindTag, pageHead, renderAll, searchBox, selectEl, sevIcon, stationLabel, toast } from "../shell/shell.js";
+import { btn, chk, emptyState, findingsCount, flyout, icon, kindTag, pageHead, renderAll, searchBox, selectEl, sevIcon, stationLabel, toast } from "../shell/shell.js";
 import { findingWhere, ignButton, ignFilterEl, ignPass, isIgnored, persistWhere, pref, setIgnored, setPref, whereLine } from "../core/persist.js";
 import { pinCorrText, pinValue } from "../views/points.js";
+import { liveInfo, livePinText } from "../core/live.js";
 import { WTG_NS, ispXml, newGid, pinsOfGroup, regroupBy, setKlartext, wdModel } from "./generator.js";
 import { assignPlant, plantOfNode } from "./anlagen.js";
 import { FS_OK, WDOC, wDate, wDateFromInput, wDateToInput, wPersons, wPrueferDefault, wPrueferOf, wRenumber, wSetPruefer, wSnapshot, wUndo, wdocBauteile, wdocChanged, wdocInfo, wdocInsertIsp, wdocOpen, wdocPickAndLink, wdocSave, wdocStatus, wdocText, wkid, wkids, wset, wtxt } from "./wtgml.js";
@@ -698,9 +701,11 @@ export function jumpToPin(C, p) { APP.cur = C.cid; go("points", { pin: p.uid, fl
 function artValueChip(C, p) {
   if (!p || !p.value) return null;
   const v = pinValue(p), corr = pinCorrText(p);
-  if (!v && !p.value.invalid) return null;
+  const lo = livePinText(C, p), lv = lo && lo.ok ? lo : null;
+  if (!v && !p.value.invalid && !lv) return null;
   const tip = "Wert aus der Sicherung " + stationLabel(C) + (C.meta.stamp ? " (Stand " + C.meta.stamp + ")" : "") + (corr ? "\nFühlerkorrektur " + corr : "") + (p.value.invalid ? "\nWert ist als ungültig markiert" : "");
-  return h("span", { class: "artval", title: tip }, p.value.invalid ? h("span", { class: "pill err" }, "ungültig") : h("b", null, v), corr ? h("span", { class: "corr" }, "Korr. " + corr) : null);
+  return h("span", { class: "artval", title: tip }, p.value.invalid ? h("span", { class: "pill err" }, "ungültig") : h("b", null, v), corr ? h("span", { class: "corr" }, "Korr. " + corr) : null,
+    lv ? h("span", { class: "live " + lv.cls, title: "Live-Wert aus dem Online-Reiter, Stand " + liveInfo(C.cid).stamp }, "live " + lv.t) : null);
 }
 export function jumpToArt(hit) { const D = WDOC.cur; if (!D || !hit) return; D.sel = hit.f; D.flashArt = hit.a; APP.wdTab = "doc"; go("wartung", { tab: "doc", flash: true }); }
 
