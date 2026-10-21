@@ -1,4 +1,5 @@
-import { clearLive, defaultLiveText, setLive } from "../core/live.js";
+import { clearLive, defaultLiveText, setLive, setLiveAddr } from "../core/live.js";
+import { pinAddr } from "../core/addr.js";
 import { LIVE_SOURCES, VIEWS } from "../core/ext.js";
 import { openNode, openPin } from "../core/nav.js";
 import { APP, curC } from "../core/state.js";
@@ -13,9 +14,6 @@ import { btn, chk, emptyState, icon, pageHead, toast } from "../shell/shell.js";
    Anmeldung mit Benutzer/Passwort der Zentrale; das Passwort bleibt nur im
    Dienst (Arbeitsspeicher). Der Dienst laesst ausschliesslich Lesebefehle zu.
    ========================================================================= */
-const PRIM = { CAI: "b", CDI: "k", CDO: "K", CAO: "Y" };
-const SEC = { CAO: "y", CDO: "k" };
-
 /* Darstellung eines gelesenen Werts in den K&P-Tabellen (Rohantwort { ok, v, pv, unit }).
    In den Datenpunkten/der Wartungsdoku zeigt die Standard-Darstellung die Werte;
    die Einheit kommt dort aus der Sicherung. */
@@ -26,22 +24,17 @@ function kpCell(o) {
   if (o.pv != null && o.pv !== "") { const u = o.unit && !String(o.pv).includes(o.unit) ? " " + o.unit : ""; return { t: String(o.pv) + u, cls: "" }; }
   return { t: "\u2014", cls: "muted" };
 }
-LIVE_SOURCES.add({ id: "kp", label: "K&P direkt" });
+/* Live-Quelle: Ansichten (Programm & Wirkkette …) fordern per want() die Adressen an, die sie zeigen */
+LIVE_SOURCES.add({ id: "kp", label: "K&P direkt",
+  connected: cid => !!(KP.conn && KP.C && KP.C.cid === cid),
+  want: (cid, addrs) => kpWant(cid, addrs) });
 
-/* Adresse des Live-Werts je Klemme: Eingaenge Messwert, Ausgaenge wirksamer Stellwert */
-export function pinAddress(C, p) {
-  const n = C && C.nodes && C.nodes.get(p.nodeId); if (!n || n.foreign) return null;
-  const sub = (n.subObjs || []).find(s => PRIM[s.type]); if (!sub) return null;
-  const sec = SEC[sub.type] && sub.paras.some(x => x.addr === SEC[sub.type]) ? SEC[sub.type] : null;
-  const para = (p.kind === "AA" || p.kind === "BA") && sec ? sec : PRIM[sub.type];
-  return "//" + n.mod + "/" + n.plant + "/" + n.group + "/" + n.addr + "/" + sub.addr + "/" + para;
-}
 function pinTargets(C) {
   if (!C || C.fmt === "ddc3000" || !C.pins) return [];
   const out = [];
   for (const p of C.pins) {
     if (p.kind === "frei") continue;
-    const a = pinAddress(C, p); if (a) out.push({ a, nodeId: p.nodeId, name: p.name || p.paraText || "", klemme: p.klemme });
+    const a = pinAddr(C, p); if (a) out.push({ a, nodeId: p.nodeId, name: p.name || p.paraText || "", klemme: p.klemme });
   }
   return out;
 }
@@ -49,6 +42,44 @@ function pinTargets(C) {
 const KP = { C: null, ip: store.get("kpIp", ""), port: store.get("kpPort", 18090), user: store.get("kpUser", ""), pass: "",
   status: null, conn: null, values: [], stamp: "", busy: null, err: "", auto: false, gen: 0,
   tab: "punkte", exAddr: "//", ex: null, exVals: new Map(), _root: null, _timer: null };
+
+/* ---------- Angeforderte Adressen (aus anderen Ansichten) ---------- */
+const WANT = { cur: new Set(), batch: new Set(), timer: null, readAt: new Map(), busy: false };
+const FRESH_MS = 30000;
+function kpWant(cid, addrs) {
+  if (!KP.conn || !KP.C || KP.C.cid !== cid) return;
+  for (const a of addrs) WANT.batch.add(a);
+  clearTimeout(WANT.timer); WANT.timer = setTimeout(() => flushWant(false), 250);
+}
+/* Liest die zuletzt angeforderten Adressen; force = auch frisch gelesene erneut (Auto-Abfrage) */
+async function flushWant(force) {
+  if (!KP.conn || !KP.C) return;
+  if (WANT.busy) { clearTimeout(WANT.timer); WANT.timer = setTimeout(() => flushWant(force), 300); return; }
+  if (WANT.batch.size) { WANT.cur = WANT.batch; WANT.batch = new Set(); }
+  const now = Date.now();
+  const list = [...WANT.cur].filter(a => force || !(WANT.readAt.get(a) > now - FRESH_MS));
+  if (!list.length) return;
+  for (const a of list) WANT.readAt.set(a, now);   // auch bei Fehler nicht sofort erneut
+  WANT.busy = true;
+  const gen = KP.gen, C = KP.C;
+  const r = await kp("lesen", { ip: KP.conn.ip, port: KP.conn.port, adressen: list }, 30000 + list.length * 60);
+  WANT.busy = false;
+  if (gen !== KP.gen || !r) return;
+  if (!r.ok) { if (r.login) { KP.conn = null; KP.err = "Sitzung abgelaufen, bitte neu verbinden."; layout(); } return; }
+  setLiveAddr(C.cid, r.values, { source: "kp", ip: KP.conn.ip, stamp: nowStamp() });
+}
+function wantReset() { clearTimeout(WANT.timer); WANT.cur = new Set(); WANT.batch = new Set(); WANT.readAt = new Map(); WANT.busy = false; }
+
+/* Auto-Abfrage alle 5 s – auch wenn eine andere Ansicht offen ist */
+function schedAuto() {
+  clearTimeout(KP._timer);
+  if (!KP.auto || !KP.conn) return;
+  KP._timer = setTimeout(async () => {
+    if (!KP.auto || !KP.conn) return;
+    if (APP.view === "online-kp" && KP.tab === "punkte") await kpRead(true);
+    else { await flushWant(true); schedAuto(); }
+  }, 5000);
+}
 
 async function kp(path, body, ms) {
   try { const j = await svcJson("/api/kp/" + path, body, ms || 20000); KP.health = "up"; return j; }
@@ -69,7 +100,7 @@ async function kpConnect() {
   if (!KP.pass) { toast("Bitte Passwort der Zentrale eingeben.", "warn"); return; }
   store.set("kpIp", ip); store.set("kpUser", KP.user); store.set("kpPort", KP.port);
   const gen = ++KP.gen;
-  KP.busy = "connect"; KP.err = ""; KP.conn = null; KP.values = []; KP.ex = null; KP.exVals = new Map(); layout();
+  KP.busy = "connect"; KP.err = ""; KP.conn = null; KP.values = []; KP.ex = null; KP.exVals = new Map(); wantReset(); layout();
   const r = await kp("verbinden", { ip, port: KP.port, user: KP.user, pass: KP.pass });
   if (gen !== KP.gen) return;
   KP.busy = null; KP.pass = "";
@@ -85,7 +116,7 @@ async function kpDisconnect() {
   const was = KP.conn;
   KP.gen++; clearTimeout(KP._timer);
   const ip = KP.conn ? KP.conn.ip : (KP.ip || "").trim(), port = KP.conn ? KP.conn.port : KP.port;
-  KP.conn = null; KP.auto = false; KP.values = []; KP.stamp = ""; KP.busy = null; KP.err = ""; KP.ex = null; KP.exVals = new Map();
+  KP.conn = null; KP.auto = false; KP.values = []; KP.stamp = ""; KP.busy = null; KP.err = ""; KP.ex = null; KP.exVals = new Map(); wantReset();
   if (KP.C) clearLive(KP.C.cid, "kp");
   await kp("trennen", { ip, port });
   if (was) toast("Verbindung getrennt.", "ok");
@@ -109,9 +140,10 @@ async function kpRead(silent) {
     value: typeof v.v === "number" || typeof v.v === "boolean" ? v.v : undefined,
     text: v.ok && !(typeof v.v === "number" || typeof v.v === "boolean") ? (v.pv != null ? String(v.pv) : null) : undefined,
     err: v.err })), { source: "kp", ip: KP.conn.ip, stamp: KP.stamp });
+  if (C) { const t = Date.now(); for (const v of r.values) WANT.readAt.set(v.a, t); setLiveAddr(C.cid, r.values, { source: "kp", ip: KP.conn.ip, stamp: KP.stamp }); }
   layout();
-  clearTimeout(KP._timer);
-  if (KP.auto) KP._timer = setTimeout(() => { if (document.body.contains(KP._root) && APP.view === "online-kp") kpRead(true); }, 5000);
+  if (KP.auto && WANT.cur.size) await flushWant(true);
+  schedAuto();
 }
 
 async function kpBrowse(addr) {

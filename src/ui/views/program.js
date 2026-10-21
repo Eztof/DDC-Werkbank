@@ -1,5 +1,8 @@
 import { go, openNode, openPin } from "../core/nav.js";
-import { curC, vstate } from "../core/state.js";
+import { APP, curC, vstate } from "../core/state.js";
+import { on } from "../core/events.js";
+import { liveAddrText, liveConnected, liveInfo, liveOfAddr, livePinText, wantLive } from "../core/live.js";
+import { paraAddr, pinAddr, restAddr } from "../core/addr.js";
 import { SEARCH, VIEWS } from "../core/ext.js";
 import { copyText, esc, h, natCmp, norm, s, trunc, uniq } from "../core/util.js";
 import { FB_TYPES, FUNC_NAMES, KIND_INFO, TYPE_NAMES, describeTransform, dictFor, edgeLabel, edgesIn, edgesOut, isInvertedEdge, isOutputKind, nodePlace, nodeTitle, pe, portLabel, pv, roleFromText, roleOf, stateTextsOf, valText } from "../model/model.js";
@@ -12,6 +15,45 @@ import { findingRow, weekGrid } from "./findings-sched.js";
 /* =========================================================================
    Ansicht: Programm (Plan) & Wirkkette
    ========================================================================= */
+/* ---------- Live-Werte ----------
+   Ist eine Live-Quelle verbunden (K&P direkt, BACnet), zeigen Plan, Wirkkette,
+   Diagnose und Details deren Werte (markiert), sonst die Werte der Sicherung.
+   Angezeigte Adressen werden bei der Quelle angefordert; neue Werte → neu zeichnen. */
+const WANTQ = { cid: null, set: new Set(), t: null };
+function queueWant(cid, a) {
+  if (!a) return;
+  if (WANTQ.cid !== cid) { WANTQ.cid = cid; WANTQ.set = new Set(); }
+  WANTQ.set.add(a);
+  if (!WANTQ.t) WANTQ.t = setTimeout(() => { WANTQ.t = null; const l = [...WANTQ.set]; WANTQ.set = new Set(); wantLive(WANTQ.cid, l); }, 0);
+}
+/* Live-Text zu einer Adresse ({ t, cls, ok }) oder null */
+function lvAddr(C, a) {
+  if (!a) return null;
+  if (liveConnected(C.cid)) queueWant(C.cid, a);
+  const o = liveOfAddr(C.cid, a);
+  return o ? liveAddrText(o) : null;
+}
+const lvPara = (C, n, sub, para) => lvAddr(C, paraAddr(n, sub, para));
+/* Klemme: Wert je Baustein (BACnet oder K&P-Klemmenliste), sonst über die Adresse */
+function lvPin(C, p) {
+  const byAddr = lvAddr(C, pinAddr(C, p));
+  return livePinText(C, p) || byAddr;
+}
+/* Live-Werte neu zeichnen – nicht während Ziehen oder Tippen */
+let liveRedraw = null, pointerDown = false;
+window.addEventListener("pointerdown", () => { pointerDown = true; }, true);
+window.addEventListener("pointerup", () => { pointerDown = false; }, true);
+function redrawSoon(ms) {
+  clearTimeout(liveRedraw);
+  liveRedraw = setTimeout(() => {
+    if (APP.view !== "program") return;
+    const ae = document.activeElement, content = document.getElementById("content");
+    if (pointerDown || (ae && content && content.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) return redrawSoon(1000);
+    renderAll();
+  }, ms == null ? 150 : ms);
+}
+on("live", ({ cid }) => { const C = curC(); if (APP.view === "program" && C && C.cid === cid) redrawSoon(); });
+
 const PG = { NODE_W: 216, HEAD: 34, PORT_H: 16, GX: 70, GY: 18, GPAD: 18, GHEAD: 34, COLGAP: 110, GROWGAP: 40,
              CW: 360, CHEAD: 38, CROW: 15, CGX: 96, CGY: 20 };
 
@@ -371,8 +413,9 @@ VIEWS.add({
       const ty = s("text", { x: 10, y: 28, class: "ty" }, g);
       ty.textContent = trunc(n.isPin && pin ? (KIND_INFO[pin.kind] || {}).name + (pin.subType && C.format !== "DDC3000" ? " · " + pin.subType : "") : (TYPE_NAMES[n.type] || n.type), 34);
       if (n.isPin && pin) {
-        const v = pin.value.invalid ? "ungültig" : pinValue(pin);
-        if (v) { const tv = s("text", { x: b.w - 10, y: 15, class: "pv" + (pin.value.invalid ? " bad" : ""), "text-anchor": "end" }, g); tv.textContent = trunc(v, 14); }
+        const lv = lvPin(C, pin);
+        const v = lv ? lv.t : pin.value.invalid ? "ungültig" : pinValue(pin);
+        if (v) { const tv = s("text", { x: b.w - 10, y: 15, class: "pv" + (lv ? " lv" + (lv.ok === false ? " bad" : "") : pin.value.invalid ? " bad" : ""), "text-anchor": "end" }, g); tv.textContent = trunc(v, 14); }
       }
       let y = PG.HEAD;
       if (n.name) { const t = s("text", { x: 10, y: y + 10, class: "nm" }, g); t.textContent = trunc(n.name, 32); y += 16; }
@@ -528,7 +571,7 @@ VIEWS.add({
           const rr = s("text", { x: 10, y: yy + 3.5, class: "rr role-" + (r.role || "x") }, g); rr.textContent = ROLE_MARK[r.role] || "·";
           const lt = s("text", { x: 22, y: yy + 3.5, class: "rl" }, g);
           lt.textContent = trunc((r.isOut ? "▸ " : "") + r.addr + "  " + (r.label || ""), r.val ? 38 : 56);
-          if (r.val) { const vt = s("text", { x: b.w - 10, y: yy + 3.5, class: "rv", "text-anchor": "end" }, g); vt.textContent = trunc(r.val, 18); }
+          if (r.val) { const vt = s("text", { x: b.w - 10, y: yy + 3.5, class: "rv" + (r.live ? " lv" : ""), "text-anchor": "end" }, g); vt.textContent = trunc(r.val, 18); }
           if (!r.isOut) s("circle", { cx: 0, cy: yy, r: 2.6, class: "port" }, g);
         });
         if (edgesOut(C, id).length) s("circle", { cx: b.w, cy: b.outY, r: 3.4, class: "out port" }, g);
@@ -662,13 +705,18 @@ function cardRows(C, n, showAll, CH) {
       if (!srcs.length && !v && !p.schedules.length) continue;
     } else if (!label && !vals.length && !srcs.length && !p.schedules.length) continue;
     if (p.addr === "password") continue;
-    rows.push({ addr: p.addr, label: label || portLabel(n.type, p.addr), val: v ? (v.deleted ? "–" : valText(v, p.stateTexts)) : "", sub, role, srcs, hot: CH && srcs.some(e => CH.nodes.has(e.from)) });
+    const lv = lvPara(C, n, sub, p.addr);
+    rows.push({ addr: p.addr, label: label || portLabel(n.type, p.addr), val: lv ? lv.t : v ? (v.deleted ? "–" : valText(v, p.stateTexts)) : "", live: !!lv, sub, role, srcs, hot: CH && srcs.some(e => CH.nodes.has(e.from)) });
   }
   for (const e of inc) if (!rows.some(r => r.addr === e.toPara && (r.sub || "") === (e.toSub || ""))) {
     const srcs = inc.filter(x => x.toPara === e.toPara && (x.toSub || "") === (e.toSub || ""));
-    rows.push({ addr: e.toPara, label: portLabel(n.type, e.toPara), val: "", sub: e.toSub || "", role: roleOf(n.type, e.toPara, "") || "in", srcs, hot: CH && srcs.some(x => CH.nodes.has(x.from)) });
+    const lv = lvPara(C, n, e.toSub || "", e.toPara);
+    rows.push({ addr: e.toPara, label: portLabel(n.type, e.toPara), val: lv ? lv.t : "", live: !!lv, sub: e.toSub || "", role: roleOf(n.type, e.toPara, "") || "in", srcs, hot: CH && srcs.some(x => CH.nodes.has(x.from)) });
   }
-  if (n.isPin && n.pin) { const v = n.pin.value.invalid ? "ungültig" : pinValue(n.pin); if (v && !rows.some(r => r.val)) rows.push({ addr: isOutputKind(n.pin.kind) ? "Y" : "b", label: "Wert", val: v, role: "info", srcs: [] }); }
+  if (n.isPin && n.pin) {
+    const lv = lvPin(C, n.pin), v = lv ? lv.t : n.pin.value.invalid ? "ungültig" : pinValue(n.pin);
+    if (v && !rows.some(r => r.val)) rows.push({ addr: isOutputKind(n.pin.kind) ? "Y" : "b", label: "Wert", val: v, live: !!lv, role: "info", srcs: [] });
+  }
   const outs = new Set();
   for (const e of outg) {
     const k = e.fromRest || "";
@@ -676,7 +724,8 @@ function cardRows(C, n, showAll, CH) {
     outs.add(k);
     const d = dictFor(n.type, k);
     const p = n.paras.find(x => x.addr === k);
-    rows.push({ addr: k, label: (p && p.texts[0]) || (d ? d.n : ""), val: p && pe(p) ? valText(pe(p), p.stateTexts) : "", isOut: true, role: d ? d.r : "out", srcs: [] });
+    const lv = lvAddr(C, restAddr(n, k));
+    rows.push({ addr: k, label: (p && p.texts[0]) || (d ? d.n : ""), val: lv ? lv.t : p && pe(p) ? valText(pe(p), p.stateTexts) : "", live: !!lv, isOut: true, role: d ? d.r : "out", srcs: [] });
   }
   const order = { release: 0, block: 1, hand: 2, in: 3, setpoint: 4, threshold: 5, formula: 6, param: 7, time: 8, info: 9, "": 10, out: 11 };
   rows.sort((a, b) => (order[a.role] ?? 10) - (order[b.role] ?? 10) || natCmp(a.addr, b.addr));
@@ -707,27 +756,34 @@ function checklist(C, CH, onJump) {
         const isSel = !!((hv && hv.handPlant) || (rawSt && rawSt["9"] != null) || (!sn && (n.type === "H601" || n.type === "H901")));
         const off = !hv || hv.deleted || hv.text === "";
         const state = off ? "off" : isSel ? (hv.text === "9" ? "auto" : "active") : (n.type === "H613" || n.type === "H614") ? "active" : "plain";
-        const st = off ? "nicht gesetzt" : valText(hv, rawSt || (isSel ? { "9": "Auto", "0": "Aus", "1": "Ein" } : null));
-        add(state === "active" ? 1 : 4, "hand", `${nb(id)} · ${esc(label)} <code>${esc(p.addr)}</code> = <b>${esc(st)}</b>`,
+        const hl = sn ? lvAddr(C, restAddr(sn, src.fromRest || "h")) : lvPara(C, n, sub, p.addr);
+        const st = hl ? hl.t : off ? "nicht gesetzt" : valText(hv, rawSt || (isSel ? { "9": "Auto", "0": "Aus", "1": "Ein" } : null));
+        add(state === "active" ? 1 : 4, "hand", `${nb(id)} · ${esc(label)} <code>${esc(p.addr)}</code> = <b${hl ? ' class="lv"' : ""}>${esc(st)}</b>`,
           { off: "Kein Handwert aktiv – die Regelung arbeitet.", auto: "Handebene steht auf Automatik.", active: "Handübersteuerung aktiv – hat Vorrang vor der Regelung. Auf Automatik prüfen.", plain: "Schalter ohne Automatik-Stellung – Stellung vor Ort prüfen." }[state], src ? src.from : id);
       }
       if (role === "release" && src) add(2, "gate", `${nb(id)} · ${esc(label)} ◄ ${esc(edgeLabel(C, src))}`, "Fehlt diese Freigabe, bleibt der Ausgang aus – unabhängig vom Bedarf.", src.from);
       if (role === "block" && src) add(2, "stop", `${nb(id)} · ${esc(label)} ◄ ${esc(edgeLabel(C, src))}`, "Sperre/Zwangsstellung – zwingt den Ausgang unabhängig vom Sollwert.", src.from);
-      if (role === "setpoint" && v && !src) add(3, "target", `${nb(id)} · ${esc(label)} = <code>${esc(valText(v, p.stateTexts))}</code>`, "Sollwert laut Sicherung. Eine Kompensation kann den wirksamen Sollwert verschieben.", id);
-      if (p.addr === "5101" && v) add(3, "target", `${nb(id)} · wirksamer Sollwert = <code>${esc(valText(v))}</code>`, "Liegt der Istwert darunter, ist ein geschlossenes Ventil richtig.", id);
+      const lvS = (role === "setpoint" && !src) || p.addr === "5101" ? lvPara(C, n, sub, p.addr) : null;
+      const code = (fb) => lvS ? `<code class="lv">${esc(lvS.t)}</code>` : `<code>${esc(fb)}</code>`;
+      if (role === "setpoint" && (v || lvS) && !src) add(3, "target", `${nb(id)} · ${esc(label)} = ${code(v ? valText(v, p.stateTexts) : "")}`, lvS ? "Sollwert live aus der Zentrale. Eine Kompensation kann den wirksamen Sollwert verschieben." : "Sollwert laut Sicherung. Eine Kompensation kann den wirksamen Sollwert verschieben.", id);
+      if (p.addr === "5101" && (v || lvS)) add(3, "target", `${nb(id)} · wirksamer Sollwert = ${code(v ? valText(v) : "")}`, "Liegt der Istwert darunter, ist ein geschlossenes Ventil richtig.", id);
     }
     if (n.formula && /\bm\b|\(m\)/.test(n.formula)) add(2, "lock", `${nb(id)} · Formel mit Selbsthaltung`, "„" + esc(n.formula) + "“ – bleibt stehen bis zur Rücksetzung/Quittierung.", id);
     if (n.formula && /NOT/.test(n.formula)) add(3, "swap", `${nb(id)} · Formel „${esc(n.formula)}“`, "Enthält eine Negation – Vorzeichen der Eingänge beachten.", id);
     if (n.isPin && n.pin) {
       const p = n.pin;
       const users = edgesOut(C, id).filter(e => CH.nodes.has(e.to)).map(e => C.nodes.get(e.to).addr);
-      add(p.value.invalid ? 1 : 4, "pin", `<b>${esc(p.klemme)}</b> · ${esc(p.name || p.kind)}${pinValue(p) ? " = <code>" + esc(p.value.invalid ? "ungültig" : pinValue(p)) + "</code>" : ""}${users.length ? " → " + esc(uniq(users).join(", ")) : ""}`,
+      const lv = lvPin(C, p);
+      const pvx = lv ? ' = <code class="lv">' + esc(lv.t) + "</code>" : pinValue(p) ? " = <code>" + esc(p.value.invalid ? "ungültig" : pinValue(p)) + "</code>" : "";
+      add(p.value.invalid ? 1 : 4, "pin", `<b>${esc(p.klemme)}</b> · ${esc(p.name || p.kind)}${pvx}${users.length ? " → " + esc(uniq(users).join(", ")) : ""}`,
         p.value.invalid ? (isOutputKind(p.kind) ? "Ausgang meldet einen ungültigen Wert – Modul und Klemme prüfen." : "Fühler liefert keinen gültigen Wert – Anschluss und Fühler prüfen.") : isOutputKind(p.kind) ? "Hardware-Ausgang: Signal am Gerät messen." : "Hardware-Eingang: Messwert/Kontakt vor Ort gegenprüfen.", id);
     }
     if (n.type === "S118" || n.type === "N") add(3, "clock", `${nb(id)} · Zeitprogramm`, "Außerhalb der Nutzzeit gibt es keine Freigabe.", id);
     if (n.type === "S066") {
       const gw = pv(paraOf(n, "8610")), hy = pv(paraOf(n, "8612"));
-      if (gw) add(5, "sliders", `${nb(id)} · Grenzwert <code>${esc(valText(gw))}</code>${hy ? " / Hysterese <code>" + esc(valText(hy)) + "</code>" : ""}`, "Schaltschwelle in der Kette.", id);
+      const lg = lvPara(C, n, "", "8610"), lh = lvPara(C, n, "", "8612");
+      const cd = (l, x) => l ? `<code class="lv">${esc(l.t)}</code>` : `<code>${esc(valText(x))}</code>`;
+      if (gw || lg) add(5, "sliders", `${nb(id)} · Grenzwert ${cd(lg, gw)}${hy || lh ? " / Hysterese " + cd(lh, hy) : ""}`, "Schaltschwelle in der Kette.", id);
     }
   }
   for (const e of CH.edges) if (isInvertedEdge(e)) add(3, "swap", `${nb(e.from)} → <b>${esc(C.nodes.get(e.to).addr)}</b> <code>invertiert</code>`, "Signal wird auf dem Weg umgekehrt.", e.from);
@@ -747,9 +803,15 @@ function checklist(C, CH, onJump) {
     box.appendChild(h("div", { class: "sec" }, "Befunde an Bausteinen dieser Kette"));
     for (const f of fs) box.appendChild(h("div", { class: "it", onclick: () => go("findings", { focus: f.id }) }, sevIcon(f.sev), h("span", null, f.title)));
   }
-  box.appendChild(h("div", { class: "infobar inf", style: { marginTop: "16px" } }, icon("info"), h("div", { class: "small" },
-    "Die Sicherung ist ein Parameter-Abbild, keine Live-Ansicht. Werte zeigen den Stand beim Sichern. Mit ° markierte Bedeutungen sind aus der Dateistruktur abgeleitet.")));
+  box.appendChild(h("div", { class: "infobar inf", style: { marginTop: "16px" } }, icon("info"), h("div", { class: "small" }, liveNote(C))));
   return box;
+}
+
+function liveNote(C) {
+  const L = liveInfo(C.cid);
+  if (L || liveConnected(C.cid)) return h("span", null, h("span", { class: "lv" }, "Hervorgehobene Werte sind live"),
+    " (" + (L ? L.label + (L.ip ? " · " + L.ip : "") + (L.stamp ? " · Stand " + L.stamp : "") : "verbunden") + "). Übrige Werte stammen aus der Sicherung. Mit ° markierte Bedeutungen sind aus der Dateistruktur abgeleitet.");
+  return "Die Sicherung ist ein Parameter-Abbild, keine Live-Ansicht. Werte zeigen den Stand beim Sichern. Für Live-Werte im Reiter „K&P direkt“ oder „Online“ verbinden. Mit ° markierte Bedeutungen sind aus der Dateistruktur abgeleitet.";
 }
 
 /* ---------- Detailansicht eines Bausteins ---------- */
@@ -794,14 +856,15 @@ function nodeDetail(C, n, cb) {
           h("small", null, (t.name || TYPE_NAMES[t.type] || "") + (t.gKey !== n.gKey ? " · " + nodePlace(C, t) : ""))));
     })));
   }
-  const paraRows = (paras) => paras.filter(p => p.addr !== "password" && (p.texts.length || p.values.length || p.act || p.funcObjs.some(f => f.type !== "FSource") || p.schedules.length)).map(p => {
+  const paraRows = (paras, sub) => paras.filter(p => p.addr !== "password" && (p.texts.length || p.values.length || p.act || p.funcObjs.some(f => f.type !== "FSource") || p.schedules.length)).map(p => {
     const d = dictFor(n.type, p.addr);
     const vals = p.values.filter(v => v.type !== "Source");
     const fo = p.funcObjs.filter(f => f.type !== "FSource").map(f => FUNC_NAMES[f.type] || (FB_TYPES[f.type] ? "BACnet " + FB_TYPES[f.type][1] + (foVal(f, "ObjId") ? " " + foVal(f, "ObjId") : "") : f.type));
-    const v1 = vals[0], act = p.act;
+    const v1 = vals[0], act = p.act, lv = lvPara(C, n, sub || "", p.addr);
     return h("div", null, h("span", { class: "k mono" }, p.addr),
       h("span", { class: "v" }, p.texts[0] || (d ? d.n + (d.inf ? "°" : "") : h("span", { class: "faint" }, "–")),
         v1 ? h("small", null, "Wert: " + valText(v1, p.stateTexts) + (v1.invalid ? " (ungültig)" : "") + (v1.deleted ? " (gelöscht – nicht aktiv)" : "") + (act && act.text !== v1.text ? " · wirksam: " + valText(act, p.stateTexts) : "")) : act ? h("small", null, "wirksam: " + valText(act, p.stateTexts)) : null,
+        lv ? h("small", null, h("span", { class: "lv" }, "Live: " + lv.t)) : null,
         p.range ? h("small", null, "Bereich " + p.range) : null,
         fo.length ? h("small", null, fo.join(" · ")) : null,
         p.schedules.length ? h("small", { class: "mono" }, schedText(p.schedules[0])) : null));
@@ -809,7 +872,7 @@ function nodeDetail(C, n, cb) {
   const pr = paraRows(n.paras);
   if (pr.length) { b.appendChild(h("h4", null, "Parameter")); b.appendChild(h("div", { class: "dlist" }, pr)); }
   for (const sub of n.subObjs) {
-    const r = paraRows(sub.paras);
+    const r = paraRows(sub.paras, sub.addr);
     if (r.length) { b.appendChild(h("h4", null, "Unterobjekt " + sub.addr + " (" + sub.type + ")")); b.appendChild(h("div", { class: "dlist" }, r)); }
     for (const sc of sub.schedules) { b.appendChild(h("h4", null, "Zeitprogramm " + sub.addr)); b.appendChild(weekGrid(sc, null)); }
   }

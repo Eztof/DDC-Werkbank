@@ -91,3 +91,8 @@ svg defs .ah { fill: var(--e-norm); }
 .checklist .it .ic.p3 { background: var(--inf-bg); color: var(--inf); }
 .checklist .it .why { display: block; color: var(--text-2); font-size: 12px; margin-top: 2px; }
 
+/* Live-Werte (K&P direkt / BACnet) hervorheben */
+svg .nd .pv.lv, svg .card-c .rv.lv { fill: var(--accent); font-weight: 600; }
+svg .nd .pv.lv.bad { fill: var(--err); }
+.lv { color: var(--accent); font-weight: 600; }
+code.lv { color: var(--accent); }

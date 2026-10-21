@@ -29,7 +29,7 @@ import { ALL } from "./core/ext.js";
 import { APP, byCid, curC } from "./core/state.js";
 import { emit, on } from "./core/events.js";
 import { go, openNode, openPin, openRef } from "./core/nav.js";
-import { liveOfPin, livePinText, setLive } from "./core/live.js";
+import { liveOfAddr, liveOfPin, livePinText, setLive, setLiveAddr, wantLive } from "./core/live.js";
 import * as util from "./core/util.js";
 import * as model from "./model/model.js";
 import { btn, buildShell, icon, kindTag, pageHead, renderAll, toast } from "./shell/shell.js";
@@ -46,7 +46,7 @@ const api = {
   register: ALL,
   state: APP, curC, byCid,
   on, emit, go, openPin, openNode, openRef, renderAll,
-  live: { setLive, liveOfPin, livePinText },
+  live: { setLive, setLiveAddr, liveOfPin, liveOfAddr, livePinText, wantLive },
   ui: { h: util.h, icon, btn, toast, pageHead, kindTag },
   wartung: { doc: () => WDOC.cur, text: () => WDOC.cur ? wdocText(WDOC.cur) : "" },
   util, model

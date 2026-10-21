@@ -15,7 +15,7 @@ test("K&P direkt: anmelden, Klemmen lesen, Datenpunkte, Explorer, trennen", asyn
   try {
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
     const errors = []; page.on("pageerror", e => errors.push(e.message));
-    let connected = false, seenAddr = null;
+    let connected = false, seenAddr = null; const asked = new Set();
     await page.route("http://localhost:47902/**", async route => {
       const req = route.request(), p = new URL(req.url()).pathname;
       const body = req.postData() ? JSON.parse(req.postData()) : {};
@@ -25,7 +25,7 @@ test("K&P direkt: anmelden, Klemmen lesen, Datenpunkte, Explorer, trennen", asyn
       if (p === "/api/kp/status") return J({ ok: true, salt: true, from: "test", port: 18090, sessions: [] });
       if (p === "/api/kp/verbinden") { if (body.pass !== "geheim") return J({ ok: false, err: "Anmeldung abgelehnt (#25)", login: true }); connected = true; return J({ ok: true, host: 12, language: "de" }); }
       if (p === "/api/kp/trennen") { connected = false; return J({ ok: true }); }
-      if (p === "/api/kp/lesen") { if (!connected) return J({ ok: false, login: true, err: "nicht angemeldet" }); return J({ ok: true, values: body.adressen.map(a => a.includes("CAI.01") ? { a, ok: true, pv: "33.3", v: 33.3, unit: "°C" } : { a, ok: true, pv: "Ein", v: true, unit: "" }) }); }
+      if (p === "/api/kp/lesen") { if (!connected) return J({ ok: false, login: true, err: "nicht angemeldet" }); body.adressen.forEach(a => asked.add(a)); return J({ ok: true, values: body.adressen.map(a => a.includes("CAI.01") ? { a, ok: true, pv: "33.3", v: 33.3, unit: "°C" } : { a, ok: true, pv: "Ein", v: true, unit: "" }) }); }
       if (p === "/api/kp/explorer") { seenAddr = body.adresse; return J({ ok: true, address: body.adresse, count: 1, items: [{ a: "001", n: "001", t: "IO_Modul", txt: "E/A-Modul 1", pv: null, unit: "", kids: true }] }); }
       if (p.startsWith("/api/data/")) return J({ ok: true, data: null });
       return J({ ok: false, err: "unbekannt" });
@@ -59,9 +59,25 @@ test("K&P direkt: anmelden, Klemmen lesen, Datenpunkte, Explorer, trennen", asyn
     await page.waitForFunction(() => document.body.innerText.includes("E/A-Modul 1"));
     assert.equal(seenAddr, "//");
 
+    // Programm & Wirkkette: Live-Werte in der Wirkkette und in der Diagnose
+    await page.evaluate(() => DDCWerkbank.openNode(DDCWerkbank.curC().cid, "001/00/00/P.01", "down"));
+    await page.waitForFunction(() => [...document.querySelectorAll("svg text.lv")].some(t => t.textContent.includes("33,3")));
+    await page.waitForFunction(() => [...document.querySelectorAll(".checklist code.lv")].some(t => t.textContent.includes("33,3")));
+    assert.match(await page.innerText(".checklist"), /Hervorgehobene Werte sind live/);
+    // auch Parameter anderer Bausteine werden über ihre Adresse angefordert
+    await page.waitForFunction(() => document.querySelectorAll("svg text.lv").length > 1);
+    const notPin = a => !/\/(CAI|CDI|CDO|CAO)\.\d+\/[bkKYy]$/.test(a);
+    for (let i = 0; i < 30 && ![...asked].some(notPin); i++) await page.waitForTimeout(100);
+    assert.ok([...asked].some(a => !/\/(CAI|CDI|CDO|CAO)\.\d+\/[bkKYy]$/.test(a)), "nur Klemmen angefragt: " + [...asked].join(", "));
+
     // Trennen räumt Live-Werte weg
+    await page.click(".nav-item:has-text('K&P direkt')");
     await page.click("button:has-text('Trennen')");
     await page.waitForFunction(() => document.body.innerText.includes("Nicht verbunden"));
+    await page.evaluate(() => DDCWerkbank.openNode(DDCWerkbank.curC().cid, "001/00/00/P.01", "down"));
+    await page.waitForSelector(".checklist");
+    assert.equal(await page.locator("svg text.lv").count(), 0);
+    assert.match(await page.innerText(".checklist"), /keine Live-Ansicht/);
     await page.click(".nav-item:has-text('Datenpunkte')");
     assert.doesNotMatch(await page.innerText("tr[data-uid='001/00/00/P.01']"), /33,3/);
 

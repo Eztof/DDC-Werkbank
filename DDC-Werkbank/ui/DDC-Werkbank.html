@@ -437,6 +437,11 @@ svg defs .ah { fill: var(--e-norm); }
 .checklist .it .ic.p3 { background: var(--inf-bg); color: var(--inf); }
 .checklist .it .why { display: block; color: var(--text-2); font-size: 12px; margin-top: 2px; }
 
+/* Live-Werte (K&P direkt / BACnet) hervorheben */
+svg .nd .pv.lv, svg .card-c .rv.lv { fill: var(--accent); font-weight: 600; }
+svg .nd .pv.lv.bad { fill: var(--err); }
+.lv { color: var(--accent); font-weight: 600; }
+code.lv { color: var(--accent); }
 /* ---------- Befunde ---------- */
 .fgroup { margin-bottom: 12px; }
 .fgroup > .hd { display: flex; align-items: center; gap: 10px; padding: 12px 16px; cursor: default; user-select: none; }
@@ -1478,9 +1483,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     if (g.isPinGroup) return "Klemmen Modul " + n.mod;
     return [g.plantName, g.groupName].filter(Boolean).join(" › ") || "Gruppe " + n.gKey;
   }
-  function stateTextsOf(node, paraAddr) {
+  function stateTextsOf(node, paraAddr2) {
     if (!node) return null;
-    const p = (node.paras || []).find((x) => x.addr === paraAddr);
+    const p = (node.paras || []).find((x) => x.addr === paraAddr2);
     if (p && p.stateTexts && Object.keys(p.stateTexts).length) return p.stateTexts;
     if (node.type === "S_01") return { "9": "Auto", "0": "Aus", "1": "Ein" };
     return null;
@@ -2509,8 +2514,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   });
 
   // src/ui/model/checks/handeingriffe.js
-  function stateName(node, st, paraAddr) {
-    const t = stateTextsOf(node, paraAddr || "h");
+  function stateName(node, st, paraAddr2) {
+    const t = stateTextsOf(node, paraAddr2 || "h");
     if (t && t[String(st)] != null) return t[String(st)].trim();
     return { "9": "Auto", "0": "Aus", "1": "Ein", "2": "Stufe 2" }[String(st)] || String(st);
   }
@@ -2996,8 +3001,63 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const byNode = /* @__PURE__ */ new Map();
     for (const v of values || []) if (v && v.nodeId && !byNode.has(v.nodeId)) byNode.set(v.nodeId, Object.assign({ source }, v));
     if (!LIVE.has(cid)) LIVE.set(cid, /* @__PURE__ */ new Map());
-    LIVE.get(cid).set(source, { source, label: S ? S.label : source, ip: o.ip || "", stamp: o.stamp || "", t: Date.now(), byNode });
+    const old = LIVE.get(cid).get(source);
+    LIVE.get(cid).set(source, { source, label: S ? S.label : source, ip: o.ip || "", stamp: o.stamp || "", t: Date.now(), byNode, byAddr: old && old.byAddr || /* @__PURE__ */ new Map() });
     emit("live", { cid, source, stamp: o.stamp });
+  }
+  function setLiveAddr(cid, values, opt) {
+    const o = opt || {}, source = o.source || "kp", S = LIVE_SOURCES.get(source);
+    if (!LIVE.has(cid)) LIVE.set(cid, /* @__PURE__ */ new Map());
+    const M = LIVE.get(cid);
+    let L = M.get(source);
+    if (!L) {
+      L = { source, label: S ? S.label : source, ip: o.ip || "", stamp: "", t: 0, byNode: /* @__PURE__ */ new Map(), byAddr: /* @__PURE__ */ new Map() };
+      M.set(source, L);
+    }
+    const now = Date.now();
+    for (const v of values || []) if (v && v.a) L.byAddr.set(v.a, Object.assign({ source, t: now }, v));
+    L.stamp = o.stamp || L.stamp;
+    L.t = now;
+    if (o.ip) L.ip = o.ip;
+    emit("live", { cid, source, stamp: L.stamp, addr: true });
+  }
+  function liveOfAddr(cid, a) {
+    const M = LIVE.get(cid);
+    if (!M || !a) return null;
+    let best = null;
+    for (const L of M.values()) {
+      const v = L.byAddr && L.byAddr.get(a);
+      if (v && (!best || v.t > best.t)) best = v;
+    }
+    return best;
+  }
+  function liveAddrText(o) {
+    if (!o) return null;
+    if (!o.ok) return { t: o.err || "Fehler", cls: "muted", ok: false };
+    const u = o.unit ? " " + o.unit : "";
+    if (typeof o.v === "boolean") return { t: o.v ? "EIN" : "AUS", cls: o.v ? "liveon" : "liveoff", ok: true };
+    const pvs = o.pv == null ? "" : String(o.pv).trim();
+    if (typeof o.v === "number") {
+      const pn = parseFloat(pvs.replace(",", "."));
+      if (!pvs || !isNaN(pn) && /^[-+\d.,\s]+$/.test(pvs.replace(o.unit || "\0", ""))) return { t: fmtNum(o.v) + u, cls: "num", ok: true };
+    }
+    if (pvs) return { t: pvs + (o.unit && !pvs.includes(o.unit) ? u : ""), cls: "", ok: true };
+    if (o.v != null) return { t: String(o.v) + u, cls: "", ok: true };
+    return { t: "—", cls: "muted", ok: true };
+  }
+  function wantLive(cid, addrs) {
+    const list = [...new Set((addrs || []).filter(Boolean))];
+    if (!list.length) return;
+    for (const S of LIVE_SOURCES.list()) if (S.want) {
+      try {
+        S.want(cid, list);
+      } catch (e) {
+        console.error("Live-Quelle " + S.id + ":", e);
+      }
+    }
+  }
+  function liveConnected(cid) {
+    return LIVE_SOURCES.list().some((S) => S.connected && S.connected(cid));
   }
   function clearLive(cid, source) {
     const M = LIVE.get(cid);
@@ -3036,6 +3096,32 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const keep = new Set(centrals.map((c) => c.cid));
     for (const cid of [...LIVE.keys()]) if (!keep.has(cid)) LIVE.delete(cid);
   });
+
+  // src/ui/core/addr.js
+  var PRIM = { CAI: "b", CDI: "k", CDO: "K", CAO: "Y" };
+  var SEC = { CAO: "y", CDO: "k" };
+  function nodeAddr(n) {
+    if (!n || n.fmt !== "d4" || n.foreign || !n.mod || !n.addr) return null;
+    return "//" + n.mod + "/" + n.plant + "/" + n.group + "/" + n.addr;
+  }
+  function paraAddr(n, sub, para) {
+    const b = nodeAddr(n);
+    if (!b || !para) return null;
+    return b + (sub ? "/" + sub : "") + "/" + para;
+  }
+  function restAddr(n, rest) {
+    const b = nodeAddr(n);
+    if (!b || !rest) return null;
+    return b + "/" + String(rest).replace(/^\/+/, "");
+  }
+  function pinAddr(C, p) {
+    const n = C && C.nodes && C.nodes.get(p.nodeId);
+    if (!n) return null;
+    const sub = (n.subObjs || []).find((s2) => PRIM[s2.type]);
+    if (!sub) return null;
+    const sec = SEC[sub.type] && sub.paras.some((x) => x.addr === SEC[sub.type]) ? SEC[sub.type] : null;
+    return paraAddr(n, sub.addr, (p.kind === "AA" || p.kind === "BA") && sec ? sec : PRIM[sub.type]);
+  }
 
   // src/ui/wartung/wtgml.js
   var WX = {
@@ -5871,6 +5957,53 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   });
 
   // src/ui/views/program.js
+  var WANTQ = { cid: null, set: /* @__PURE__ */ new Set(), t: null };
+  function queueWant(cid, a) {
+    if (!a) return;
+    if (WANTQ.cid !== cid) {
+      WANTQ.cid = cid;
+      WANTQ.set = /* @__PURE__ */ new Set();
+    }
+    WANTQ.set.add(a);
+    if (!WANTQ.t) WANTQ.t = setTimeout(() => {
+      WANTQ.t = null;
+      const l = [...WANTQ.set];
+      WANTQ.set = /* @__PURE__ */ new Set();
+      wantLive(WANTQ.cid, l);
+    }, 0);
+  }
+  function lvAddr(C, a) {
+    if (!a) return null;
+    if (liveConnected(C.cid)) queueWant(C.cid, a);
+    const o = liveOfAddr(C.cid, a);
+    return o ? liveAddrText(o) : null;
+  }
+  var lvPara = (C, n, sub, para) => lvAddr(C, paraAddr(n, sub, para));
+  function lvPin(C, p) {
+    const byAddr = lvAddr(C, pinAddr(C, p));
+    return livePinText(C, p) || byAddr;
+  }
+  var liveRedraw = null;
+  var pointerDown = false;
+  window.addEventListener("pointerdown", () => {
+    pointerDown = true;
+  }, true);
+  window.addEventListener("pointerup", () => {
+    pointerDown = false;
+  }, true);
+  function redrawSoon(ms) {
+    clearTimeout(liveRedraw);
+    liveRedraw = setTimeout(() => {
+      if (APP.view !== "program") return;
+      const ae = document.activeElement, content = document.getElementById("content");
+      if (pointerDown || ae && content && content.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return redrawSoon(1e3);
+      renderAll();
+    }, ms == null ? 150 : ms);
+  }
+  on("live", ({ cid }) => {
+    const C = curC();
+    if (APP.view === "program" && C && C.cid === cid) redrawSoon();
+  });
   var PG = {
     NODE_W: 216,
     HEAD: 34,
@@ -6453,9 +6586,10 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         const ty = s("text", { x: 10, y: 28, class: "ty" }, g);
         ty.textContent = trunc(n.isPin && pin ? (KIND_INFO[pin.kind] || {}).name + (pin.subType && C.format !== "DDC3000" ? " · " + pin.subType : "") : TYPE_NAMES[n.type] || n.type, 34);
         if (n.isPin && pin) {
-          const v = pin.value.invalid ? "ungültig" : pinValue(pin);
+          const lv = lvPin(C, pin);
+          const v = lv ? lv.t : pin.value.invalid ? "ungültig" : pinValue(pin);
           if (v) {
-            const tv = s("text", { x: b.w - 10, y: 15, class: "pv" + (pin.value.invalid ? " bad" : ""), "text-anchor": "end" }, g);
+            const tv = s("text", { x: b.w - 10, y: 15, class: "pv" + (lv ? " lv" + (lv.ok === false ? " bad" : "") : pin.value.invalid ? " bad" : ""), "text-anchor": "end" }, g);
             tv.textContent = trunc(v, 14);
           }
         }
@@ -6670,7 +6804,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
             const lt = s("text", { x: 22, y: yy + 3.5, class: "rl" }, g);
             lt.textContent = trunc((r.isOut ? "▸ " : "") + r.addr + "  " + (r.label || ""), r.val ? 38 : 56);
             if (r.val) {
-              const vt = s("text", { x: b.w - 10, y: yy + 3.5, class: "rv", "text-anchor": "end" }, g);
+              const vt = s("text", { x: b.w - 10, y: yy + 3.5, class: "rv" + (r.live ? " lv" : ""), "text-anchor": "end" }, g);
               vt.textContent = trunc(r.val, 18);
             }
             if (!r.isOut) s("circle", { cx: 0, cy: yy, r: 2.6, class: "port" }, g);
@@ -6857,15 +6991,17 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         if (!srcs.length && !v && !p.schedules.length) continue;
       } else if (!label && !vals.length && !srcs.length && !p.schedules.length) continue;
       if (p.addr === "password") continue;
-      rows.push({ addr: p.addr, label: label || portLabel(n.type, p.addr), val: v ? v.deleted ? "–" : valText(v, p.stateTexts) : "", sub, role, srcs, hot: CH && srcs.some((e) => CH.nodes.has(e.from)) });
+      const lv = lvPara(C, n, sub, p.addr);
+      rows.push({ addr: p.addr, label: label || portLabel(n.type, p.addr), val: lv ? lv.t : v ? v.deleted ? "–" : valText(v, p.stateTexts) : "", live: !!lv, sub, role, srcs, hot: CH && srcs.some((e) => CH.nodes.has(e.from)) });
     }
     for (const e of inc) if (!rows.some((r) => r.addr === e.toPara && (r.sub || "") === (e.toSub || ""))) {
       const srcs = inc.filter((x) => x.toPara === e.toPara && (x.toSub || "") === (e.toSub || ""));
-      rows.push({ addr: e.toPara, label: portLabel(n.type, e.toPara), val: "", sub: e.toSub || "", role: roleOf(n.type, e.toPara, "") || "in", srcs, hot: CH && srcs.some((x) => CH.nodes.has(x.from)) });
+      const lv = lvPara(C, n, e.toSub || "", e.toPara);
+      rows.push({ addr: e.toPara, label: portLabel(n.type, e.toPara), val: lv ? lv.t : "", live: !!lv, sub: e.toSub || "", role: roleOf(n.type, e.toPara, "") || "in", srcs, hot: CH && srcs.some((x) => CH.nodes.has(x.from)) });
     }
     if (n.isPin && n.pin) {
-      const v = n.pin.value.invalid ? "ungültig" : pinValue(n.pin);
-      if (v && !rows.some((r) => r.val)) rows.push({ addr: isOutputKind(n.pin.kind) ? "Y" : "b", label: "Wert", val: v, role: "info", srcs: [] });
+      const lv = lvPin(C, n.pin), v = lv ? lv.t : n.pin.value.invalid ? "ungültig" : pinValue(n.pin);
+      if (v && !rows.some((r) => r.val)) rows.push({ addr: isOutputKind(n.pin.kind) ? "Y" : "b", label: "Wert", val: v, live: !!lv, role: "info", srcs: [] });
     }
     const outs = /* @__PURE__ */ new Set();
     for (const e of outg) {
@@ -6874,7 +7010,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       outs.add(k);
       const d = dictFor(n.type, k);
       const p = n.paras.find((x) => x.addr === k);
-      rows.push({ addr: k, label: p && p.texts[0] || (d ? d.n : ""), val: p && pe(p) ? valText(pe(p), p.stateTexts) : "", isOut: true, role: d ? d.r : "out", srcs: [] });
+      const lv = lvAddr(C, restAddr(n, k));
+      rows.push({ addr: k, label: p && p.texts[0] || (d ? d.n : ""), val: lv ? lv.t : p && pe(p) ? valText(pe(p), p.stateTexts) : "", live: !!lv, isOut: true, role: d ? d.r : "out", srcs: [] });
     }
     const order = { release: 0, block: 1, hand: 2, in: 3, setpoint: 4, threshold: 5, formula: 6, param: 7, time: 8, info: 9, "": 10, out: 11 };
     rows.sort((a, b) => (order[a.role] ?? 10) - (order[b.role] ?? 10) || natCmp(a.addr, b.addr));
@@ -6906,29 +7043,34 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           const isSel = !!(hv && hv.handPlant || rawSt && rawSt["9"] != null || !sn && (n.type === "H601" || n.type === "H901"));
           const off = !hv || hv.deleted || hv.text === "";
           const state = off ? "off" : isSel ? hv.text === "9" ? "auto" : "active" : n.type === "H613" || n.type === "H614" ? "active" : "plain";
-          const st = off ? "nicht gesetzt" : valText(hv, rawSt || (isSel ? { "9": "Auto", "0": "Aus", "1": "Ein" } : null));
+          const hl = sn ? lvAddr(C, restAddr(sn, src.fromRest || "h")) : lvPara(C, n, sub, p.addr);
+          const st = hl ? hl.t : off ? "nicht gesetzt" : valText(hv, rawSt || (isSel ? { "9": "Auto", "0": "Aus", "1": "Ein" } : null));
           add(
             state === "active" ? 1 : 4,
             "hand",
-            `${nb(id)} · ${esc(label)} <code>${esc(p.addr)}</code> = <b>${esc(st)}</b>`,
+            `${nb(id)} · ${esc(label)} <code>${esc(p.addr)}</code> = <b${hl ? ' class="lv"' : ""}>${esc(st)}</b>`,
             { off: "Kein Handwert aktiv – die Regelung arbeitet.", auto: "Handebene steht auf Automatik.", active: "Handübersteuerung aktiv – hat Vorrang vor der Regelung. Auf Automatik prüfen.", plain: "Schalter ohne Automatik-Stellung – Stellung vor Ort prüfen." }[state],
             src ? src.from : id
           );
         }
         if (role === "release" && src) add(2, "gate", `${nb(id)} · ${esc(label)} ◄ ${esc(edgeLabel(C, src))}`, "Fehlt diese Freigabe, bleibt der Ausgang aus – unabhängig vom Bedarf.", src.from);
         if (role === "block" && src) add(2, "stop", `${nb(id)} · ${esc(label)} ◄ ${esc(edgeLabel(C, src))}`, "Sperre/Zwangsstellung – zwingt den Ausgang unabhängig vom Sollwert.", src.from);
-        if (role === "setpoint" && v && !src) add(3, "target", `${nb(id)} · ${esc(label)} = <code>${esc(valText(v, p.stateTexts))}</code>`, "Sollwert laut Sicherung. Eine Kompensation kann den wirksamen Sollwert verschieben.", id);
-        if (p.addr === "5101" && v) add(3, "target", `${nb(id)} · wirksamer Sollwert = <code>${esc(valText(v))}</code>`, "Liegt der Istwert darunter, ist ein geschlossenes Ventil richtig.", id);
+        const lvS = role === "setpoint" && !src || p.addr === "5101" ? lvPara(C, n, sub, p.addr) : null;
+        const code = (fb) => lvS ? `<code class="lv">${esc(lvS.t)}</code>` : `<code>${esc(fb)}</code>`;
+        if (role === "setpoint" && (v || lvS) && !src) add(3, "target", `${nb(id)} · ${esc(label)} = ${code(v ? valText(v, p.stateTexts) : "")}`, lvS ? "Sollwert live aus der Zentrale. Eine Kompensation kann den wirksamen Sollwert verschieben." : "Sollwert laut Sicherung. Eine Kompensation kann den wirksamen Sollwert verschieben.", id);
+        if (p.addr === "5101" && (v || lvS)) add(3, "target", `${nb(id)} · wirksamer Sollwert = ${code(v ? valText(v) : "")}`, "Liegt der Istwert darunter, ist ein geschlossenes Ventil richtig.", id);
       }
       if (n.formula && /\bm\b|\(m\)/.test(n.formula)) add(2, "lock", `${nb(id)} · Formel mit Selbsthaltung`, "„" + esc(n.formula) + "“ – bleibt stehen bis zur Rücksetzung/Quittierung.", id);
       if (n.formula && /NOT/.test(n.formula)) add(3, "swap", `${nb(id)} · Formel „${esc(n.formula)}“`, "Enthält eine Negation – Vorzeichen der Eingänge beachten.", id);
       if (n.isPin && n.pin) {
         const p = n.pin;
         const users = edgesOut(C, id).filter((e) => CH.nodes.has(e.to)).map((e) => C.nodes.get(e.to).addr);
+        const lv = lvPin(C, p);
+        const pvx = lv ? ' = <code class="lv">' + esc(lv.t) + "</code>" : pinValue(p) ? " = <code>" + esc(p.value.invalid ? "ungültig" : pinValue(p)) + "</code>" : "";
         add(
           p.value.invalid ? 1 : 4,
           "pin",
-          `<b>${esc(p.klemme)}</b> · ${esc(p.name || p.kind)}${pinValue(p) ? " = <code>" + esc(p.value.invalid ? "ungültig" : pinValue(p)) + "</code>" : ""}${users.length ? " → " + esc(uniq(users).join(", ")) : ""}`,
+          `<b>${esc(p.klemme)}</b> · ${esc(p.name || p.kind)}${pvx}${users.length ? " → " + esc(uniq(users).join(", ")) : ""}`,
           p.value.invalid ? isOutputKind(p.kind) ? "Ausgang meldet einen ungültigen Wert – Modul und Klemme prüfen." : "Fühler liefert keinen gültigen Wert – Anschluss und Fühler prüfen." : isOutputKind(p.kind) ? "Hardware-Ausgang: Signal am Gerät messen." : "Hardware-Eingang: Messwert/Kontakt vor Ort gegenprüfen.",
           id
         );
@@ -6936,7 +7078,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       if (n.type === "S118" || n.type === "N") add(3, "clock", `${nb(id)} · Zeitprogramm`, "Außerhalb der Nutzzeit gibt es keine Freigabe.", id);
       if (n.type === "S066") {
         const gw = pv(paraOf(n, "8610")), hy = pv(paraOf(n, "8612"));
-        if (gw) add(5, "sliders", `${nb(id)} · Grenzwert <code>${esc(valText(gw))}</code>${hy ? " / Hysterese <code>" + esc(valText(hy)) + "</code>" : ""}`, "Schaltschwelle in der Kette.", id);
+        const lg = lvPara(C, n, "", "8610"), lh = lvPara(C, n, "", "8612");
+        const cd = (l, x) => l ? `<code class="lv">${esc(l.t)}</code>` : `<code>${esc(valText(x))}</code>`;
+        if (gw || lg) add(5, "sliders", `${nb(id)} · Grenzwert ${cd(lg, gw)}${hy || lh ? " / Hysterese " + cd(lh, hy) : ""}`, "Schaltschwelle in der Kette.", id);
       }
     }
     for (const e of CH.edges) if (isInvertedEdge(e)) add(3, "swap", `${nb(e.from)} → <b>${esc(C.nodes.get(e.to).addr)}</b> <code>invertiert</code>`, "Signal wird auf dem Weg umgekehrt.", e.from);
@@ -6963,12 +7107,18 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       box.appendChild(h("div", { class: "sec" }, "Befunde an Bausteinen dieser Kette"));
       for (const f of fs) box.appendChild(h("div", { class: "it", onclick: () => go("findings", { focus: f.id }) }, sevIcon(f.sev), h("span", null, f.title)));
     }
-    box.appendChild(h("div", { class: "infobar inf", style: { marginTop: "16px" } }, icon("info"), h(
-      "div",
-      { class: "small" },
-      "Die Sicherung ist ein Parameter-Abbild, keine Live-Ansicht. Werte zeigen den Stand beim Sichern. Mit ° markierte Bedeutungen sind aus der Dateistruktur abgeleitet."
-    )));
+    box.appendChild(h("div", { class: "infobar inf", style: { marginTop: "16px" } }, icon("info"), h("div", { class: "small" }, liveNote(C))));
     return box;
+  }
+  function liveNote(C) {
+    const L = liveInfo(C.cid);
+    if (L || liveConnected(C.cid)) return h(
+      "span",
+      null,
+      h("span", { class: "lv" }, "Hervorgehobene Werte sind live"),
+      " (" + (L ? L.label + (L.ip ? " · " + L.ip : "") + (L.stamp ? " · Stand " + L.stamp : "") : "verbunden") + "). Übrige Werte stammen aus der Sicherung. Mit ° markierte Bedeutungen sind aus der Dateistruktur abgeleitet."
+    );
+    return "Die Sicherung ist ein Parameter-Abbild, keine Live-Ansicht. Werte zeigen den Stand beim Sichern. Für Live-Werte im Reiter „K&P direkt“ oder „Online“ verbinden. Mit ° markierte Bedeutungen sind aus der Dateistruktur abgeleitet.";
   }
   function nodeDetail(C, n, cb) {
     const frag = h("div");
@@ -7043,11 +7193,11 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         );
       })));
     }
-    const paraRows = (paras) => paras.filter((p) => p.addr !== "password" && (p.texts.length || p.values.length || p.act || p.funcObjs.some((f) => f.type !== "FSource") || p.schedules.length)).map((p) => {
+    const paraRows = (paras, sub) => paras.filter((p) => p.addr !== "password" && (p.texts.length || p.values.length || p.act || p.funcObjs.some((f) => f.type !== "FSource") || p.schedules.length)).map((p) => {
       const d = dictFor(n.type, p.addr);
       const vals = p.values.filter((v) => v.type !== "Source");
       const fo = p.funcObjs.filter((f) => f.type !== "FSource").map((f) => FUNC_NAMES[f.type] || (FB_TYPES[f.type] ? "BACnet " + FB_TYPES[f.type][1] + (foVal(f, "ObjId") ? " " + foVal(f, "ObjId") : "") : f.type));
-      const v1 = vals[0], act = p.act;
+      const v1 = vals[0], act = p.act, lv = lvPara(C, n, sub || "", p.addr);
       return h(
         "div",
         null,
@@ -7057,6 +7207,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           { class: "v" },
           p.texts[0] || (d ? d.n + (d.inf ? "°" : "") : h("span", { class: "faint" }, "–")),
           v1 ? h("small", null, "Wert: " + valText(v1, p.stateTexts) + (v1.invalid ? " (ungültig)" : "") + (v1.deleted ? " (gelöscht – nicht aktiv)" : "") + (act && act.text !== v1.text ? " · wirksam: " + valText(act, p.stateTexts) : "")) : act ? h("small", null, "wirksam: " + valText(act, p.stateTexts)) : null,
+          lv ? h("small", null, h("span", { class: "lv" }, "Live: " + lv.t)) : null,
           p.range ? h("small", null, "Bereich " + p.range) : null,
           fo.length ? h("small", null, fo.join(" · ")) : null,
           p.schedules.length ? h("small", { class: "mono" }, schedText(p.schedules[0])) : null
@@ -7069,7 +7220,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       b.appendChild(h("div", { class: "dlist" }, pr));
     }
     for (const sub of n.subObjs) {
-      const r = paraRows(sub.paras);
+      const r = paraRows(sub.paras, sub.addr);
       if (r.length) {
         b.appendChild(h("h4", null, "Unterobjekt " + sub.addr + " (" + sub.type + ")"));
         b.appendChild(h("div", { class: "dlist" }, r));
@@ -9188,7 +9339,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
       h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
-      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.5.0")
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.5.1")
     ));
   }
   function renderTitle() {
@@ -10408,8 +10559,6 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   });
 
   // src/ui/views/online-kp.js
-  var PRIM = { CAI: "b", CDI: "k", CDO: "K", CAO: "Y" };
-  var SEC = { CAO: "y", CDO: "k" };
   function kpCell(o) {
     if (!o.ok) return defaultLiveText(o);
     if (typeof o.v === "boolean") return { t: o.v ? "EIN" : "AUS", cls: o.v ? "liveon" : "liveoff" };
@@ -10420,22 +10569,18 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     }
     return { t: "—", cls: "muted" };
   }
-  LIVE_SOURCES.add({ id: "kp", label: "K&P direkt" });
-  function pinAddress(C, p) {
-    const n = C && C.nodes && C.nodes.get(p.nodeId);
-    if (!n || n.foreign) return null;
-    const sub = (n.subObjs || []).find((s2) => PRIM[s2.type]);
-    if (!sub) return null;
-    const sec = SEC[sub.type] && sub.paras.some((x) => x.addr === SEC[sub.type]) ? SEC[sub.type] : null;
-    const para = (p.kind === "AA" || p.kind === "BA") && sec ? sec : PRIM[sub.type];
-    return "//" + n.mod + "/" + n.plant + "/" + n.group + "/" + n.addr + "/" + sub.addr + "/" + para;
-  }
+  LIVE_SOURCES.add({
+    id: "kp",
+    label: "K&P direkt",
+    connected: (cid) => !!(KP.conn && KP.C && KP.C.cid === cid),
+    want: (cid, addrs) => kpWant(cid, addrs)
+  });
   function pinTargets(C) {
     if (!C || C.fmt === "ddc3000" || !C.pins) return [];
     const out = [];
     for (const p of C.pins) {
       if (p.kind === "frei") continue;
-      const a = pinAddress(C, p);
+      const a = pinAddr(C, p);
       if (a) out.push({ a, nodeId: p.nodeId, name: p.name || p.paraText || "", klemme: p.klemme });
     }
     return out;
@@ -10461,6 +10606,63 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     _root: null,
     _timer: null
   };
+  var WANT = { cur: /* @__PURE__ */ new Set(), batch: /* @__PURE__ */ new Set(), timer: null, readAt: /* @__PURE__ */ new Map(), busy: false };
+  var FRESH_MS = 3e4;
+  function kpWant(cid, addrs) {
+    if (!KP.conn || !KP.C || KP.C.cid !== cid) return;
+    for (const a of addrs) WANT.batch.add(a);
+    clearTimeout(WANT.timer);
+    WANT.timer = setTimeout(() => flushWant(false), 250);
+  }
+  async function flushWant(force) {
+    if (!KP.conn || !KP.C) return;
+    if (WANT.busy) {
+      clearTimeout(WANT.timer);
+      WANT.timer = setTimeout(() => flushWant(force), 300);
+      return;
+    }
+    if (WANT.batch.size) {
+      WANT.cur = WANT.batch;
+      WANT.batch = /* @__PURE__ */ new Set();
+    }
+    const now = Date.now();
+    const list = [...WANT.cur].filter((a) => force || !(WANT.readAt.get(a) > now - FRESH_MS));
+    if (!list.length) return;
+    for (const a of list) WANT.readAt.set(a, now);
+    WANT.busy = true;
+    const gen = KP.gen, C = KP.C;
+    const r = await kp("lesen", { ip: KP.conn.ip, port: KP.conn.port, adressen: list }, 3e4 + list.length * 60);
+    WANT.busy = false;
+    if (gen !== KP.gen || !r) return;
+    if (!r.ok) {
+      if (r.login) {
+        KP.conn = null;
+        KP.err = "Sitzung abgelaufen, bitte neu verbinden.";
+        layout();
+      }
+      return;
+    }
+    setLiveAddr(C.cid, r.values, { source: "kp", ip: KP.conn.ip, stamp: nowStamp() });
+  }
+  function wantReset() {
+    clearTimeout(WANT.timer);
+    WANT.cur = /* @__PURE__ */ new Set();
+    WANT.batch = /* @__PURE__ */ new Set();
+    WANT.readAt = /* @__PURE__ */ new Map();
+    WANT.busy = false;
+  }
+  function schedAuto() {
+    clearTimeout(KP._timer);
+    if (!KP.auto || !KP.conn) return;
+    KP._timer = setTimeout(async () => {
+      if (!KP.auto || !KP.conn) return;
+      if (APP.view === "online-kp" && KP.tab === "punkte") await kpRead(true);
+      else {
+        await flushWant(true);
+        schedAuto();
+      }
+    }, 5e3);
+  }
   async function kp(path, body, ms) {
     try {
       const j = await svcJson("/api/kp/" + path, body, ms || 2e4);
@@ -10503,6 +10705,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     KP.values = [];
     KP.ex = null;
     KP.exVals = /* @__PURE__ */ new Map();
+    wantReset();
     layout();
     const r = await kp("verbinden", { ip, port: KP.port, user: KP.user, pass: KP.pass });
     if (gen !== KP.gen) return;
@@ -10535,6 +10738,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     KP.err = "";
     KP.ex = null;
     KP.exVals = /* @__PURE__ */ new Map();
+    wantReset();
     if (KP.C) clearLive(KP.C.cid, "kp");
     await kp("trennen", { ip, port });
     if (was) toast("Verbindung getrennt.", "ok");
@@ -10573,11 +10777,14 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       text: v.ok && !(typeof v.v === "number" || typeof v.v === "boolean") ? v.pv != null ? String(v.pv) : null : void 0,
       err: v.err
     })), { source: "kp", ip: KP.conn.ip, stamp: KP.stamp });
+    if (C) {
+      const t = Date.now();
+      for (const v of r.values) WANT.readAt.set(v.a, t);
+      setLiveAddr(C.cid, r.values, { source: "kp", ip: KP.conn.ip, stamp: KP.stamp });
+    }
     layout();
-    clearTimeout(KP._timer);
-    if (KP.auto) KP._timer = setTimeout(() => {
-      if (document.body.contains(KP._root) && APP.view === "online-kp") kpRead(true);
-    }, 5e3);
+    if (KP.auto && WANT.cur.size) await flushWant(true);
+    schedAuto();
   }
   async function kpBrowse(addr) {
     if (!KP.conn || KP.busy) return;
@@ -10820,7 +11027,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
 
   // src/ui/main.js
   var api = {
-    version: "0.5.0",
+    version: "0.5.1",
     register: ALL,
     state: APP,
     curC,
@@ -10832,7 +11039,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     openNode,
     openRef,
     renderAll,
-    live: { setLive, liveOfPin, livePinText },
+    live: { setLive, setLiveAddr, liveOfPin, liveOfAddr, livePinText, wantLive },
     ui: { h, icon, btn, toast, pageHead, kindTag },
     wartung: { doc: () => WDOC.cur, text: () => WDOC.cur ? wdocText(WDOC.cur) : "" },
     util: util_exports,
