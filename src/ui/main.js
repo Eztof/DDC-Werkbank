@@ -24,6 +24,7 @@ import "./wartung/link.js";
 import "./wartung/air.js";
 import "./wartung/in-datenpunkten.js";
 import "./views/online.js";
+import "./views/online-kp.js";
 import { ALL } from "./core/ext.js";
 import { APP, byCid, curC } from "./core/state.js";
 import { emit, on } from "./core/events.js";

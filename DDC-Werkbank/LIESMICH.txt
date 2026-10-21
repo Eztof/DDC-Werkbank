@@ -1,4 +1,4 @@
-DDC-Werkbank – Version 0.4
+DDC-Werkbank – Version 0.5
 ==========================
 
 Aktualisieren
@@ -13,11 +13,11 @@ ersetzen und im Browser F5 zu drücken.
 
 Was liegt wo?
 -------------
-DDC-Werkbank.exe   Hintergrunddienst: Oberfläche, BACnet-Lesen, Merkliste
+DDC-Werkbank.exe   Hintergrunddienst: Oberfläche, Live-Lesen, Merkliste
 ui\                die Oberfläche (DDC-Werkbank.html – geht auch ohne Dienst)
 ui\erweiterungen.js  optional: eigene Prüfungen/Ansichten ohne Neubau
                    (fehlt die Datei, passiert nichts)
-config.json        gespeicherte Zentralen für den Online-Reiter
+config.json        gespeicherte Zentralen für die Online-Reiter
 daten\             Merkliste – wird beim ersten Abhaken angelegt:
   befunde.json       abgehakte Befunde („kann ignoriert werden“)
   verknuepfung.json  Entscheidungen im Reiter „Verknüpfung“
@@ -25,6 +25,20 @@ daten\             Merkliste – wird beim ersten Abhaken angelegt:
 
 Nichts davon wird in die Wartungsdoku geschrieben. Den Ordner daten\ kann
 man sichern oder auf einen anderen Rechner mitnehmen.
+
+Live-Werte lesen
+----------------
+Reiter „Online“         BACnet/IP – liest die auf BACnet gelegten Objekte.
+Reiter „K&P direkt“     wie das Service-Tool (Port 18090): nach Anmeldung mit
+                        Benutzer/Passwort der Zentrale ist JEDER Wert lesbar,
+                        nicht nur die auf BACnet gelegten. Rein lesend.
+                        Braucht die Schlüsseldatei (Salz) aus dem K&P
+                        Service-Tool: der Dienst sucht sie in
+                        C:\Program Files (x86)\Kieback&Peter\Service-Tool.
+                        Ist das Service-Tool woanders, die Datei salt*.hg1k
+                        (aus plugins\de.hologarage.kup.util_*.jar) in den
+                        Ordner daten\ legen. Das Passwort bleibt nur im
+                        Arbeitsspeicher des Dienstes, es wird nicht gespeichert.
 
 Ohne laufenden Dienst merkt sich der Browser alles; beim nächsten Start mit
 Dienst wird es in daten\ übernommen.

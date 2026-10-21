@@ -1,7 +1,8 @@
 'use strict';
 /* =========================================================================
    DDC-Werkbank – Hintergrunddienst
-   Liefert die Werkbank-Oberflaeche aus und bietet die BACnet-Lesebruecke.
+   Liefert die Werkbank-Oberflaeche aus und bietet die Lesebruecken
+   BACnet/IP und K&P direkt (CTOS, wie das Service-Tool).
    Alles lokal auf 127.0.0.1. Es wird nichts auf Zentralen geschrieben.
    ========================================================================= */
 const http = require('http');
@@ -9,8 +10,9 @@ const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
 const B = require('./bacnet.js');
+const K = require('./ctos.js');
 
-const VERSION = '0.2';
+const VERSION = '0.3';
 const PORT = 47902;
 
 /* Ordner neben der .exe (in der Entwicklung: DDC-Werkbank\ im Repo oder WERKBANK_DIR) */
@@ -46,6 +48,17 @@ function writeData(name, obj) {
   fs.writeFileSync(tmp, JSON.stringify(obj, null, 1));
   fs.renameSync(tmp, dataFile(name));
 }
+
+/* ---------- K&P direkt: offene Sitzungen (Passwort nur im Speicher) ---------- */
+const KP = new Map();   // "ip:port" → { sess, used }
+const kpKey = (ip, port) => ip + ':' + (port || K.DEFAULT_PORT);
+function kpSalts() { return K.findSalts([BASE, DATA_DIR], (readConfig().settings || {}).serviceToolDir); }
+function kpGet(ip, port) {
+  const e = KP.get(kpKey(ip, port));
+  if (!e || e.sess.closed) { if (e) KP.delete(kpKey(ip, port)); return null; }
+  e.used = Date.now(); return e.sess;
+}
+setInterval(() => { for (const [k, e] of KP) if (e.sess.closed || Date.now() - e.used > 10 * 60000) { e.sess.close(); KP.delete(k); } }, 60000).unref();
 
 /* ---------- kleine Helfer ---------- */
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
@@ -129,7 +142,45 @@ async function handleApi(req, res, u) {
     catch (e) { return sendJson(res, { ok: false, err: String(e.message || e) }, 500); }
   }
 
+  if (u.pathname.startsWith('/api/kp/')) return handleKp(req, res, u.pathname.slice(8));
+
   sendJson(res, { ok: false, err: 'unbekannte Route' }, 404);
+}
+
+/* K&P direkt: status · verbinden · lesen · explorer · trennen */
+async function handleKp(req, res, what) {
+  if (what === 'status') {
+    const salts = kpSalts();
+    return sendJson(res, { ok: true, salt: salts.length > 0, from: salts.length ? salts[0].from : '', port: K.DEFAULT_PORT,
+      sessions: [...KP.values()].filter(e => !e.sess.closed).map(e => ({ ip: e.sess.ip, port: e.sess.port })) });
+  }
+  if (req.method !== 'POST') return sendJson(res, { ok: false, err: 'POST erwartet' }, 405);
+  let body; try { body = await readBody(req); } catch (e) { return sendJson(res, { ok: false, err: 'ungültiger Body' }, 400); }
+  const ip = String(body.ip || '').trim(), port = parseInt(body.port, 10) || K.DEFAULT_PORT;
+  if (!ip) return sendJson(res, { ok: false, err: 'ip fehlt' }, 400);
+  try {
+    if (what === 'verbinden') {
+      const old = KP.get(kpKey(ip, port)); if (old) { old.sess.close(); KP.delete(kpKey(ip, port)); }
+      const sess = new K.CtosSession({ ip, port, salts: kpSalts() });
+      await sess.open(String(body.user || ''), String(body.pass || ''));
+      KP.set(kpKey(ip, port), { sess, used: Date.now() });
+      return sendJson(res, { ok: true, host: sess.hostNumber, language: sess.language, languages: sess.languages });
+    }
+    if (what === 'trennen') {
+      const e = KP.get(kpKey(ip, port)); if (e) { e.sess.close(); KP.delete(kpKey(ip, port)); }
+      return sendJson(res, { ok: true });
+    }
+    const sess = kpGet(ip, port);
+    if (!sess) return sendJson(res, { ok: false, err: 'nicht angemeldet', login: true });
+    if (what === 'lesen') {
+      const list = Array.isArray(body.adressen) ? body.adressen.filter(a => typeof a === 'string').slice(0, 20000) : [];
+      return sendJson(res, { ok: true, values: await K.readAddresses(sess, list) });
+    }
+    if (what === 'explorer') return sendJson(res, Object.assign({ ok: true }, await K.browse(sess, String(body.adresse || ''))));
+    return sendJson(res, { ok: false, err: 'unbekannte Route' }, 404);
+  } catch (e) {
+    return sendJson(res, { ok: false, err: String(e.message || e), login: e.code === 25 }, 200);
+  }
 }
 
 /* ---------- Server ---------- */
