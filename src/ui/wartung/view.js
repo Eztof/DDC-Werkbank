@@ -74,6 +74,38 @@ function facZustandVorschlag(fac) {
   }
   return "Anlage geprüft." + (lines.length ? "\n" + uniq(lines).join("\n") : " Funktion in Ordnung.");
 }
+/* ISP-Kommentar (<ispComment><title/><body/></ispComment>) – Gesamtzustand der ISP */
+const ispComment = isp => wtxt(wkid(isp, "ispComment"), "body");
+function setIspComment(isp, text) {
+  let c = wkid(isp, "ispComment");
+  if (!c) { c = wset(isp, "ispComment", ""); wset(c, "title", "Wartung"); }
+  wset(c, "body", text);
+}
+function ispKommentarVorschlag(isp) {
+  const lines = [];
+  for (const f of wkids(isp, "facility")) {
+    const s = jobStats(facJobs(f));
+    if (s.mangel || s.nein || s.nm) lines.push(wtxt(f, "facBezeichnung").trim() + ": " + [s.mangel ? s.mangel + " Mangel" : "", s.nein ? s.nein + " Nein" : "", s.nm ? s.nm + " nicht möglich" : ""].filter(Boolean).join(", "));
+  }
+  return "Wartung durchgeführt." + (lines.length ? "\n" + lines.join("\n") : " Alle Anlagen in Ordnung.");
+}
+/* Bearbeitungsstand für die Leiste: offen (rot) · alles geprüft, Gesamtzustand fehlt (gelb) · fertig (grün) */
+function facState(fac) {
+  if (jobStats(facJobs(fac)).offen) return "open";
+  return wtxt(fac, "facZustand").trim() ? "done" : "zust";
+}
+function ispState(isp) {
+  const st = wkids(isp, "facility").map(facState);
+  if (st.includes("open")) return "open";
+  return st.includes("zust") || !ispComment(isp).trim() ? "zust" : "done";
+}
+const ST_TITLE = { open: "Noch nicht alles geprüft", zust: "Alles geprüft – Gesamtzustand fehlt noch", done: "Fertig: alles geprüft, Gesamtzustand eingetragen" };
+const zustandBox = (label, value, placeholder, onInput, suggest) => {
+  const zt = h("textarea", { class: "in", rows: 3, style: { fontFamily: "var(--font)", fontSize: "13px" }, placeholder }, value);
+  zt.addEventListener("input", () => onInput(zt.value));
+  return h("div", { class: "wd-zustand", style: { marginTop: "12px" } }, h("div", { class: "row", style: { marginBottom: "4px" } }, h("span", { class: "small muted grow" }, label),
+    btn("Aus Prüfergebnissen vorschlagen", "doc", () => { zt.value = suggest(); onInput(zt.value); }, "sm subtle")), zt);
+};
 
 VIEWS.add({
   id: "wartung", label: "Wartungsdoku", icon: "doc", group: 2, order: 210,
@@ -170,7 +202,9 @@ function wdDocTab(body, D) {
   split.appendChild(main);
   if (D._lastSel !== D.sel) main.dataset.noRestore = "1";
   D._lastSel = D.sel;
-  const changed = () => { wdocChanged(D); };
+  /* Farben der Leiste nachziehen, ohne neu aufzubauen (Eingabe behält den Fokus) */
+  const refreshRail = () => { for (const it of rail.children) if (it._wel) { const st = it._wel.localName === "Isp" ? ispState(it._wel) : facState(it._wel); if (!it.classList.contains("st-" + st)) { it.classList.remove("st-open", "st-zust", "st-done"); it.classList.add("st-" + st); it.title = it.title.replace(/^[^\n(]*/, ST_TITLE[st] + " "); } } };
+  const changed = () => { wdocChanged(D); refreshRail(); };
   const rerender = () => renderAll();
 
   /* Kopf der Leiste: Prüfdatum + geprüft durch */
@@ -193,17 +227,21 @@ function wdDocTab(body, D) {
     const ilist = wkids(b, "Isp");
     if (!ilist.length) rail.appendChild(h("div", { class: "small faint", style: { padding: "2px 12px 8px" } }, "Noch keine ISP – im Tab „Aus Sicherung übernehmen“ einfügen."));
     for (const isp of ilist) {
-      const s = jobStats(ispJobs(isp));
-      rail.appendChild(h("div", { class: "rail-item" + (D.sel === isp ? " on" : ""), onclick: () => { D.sel = isp; rerender(); } },
+      const s = jobStats(ispJobs(isp)), ist = ispState(isp);
+      const iit = h("div", { class: "rail-item st-" + ist + (D.sel === isp ? " on" : ""), title: ST_TITLE[ist] + " (ISP-Kommentar und Gesamtzustand aller Anlagen)", onclick: () => { D.sel = isp; rerender(); } },
         h("div", { class: "lbl" }, h("b", null, wtxt(isp, "ispBezeichnung").trim() || "ISP"), h("small", null, wkids(isp, "facility").length + " Anlagen · " + s.done + "/" + s.total + " bearbeitet")),
-        s.mangel ? h("span", { class: "badge err" }, s.mangel) : null));
+        s.mangel ? h("span", { class: "badge err" }, s.mangel) : null);
+      iit._wel = isp;
+      rail.appendChild(iit);
       for (const fac of wkids(isp, "facility")) {
         const fs = jobStats(facJobs(fac));
         const done = fs.offen === 0 && fs.total > 0;
         const dot = fs.mangel ? "err" : fs.nein || fs.nm ? "warn" : done ? "ok" : "info";
-        const it = h("div", { class: "rail-item" + (D.sel === fac ? " on" : ""), style: { paddingLeft: "26px" }, title: "Hierher ziehen, um Datenpunkte in diese Anlage zu verschieben", onclick: () => { D.sel = fac; rerender(); } },
+        const fst = facState(fac);
+        const it = h("div", { class: "rail-item st-" + fst + (D.sel === fac ? " on" : ""), style: { paddingLeft: "26px" }, title: ST_TITLE[fst] + "\nHierher ziehen, um Datenpunkte in diese Anlage zu verschieben", onclick: () => { D.sel = fac; rerender(); } },
           h("span", { class: "sevdot " + dot, title: fs.done + " von " + fs.total + " Prüfungen bearbeitet" }),
           h("div", { class: "lbl" }, wtxt(fac, "facBezeichnung") || "Anlage"), h("span", { class: "cnt" }, wkids(fac, "Artikel").length));
+        it._wel = fac;
         it.addEventListener("dragover", e => { if (D.drag && D.drag.length && D.drag[0].parentElement !== fac && D.drag[0].parentElement.parentElement === isp) { e.preventDefault(); it.classList.add("drop"); } });
         it.addEventListener("dragleave", () => it.classList.remove("drop"));
         it.addEventListener("drop", e => { e.preventDefault(); it.classList.remove("drop"); const arts = D.drag || []; D.drag = null; wMoveArts(D, arts, fac); rerender(); });
@@ -237,16 +275,18 @@ function wdDocTab(body, D) {
       btn(null, "trash", () => { if (confirm("ISP „" + wtxt(isp, "ispBezeichnung").trim() + "“ mit allen Anlagen aus der Wartungsdoku löschen?")) { wSnapshot(D); isp.remove(); D.sel = null; changed(); rerender(); } }, "subtle", "ISP löschen")));
     main.appendChild(h("div", { class: "row", style: { marginTop: "12px" } },
       btn("Alle offenen Prüfungen: Ja", "check", () => { for (const a of allArts) for (const j of wkids(a, "job")) if (!wtxt(j, "executed")) setExecuted(D, a, j, "Ja"); changed(); rerender(); }),
-      btn("Anlagenzustand ausfüllen", "doc", () => { for (const f of wkids(isp, "facility")) if (!wtxt(f, "facZustand").trim()) wset(f, "facZustand", facZustandVorschlag(f)); changed(); rerender(); }, "", "Leere Anlagenzustände aus den Prüfergebnissen vorschlagen"),
+      btn("Gesamtzustand ausfüllen", "doc", () => { for (const f of wkids(isp, "facility")) if (!wtxt(f, "facZustand").trim()) wset(f, "facZustand", facZustandVorschlag(f)); changed(); rerender(); }, "", "Leere Gesamtzustände der Anlagen aus den Prüfergebnissen vorschlagen"),
       prPerson ? btn("„Geprüft durch " + prPerson.name + "“ bei allen geprüften Datenpunkten", "check", () => { checked.forEach(a => wSetPruefer(a, prPerson)); changed(); toast(checked.length + " Datenpunkte: geprüft durch " + prPerson.name, "ok"); rerender(); }) : null,
       btn("Anlage hinzufügen", "plus", () => { const name = prompt("Name der neuen Anlage:", "Neue Anlage"); if (name == null) return; wSnapshot(D); D.sel = wNewFacility(D, isp, name.trim() || "Neue Anlage"); changed(); rerender(); })));
+    main.appendChild(zustandBox("Gesamtzustand der ISP (ISP-Kommentar)", ispComment(isp), "Kommentar zur ISP, z. B. „Wartung durchgeführt. Alle Anlagen in Ordnung.“",
+      v => { setIspComment(isp, v); changed(); }, () => ispKommentarVorschlag(isp)));
     if (ispMode === "alle") {
       wdArtTable(main, D, { isp, arts: allArts, persons, rerender, changed, multi: true });
       return;
     }
     const facs = wkids(isp, "facility");
     const t = h("table", { class: "grid card-t" });
-    t.appendChild(h("thead", null, h("tr", null, h("th", null, "Anlage"), h("th", { class: "num" }, "Datenpunkte"), h("th", null, "Prüfungen"), h("th", null, "Zustand"), h("th", { style: { width: "110px" } }))));
+    t.appendChild(h("thead", null, h("tr", null, h("th", null, "Anlage"), h("th", { class: "num" }, "Datenpunkte"), h("th", null, "Prüfungen"), h("th", null, "Gesamtzustand"), h("th", { style: { width: "110px" } }))));
     const tb = h("tbody");
     facs.forEach((f, i) => tb.appendChild(h("tr", null,
       h("td", null, h("a", { onclick: () => { D.sel = f; rerender(); } }, wtxt(f, "facBezeichnung") || "Anlage")), h("td", { class: "num" }, String(wkids(f, "Artikel").length)),
@@ -274,10 +314,8 @@ function wdDocTab(body, D) {
     btn(null, "down", () => { wSnapshot(D); isp.insertBefore(fac, facs[fi + 1] ? facs[fi + 1].nextElementSibling : null); wRenumber(isp); changed(); rerender(); }, "subtle" + (fi === facs.length - 1 ? " dis" : ""), "Anlage nach unten"),
     btn(null, "trash", () => { const n = wkids(fac, "Artikel").length; if (n && !confirm("Anlage „" + wtxt(fac, "facBezeichnung") + "“ mit " + n + " Datenpunkten löschen?")) return; wSnapshot(D); fac.remove(); wRenumber(isp); D.sel = isp; changed(); rerender(); }, "subtle", "Anlage löschen")));
   $$(".dis", main).forEach(b => b.disabled = true);
-  const zt = h("textarea", { class: "in", rows: 3, style: { fontFamily: "var(--font)", fontSize: "13px" }, placeholder: "Anlagenzustand, z. B. „Anlage geprüft. Funktion in Ordnung.“" }, wtxt(fac, "facZustand"));
-  zt.addEventListener("input", () => { wset(fac, "facZustand", zt.value); changed(); });
-  main.appendChild(h("div", { style: { marginTop: "12px" } }, h("div", { class: "row", style: { marginBottom: "4px" } }, h("span", { class: "small muted grow" }, "Anlagenzustand"),
-    btn("Aus Prüfergebnissen vorschlagen", "doc", () => { zt.value = facZustandVorschlag(fac); wset(fac, "facZustand", zt.value); changed(); }, "sm subtle")), zt));
+  main.appendChild(zustandBox("Gesamtzustand", wtxt(fac, "facZustand"), "Gesamtzustand, z. B. „Anlage geprüft. Funktion in Ordnung.“",
+    v => { wset(fac, "facZustand", v); changed(); }, () => facZustandVorschlag(fac)));
 
   wdArtTable(main, D, { isp, arts: wkids(fac, "Artikel"), persons, rerender, changed, multi: false });
   main.appendChild(h("div", { class: "small muted", style: { marginTop: "10px" } }, "Datenpunkte verschieben: Zeile links auf eine Anlage ziehen, über ☰ in der Zeile oder mehrere anhaken und „Verschieben nach“ wählen. Strg+Z macht Verschieben und Löschen rückgängig."));
@@ -671,12 +709,12 @@ function autoTarget(C, f, isp) {
   if (pin && !multi) {
     const a = assignPlant(C, pin);
     const fac = a.plant && facByPlant(a.plant.name);
-    if (fac) return { fac, art: null, job: null, label: "Anlagenzustand " + wtxt(fac, "facBezeichnung") + " (Datenpunkt nicht in der Doku)" };
+    if (fac) return { fac, art: null, job: null, label: "Gesamtzustand " + wtxt(fac, "facBezeichnung") + " (Datenpunkt nicht in der Doku)" };
   }
   if (node && !multi) {
     const hp = plantOfNode(C, node);
     const fac = hp && (facByPlant(hp.P.name) || (hp.G && hp.G.name && facByPlant(hp.P.name + " – " + hp.G.name)));
-    if (fac) return { fac, art: null, job: null, label: "Anlagenzustand " + wtxt(fac, "facBezeichnung") };
+    if (fac) return { fac, art: null, job: null, label: "Gesamtzustand " + wtxt(fac, "facBezeichnung") };
   }
   const st = stationArt(isp);
   if (st) {
@@ -864,7 +902,7 @@ function wdMangelTab(body, D) {
       if (!confirm(L.length + " Befunde abhaken (als „kann ignoriert werden“ markieren)?\nSie verschwinden auch in der Ansicht „Befunde“. In die Wartungsdoku wird dabei nichts geschrieben.")) return;
       setIgnored(C, L, true); renderAll();
     }, "sm", "Alle Befunde der aktuellen Auswahl abhaken"),
-    chk("zusätzlich im Anlagenzustand vermerken", APP.mgFac !== false, v => { APP.mgFac = v; }),
+    chk("zusätzlich im Gesamtzustand der Anlage vermerken", APP.mgFac !== false, v => { APP.mgFac = v; }),
     h("span", { class: "grow" }),
     h("span", { class: "pill " + (inDoc ? "ok" : "") }, inDoc + " von " + rowsAll.length + " in der Wartungsdoku"),
     h("span", { class: "small muted" }, sel + " ausgewählt"),

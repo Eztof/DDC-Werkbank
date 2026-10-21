@@ -34,6 +34,7 @@ import * as util from "./core/util.js";
 import * as model from "./model/model.js";
 import { btn, buildShell, icon, kindTag, pageHead, renderAll, toast } from "./shell/shell.js";
 import { persistInit } from "./core/persist.js";
+import { WDOC, wdocText } from "./wartung/wtgml.js";
 
 /* ---------- Schnittstelle für Erweiterungen ----------
    Erweiterungen ohne Neubauen: Datei  ui\erweiterungen.js  neben die HTML legen, z. B.
@@ -47,6 +48,7 @@ const api = {
   on, emit, go, openPin, openNode, openRef, renderAll,
   live: { setLive, liveOfPin, livePinText },
   ui: { h: util.h, icon, btn, toast, pageHead, kindTag },
+  wartung: { doc: () => WDOC.cur, text: () => WDOC.cur ? wdocText(WDOC.cur) : "" },
   util, model
 };
 window.DDCWerkbank = api;

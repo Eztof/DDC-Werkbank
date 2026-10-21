@@ -23,3 +23,11 @@
 .wcent .t { font-weight: 600; }
 .wcent .m { color: var(--text-2); font-size: 12px; }
 
+/* Leiste im Reiter „Dokument“: Bearbeitungsstand je ISP / Anlage */
+.rail-item.st-open { background: color-mix(in srgb, var(--err) 9%, transparent); }
+.rail-item.st-zust { background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.rail-item.st-done { background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.rail-item.st-open:hover, .rail-item.st-open.on { background: color-mix(in srgb, var(--err) 17%, transparent); }
+.rail-item.st-zust:hover, .rail-item.st-zust.on { background: color-mix(in srgb, var(--warn) 22%, transparent); }
+.rail-item.st-done:hover, .rail-item.st-done.on { background: color-mix(in srgb, var(--ok) 22%, transparent); }
+.rail-item[class*="st-"] { margin-bottom: 1px; }

@@ -18,7 +18,8 @@ export const WX = {
     Artikel: ["nummer", "installationClass", "artBezeichnung", "artKlartext", "artLbnr", "standort", "pruefDatum", "mitarbeiter", "produktDoc", "job"],
     job: ["jobDescription", "executed", "targetTime", "jobBemerkung", "pruefDatum", "jobMitarbeiter"],
     articleProperties: ["description", "value", "measure", "length", "type", "checked"],
-    Isp: ["ispBezeichnung", "facility"],
+    Isp: ["ispBezeichnung", "facility", "ispComment"],
+    ispComment: ["title", "body"],
     selBauteil: ["bteBezeichnung", "Isp"]
   }
 };
@@ -281,7 +282,11 @@ export function wdocInsertIsp(D, bteEl, ispText, replaceSameName) {
   const isp = D.doc.importNode(frag.documentElement.firstElementChild, true);
   const name = wtxt(isp, "ispBezeichnung").trim();
   const old = wkids(bteEl, "Isp").find(x => wtxt(x, "ispBezeichnung").trim() === name);
-  if (old && replaceSameName) { isp.setAttribute("sortId", old.getAttribute("sortId") || "1"); bteEl.replaceChild(isp, old); }
+  if (old && replaceSameName) {
+    isp.setAttribute("sortId", old.getAttribute("sortId") || "1");
+    const cm = wkid(old, "ispComment"); if (cm && !wkid(isp, "ispComment")) wplace(isp, cm);   // ISP-Kommentar bleibt erhalten
+    bteEl.replaceChild(isp, old);
+  }
   else {
     const nr = Math.max(0, ...wkids(bteEl, "Isp").map(x => parseInt(x.getAttribute("sortId"), 10) || 0)) + 1;
     isp.setAttribute("sortId", String(nr));
