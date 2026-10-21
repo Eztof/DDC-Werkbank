@@ -3092,6 +3092,13 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     LIVE.get(cid).set(source, { source, label: S ? S.label : source, ip: o.ip || "", stamp: o.stamp || "", t: Date.now(), byNode });
     emit("live", { cid, source, stamp: o.stamp });
   }
+  function clearLive(cid, source) {
+    const M = LIVE.get(cid);
+    if (!M) return;
+    if (source) M.delete(source);
+    else LIVE.delete(cid);
+    emit("live", { cid, source: source || null, stamp: null });
+  }
   function liveInfo(cid) {
     const M = LIVE.get(cid);
     if (!M || !M.size) return null;
@@ -9275,7 +9282,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
       h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
-      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.4.2")
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.4.3")
     ));
   }
   function renderTitle() {
@@ -10346,7 +10353,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return { t: String(o.value), cls: "" };
   }
   LIVE_SOURCES.add({ id: "bacnet", label: "BACnet/IP", format: bacnetText });
-  var ONLINE = { health: "unknown", cfg: null, ip: store.get("onlineIp", ""), dev: null, objs: null, values: [], stamp: "", busy: null, err: "", auto: false, _root: null, _mounted: 0 };
+  var ONLINE = { health: "unknown", cfg: null, ip: store.get("onlineIp", ""), dev: null, objs: null, values: [], stamp: "", busy: null, err: "", auto: false, gen: 0, _root: null, _mounted: 0 };
   async function olFetch(path, body, ms) {
     try {
       const j = await svcJson(path, body, ms || 15e3);
@@ -10391,15 +10398,19 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       return;
     }
     store.set("onlineIp", ip);
+    clearTimeout(ONLINE._timer);
+    const gen = ++ONLINE.gen;
     ONLINE.dev = null;
     ONLINE.values = [];
     ONLINE.objs = null;
     ONLINE.err = "";
+    ONLINE.stamp = "";
     ONLINE.busy = "connect";
     olLayout();
     const C = ONLINE.C;
     const known = C && C.meta && C.meta.bacnetDevId ? "&inst=" + encodeURIComponent(C.meta.bacnetDevId) : "";
     const r = await olFetch("/api/identify?ip=" + encodeURIComponent(ip) + known);
+    if (gen !== ONLINE.gen) return;
     ONLINE.busy = null;
     if (!r) {
       olLayout();
@@ -10415,8 +10426,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     olRefresh();
   }
   async function olRefresh(silent) {
-    if (!ONLINE.dev) return;
-    const ip = ONLINE.ip.trim();
+    if (!ONLINE.dev || ONLINE.busy) return;
+    const gen = ONLINE.gen, ip = ONLINE.ip.trim();
     if (!ONLINE.objs) {
       const fromBackup = olBacnetObjects(ONLINE.C);
       if (fromBackup) ONLINE.objs = fromBackup;
@@ -10424,6 +10435,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         ONLINE.busy = "browse";
         if (!silent) olLayout();
         const b = await olFetch("/api/browse?ip=" + encodeURIComponent(ip) + "&inst=" + ONLINE.dev.inst, void 0, 12e4);
+        if (gen !== ONLINE.gen) return;
         ONLINE.busy = null;
         if (!b || !b.ok) {
           ONLINE.err = b && b.err || "Objektliste nicht lesbar.";
@@ -10437,6 +10449,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     if (!silent) olLayout();
     const payload = { ip, objects: ONLINE.objs.map((o) => ({ type: o.type, inst: o.inst })) };
     const r = await olFetch("/api/live", payload, 3e4 + payload.objects.length * 200);
+    if (gen !== ONLINE.gen) return;
     ONLINE.busy = null;
     if (!r || !r.ok) {
       ONLINE.err = r && r.err || "Werte konnten nicht gelesen werden.";
@@ -10453,6 +10466,21 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     if (ONLINE.auto) ONLINE._timer = setTimeout(() => {
       if (document.body.contains(ONLINE._root) && APP.view === "online") olRefresh(true);
     }, 5e3);
+  }
+  function olDisconnect() {
+    ONLINE.gen++;
+    clearTimeout(ONLINE._timer);
+    const was = ONLINE.dev || ONLINE.busy;
+    ONLINE.auto = false;
+    ONLINE.dev = null;
+    ONLINE.objs = null;
+    ONLINE.values = [];
+    ONLINE.stamp = "";
+    ONLINE.busy = null;
+    ONLINE.err = "";
+    if (ONLINE.C) clearLive(ONLINE.C.cid, "bacnet");
+    if (was) toast("Verbindung getrennt.", "ok");
+    olLayout();
   }
   async function olSaveCentral() {
     const ip = (ONLINE.ip || "").trim();
@@ -10512,7 +10540,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         { class: "row" },
         h("span", { class: "muted" }, "Zentrale:"),
         ipIn,
-        btn(ONLINE.busy === "connect" ? "Verbinde …" : "Verbinden", "swap", () => olConnect(), "accent"),
+        btn(ONLINE.busy === "connect" ? "Verbinde …" : ONLINE.dev ? "Neu verbinden" : "Verbinden", "swap", () => olConnect(), ONLINE.dev ? "" : "accent"),
+        ONLINE.dev || ONLINE.busy ? btn("Trennen", "close", () => olDisconnect()) : null,
         ONLINE.cfg && ONLINE.cfg.centrals.length ? selectEl([["", "— gespeicherte Zentrale —"]].concat(ONLINE.cfg.centrals.map((c) => [c.ip, c.name + " · " + c.ip])), "", (v) => {
           if (v) {
             ONLINE.ip = v;
@@ -10529,7 +10558,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     if (!ONLINE.dev) {
       root.appendChild(h("div", { class: "card" }, emptyState(
         "bacnet",
-        "Noch nicht verbunden",
+        "Nicht verbunden",
         "IP-Adresse der Zentrale eingeben und auf „Verbinden“ tippen. Der Dienst schickt ein BACnet Who-Is und liest anschließend die Live-Werte. Es wird nur gelesen."
       )));
       return;
@@ -10631,7 +10660,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
 
   // src/ui/main.js
   var api = {
-    version: "0.4.2",
+    version: "0.4.3",
     register: ALL,
     state: APP,
     curC,

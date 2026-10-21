@@ -18,7 +18,7 @@ const API = {
   "/api/data/befunde": { ok: true, data: null }, "/api/data/verknuepfung": { ok: true, data: null }, "/api/data/einstellungen": { ok: true, data: null }
 };
 
-test("Live-Werte aus Online erscheinen in den Datenpunkten", async () => {
+test("Live-Werte aus Online erscheinen in den Datenpunkten, Trennen räumt sie weg", async () => {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
@@ -38,6 +38,20 @@ test("Live-Werte aus Online erscheinen in den Datenpunkten", async () => {
     await page.click(".nav-item:has-text('Datenpunkte')");
     const row = await page.innerText("tr[data-uid='001/00/00/P.01']");
     assert.match(row, /22,8 °C/);
+
+    // Trennen: Verbindung weg, Live-Werte aus den Datenpunkten entfernt
+    await page.click(".nav-item:has-text('Online')");
+    await page.click("button:has-text('Trennen')");
+    await page.waitForFunction(() => document.body.innerText.includes("Nicht verbunden"));
+    assert.equal(await page.locator("button:has-text('Trennen')").count(), 0);
+    await page.click(".nav-item:has-text('Datenpunkte')");
+    assert.doesNotMatch(await page.innerText("tr[data-uid='001/00/00/P.01']"), /22,8 °C/);
+
+    // Erneut verbinden geht
+    await page.click(".nav-item:has-text('Online')");
+    await page.click("button:has-text('Verbinden')");
+    await page.waitForFunction(() => document.body.innerText.includes("1 von 1 Objekten antworten"));
+    assert.equal(await page.locator("button:has-text('Trennen')").count(), 1);
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();
