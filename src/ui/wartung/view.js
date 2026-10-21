@@ -89,17 +89,16 @@ function ispKommentarVorschlag(isp) {
   }
   return "Wartung durchgeführt." + (lines.length ? "\n" + lines.join("\n") : " Alle Anlagen in Ordnung.");
 }
-/* Bearbeitungsstand für die Leiste: offen (rot) · alles geprüft, Gesamtzustand fehlt (gelb) · fertig (grün) */
+/* Bearbeitungsstand für die Leiste: noch offen (ohne Farbe) · fertig ohne Mangel (grün) · fertig mit Mangel (rot) */
 function facState(fac) {
-  if (jobStats(facJobs(fac)).offen) return "open";
-  return wtxt(fac, "facZustand").trim() ? "done" : "zust";
+  const s = jobStats(facJobs(fac));
+  return s.offen ? "open" : s.mangel ? "mangel" : "ok";
 }
 function ispState(isp) {
   const st = wkids(isp, "facility").map(facState);
-  if (st.includes("open")) return "open";
-  return st.includes("zust") || !ispComment(isp).trim() ? "zust" : "done";
+  return st.includes("open") ? "open" : st.includes("mangel") ? "mangel" : "ok";
 }
-const ST_TITLE = { open: "Noch nicht alles geprüft", zust: "Alles geprüft – Gesamtzustand fehlt noch", done: "Fertig: alles geprüft, Gesamtzustand eingetragen" };
+const ST_TITLE = { open: "Noch nicht alles geprüft", mangel: "Alles geprüft – mit Mangel", ok: "Alles geprüft – ohne Mangel" };
 const zustandBox = (label, value, placeholder, onInput, suggest) => {
   const zt = h("textarea", { class: "in", rows: 3, style: { fontFamily: "var(--font)", fontSize: "13px" }, placeholder }, value);
   zt.addEventListener("input", () => onInput(zt.value));
@@ -203,7 +202,7 @@ function wdDocTab(body, D) {
   if (D._lastSel !== D.sel) main.dataset.noRestore = "1";
   D._lastSel = D.sel;
   /* Farben der Leiste nachziehen, ohne neu aufzubauen (Eingabe behält den Fokus) */
-  const refreshRail = () => { for (const it of rail.children) if (it._wel) { const st = it._wel.localName === "Isp" ? ispState(it._wel) : facState(it._wel); if (!it.classList.contains("st-" + st)) { it.classList.remove("st-open", "st-zust", "st-done"); it.classList.add("st-" + st); it.title = it.title.replace(/^[^\n(]*/, ST_TITLE[st] + " "); } } };
+  const refreshRail = () => { for (const it of rail.children) if (it._wel) { const st = it._wel.localName === "Isp" ? ispState(it._wel) : facState(it._wel); if (!it.classList.contains("st-" + st)) { it.classList.remove("st-open", "st-mangel", "st-ok"); it.classList.add("st-" + st); it.title = it.title.replace(/^[^\n]*/, ST_TITLE[st]); } } };
   const changed = () => { wdocChanged(D); refreshRail(); };
   const rerender = () => renderAll();
 
@@ -228,7 +227,7 @@ function wdDocTab(body, D) {
     if (!ilist.length) rail.appendChild(h("div", { class: "small faint", style: { padding: "2px 12px 8px" } }, "Noch keine ISP – im Tab „Aus Sicherung übernehmen“ einfügen."));
     for (const isp of ilist) {
       const s = jobStats(ispJobs(isp)), ist = ispState(isp);
-      const iit = h("div", { class: "rail-item st-" + ist + (D.sel === isp ? " on" : ""), title: ST_TITLE[ist] + " (ISP-Kommentar und Gesamtzustand aller Anlagen)", onclick: () => { D.sel = isp; rerender(); } },
+      const iit = h("div", { class: "rail-item st-" + ist + (D.sel === isp ? " on" : ""), title: ST_TITLE[ist], onclick: () => { D.sel = isp; rerender(); } },
         h("div", { class: "lbl" }, h("b", null, wtxt(isp, "ispBezeichnung").trim() || "ISP"), h("small", null, wkids(isp, "facility").length + " Anlagen · " + s.done + "/" + s.total + " bearbeitet")),
         s.mangel ? h("span", { class: "badge err" }, s.mangel) : null);
       iit._wel = isp;

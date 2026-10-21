@@ -499,14 +499,12 @@ svg defs .ah { fill: var(--e-norm); }
 .wcent .t { font-weight: 600; }
 .wcent .m { color: var(--text-2); font-size: 12px; }
 
-/* Leiste im Reiter „Dokument“: Bearbeitungsstand je ISP / Anlage */
-.rail-item.st-open { background: color-mix(in srgb, var(--err) 9%, transparent); }
-.rail-item.st-zust { background: color-mix(in srgb, var(--warn) 12%, transparent); }
-.rail-item.st-done { background: color-mix(in srgb, var(--ok) 12%, transparent); }
-.rail-item.st-open:hover, .rail-item.st-open.on { background: color-mix(in srgb, var(--err) 17%, transparent); }
-.rail-item.st-zust:hover, .rail-item.st-zust.on { background: color-mix(in srgb, var(--warn) 22%, transparent); }
-.rail-item.st-done:hover, .rail-item.st-done.on { background: color-mix(in srgb, var(--ok) 22%, transparent); }
-.rail-item[class*="st-"] { margin-bottom: 1px; }
+/* Leiste im Reiter „Dokument“: fertig geprüft ohne Mangel (grün) / mit Mangel (rot); noch offen ohne Farbe */
+.rail-item.st-ok { background: color-mix(in srgb, var(--ok) 6%, transparent); }
+.rail-item.st-mangel { background: color-mix(in srgb, var(--err) 5%, transparent); }
+.rail-item.st-ok:hover, .rail-item.st-ok.on { background: color-mix(in srgb, var(--ok) 13%, transparent); }
+.rail-item.st-mangel:hover, .rail-item.st-mangel.on { background: color-mix(in srgb, var(--err) 11%, transparent); }
+.rail-item.st-ok, .rail-item.st-mangel { margin-bottom: 1px; }
 /* ---------- Vergleich ---------- */
 .diff-a { color: var(--err); }
 .diff-b { color: var(--ok); }
@@ -3652,15 +3650,14 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return "Wartung durchgeführt." + (lines.length ? "\n" + lines.join("\n") : " Alle Anlagen in Ordnung.");
   }
   function facState(fac) {
-    if (jobStats(facJobs(fac)).offen) return "open";
-    return wtxt(fac, "facZustand").trim() ? "done" : "zust";
+    const s2 = jobStats(facJobs(fac));
+    return s2.offen ? "open" : s2.mangel ? "mangel" : "ok";
   }
   function ispState(isp) {
     const st = wkids(isp, "facility").map(facState);
-    if (st.includes("open")) return "open";
-    return st.includes("zust") || !ispComment(isp).trim() ? "zust" : "done";
+    return st.includes("open") ? "open" : st.includes("mangel") ? "mangel" : "ok";
   }
-  var ST_TITLE = { open: "Noch nicht alles geprüft", zust: "Alles geprüft – Gesamtzustand fehlt noch", done: "Fertig: alles geprüft, Gesamtzustand eingetragen" };
+  var ST_TITLE = { open: "Noch nicht alles geprüft", mangel: "Alles geprüft – mit Mangel", ok: "Alles geprüft – ohne Mangel" };
   var zustandBox = (label, value, placeholder, onInput, suggest) => {
     const zt = h("textarea", { class: "in", rows: 3, style: { fontFamily: "var(--font)", fontSize: "13px" }, placeholder }, value);
     zt.addEventListener("input", () => onInput(zt.value));
@@ -3806,9 +3803,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       for (const it of rail.children) if (it._wel) {
         const st = it._wel.localName === "Isp" ? ispState(it._wel) : facState(it._wel);
         if (!it.classList.contains("st-" + st)) {
-          it.classList.remove("st-open", "st-zust", "st-done");
+          it.classList.remove("st-open", "st-mangel", "st-ok");
           it.classList.add("st-" + st);
-          it.title = it.title.replace(/^[^\n(]*/, ST_TITLE[st] + " ");
+          it.title = it.title.replace(/^[^\n]*/, ST_TITLE[st]);
         }
       }
     };
@@ -3846,7 +3843,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         const s3 = jobStats(ispJobs(isp2)), ist = ispState(isp2);
         const iit = h(
           "div",
-          { class: "rail-item st-" + ist + (D.sel === isp2 ? " on" : ""), title: ST_TITLE[ist] + " (ISP-Kommentar und Gesamtzustand aller Anlagen)", onclick: () => {
+          { class: "rail-item st-" + ist + (D.sel === isp2 ? " on" : ""), title: ST_TITLE[ist], onclick: () => {
             D.sel = isp2;
             rerender();
           } },
@@ -9278,7 +9275,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
       h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
-      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.4.1")
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.4.2")
     ));
   }
   function renderTitle() {
@@ -10634,7 +10631,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
 
   // src/ui/main.js
   var api = {
-    version: "0.4.1",
+    version: "0.4.2",
     register: ALL,
     state: APP,
     curC,

@@ -1,4 +1,4 @@
-/* Wartungsdoku, Reiter „Dokument“: Farben in der Leiste (offen / Gesamtzustand fehlt / fertig)
+/* Wartungsdoku, Reiter „Dokument“: Farben in der Leiste (offen / fertig ohne Mangel / fertig mit Mangel)
    und ISP-Kommentar (<ispComment><title/><body/></ispComment>) bearbeiten und zurückschreiben. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -27,17 +27,19 @@ test("Wartungsdoku: Statusfarben und ISP-Kommentar", async () => {
     assert.equal(st0[0], "open", "ISP mit offenen Prüfungen muss rot sein");
     assert.doesNotMatch(await page.innerText("#content"), /Anlagenzustand/);
 
-    // ISP wählen, alles auf Ja → gelb (Gesamtzustand fehlt)
+    // ISP wählen, alles auf Ja → grün (kein Mangel); Gesamtzustand/Kommentar ändern die Farbe nicht
     await page.click(".rail .rail-item >> nth=0");
     await page.click("button:has-text('Alle offenen Prüfungen: Ja')");
-    assert.equal((await states())[0], "zust");
-    await page.click("button:has-text('Gesamtzustand ausfüllen')");
-    assert.equal((await states())[0], "zust", "ISP-Kommentar fehlt noch");
-    assert.ok((await states()).slice(1).every(s => s === "done"), "Anlagen mit Gesamtzustand müssen grün sein");
+    assert.ok((await states()).every(s => s === "ok"), "fertig ohne Mangel muss grün sein: " + await states());
+    // ein Mangel → Anlage und ISP rot
+    await page.click(".rail .rail-item >> nth=1");
+    await page.selectOption("select.exsel >> nth=0", "Mangel");
+    const st1 = await states();
+    assert.equal(st1[0], "mangel"); assert.equal(st1[1], "mangel");
+    await page.click(".rail .rail-item >> nth=0");
 
     // ISP-Kommentar eintragen → grün, im XML an der richtigen Stelle
     await page.fill(".wd-zustand textarea", "Wartung durchgeführt <&> alles gut");
-    assert.equal((await states())[0], "done");
     const xml = await page.evaluate(() => DDCWerkbank.wartung.text());
     assert.match(xml, /<\/facility>\s*<ispComment>\s*<title>Wartung<\/title>\s*<body>Wartung durchgeführt &lt;&amp;&gt; alles gut<\/body>\s*<\/ispComment>\s*<\/Isp>/);
     assert.deepEqual(errors, []);
