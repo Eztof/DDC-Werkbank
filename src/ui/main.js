@@ -18,7 +18,6 @@ import "./views/program.js";
 import "./views/findings-sched.js";
 import "./wartung/generator.js";
 import "./wartung/anlagen.js";
-import "./views/compare.js";
 import "./wartung/wtgml.js";
 import "./wartung/view.js";
 import "./wartung/link.js";

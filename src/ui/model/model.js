@@ -159,7 +159,7 @@ export function newCentral(format, label, fileName) {
     modules: [],           // {addr,type,name,active,hw,fw,pinCount,kinds}
     nodes: new Map(), edges: [], groups: new Map(),
     pins: [], schedules: [], calendars: [], messages: [], alarms: [], bacnet: [], users: [],
-    trends: [], hours: [], flat: new Map(), findings: [], notes: [],
+    trends: [], hours: [], findings: [], notes: [],
     inMap: new Map(), outMap: new Map()
   };
 }

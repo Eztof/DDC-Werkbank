@@ -1,6 +1,0 @@
-/* ---------- Vergleich ---------- */
-.diff-a { color: var(--err); }
-.diff-b { color: var(--ok); }
-td.diff-a, td.diff-b { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
-tr.grp-row td { background: var(--card-3) !important; font-weight: 600; font-size: 12px; color: var(--text-2); }
-

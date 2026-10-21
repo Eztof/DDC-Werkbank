@@ -27,7 +27,7 @@ export const ANALYSES = registry("Auswertungen");
 export const CHECKS = registry("Prüfungen");
 
 /* Ansichten (linke Navigation)
-   { id, label, icon, group (0 Start · 1 Zentrale · 2 Doku/Vergleich · 3 Online),
+   { id, label, icon, group (0 Start · 1 Zentrale · 2 Doku · 3 Online),
      needsC: braucht eine geladene Zentrale, compact: volle Breite,
      render(root, C, opts), badge(C) → [{ n, cls, title }] | null,
      scrollKey() → Schlüssel für gemerkte Scrollposition }  */

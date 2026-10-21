@@ -27,7 +27,7 @@ test("große Sicherung: Laden und Ansichten in vertretbarer Zeit", async () => {
     await page.setInputFiles("#fileIn", file);
     await page.waitForFunction(() => document.body.innerText.includes("Lasttest Klinikum"), null, { timeout: 60000 });
     const times = { laden: Date.now() - t };
-    for (const v of ["overview", "points", "program", "findings", "sched", "wartung", "compare", "online"]) {
+    for (const v of ["overview", "points", "program", "findings", "sched", "wartung", "online"]) {
       t = Date.now();
       await page.click(`.nav-item[data-view='${v}']`);
       await page.evaluate(() => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0))));

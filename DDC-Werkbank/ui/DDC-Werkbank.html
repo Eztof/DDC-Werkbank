@@ -505,12 +505,6 @@ svg defs .ah { fill: var(--e-norm); }
 .rail-item.st-ok:hover, .rail-item.st-ok.on { background: color-mix(in srgb, var(--ok) 13%, transparent); }
 .rail-item.st-mangel:hover, .rail-item.st-mangel.on { background: color-mix(in srgb, var(--err) 11%, transparent); }
 .rail-item.st-ok, .rail-item.st-mangel { margin-bottom: 1px; }
-/* ---------- Vergleich ---------- */
-.diff-a { color: var(--err); }
-.diff-b { color: var(--ok); }
-td.diff-a, td.diff-b { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
-tr.grp-row td { background: var(--card-3) !important; font-weight: 600; font-size: 12px; color: var(--text-2); }
-
 /* ---------- Druck ---------- */
 @media print {
   body { overflow: visible; background: #fff; }
@@ -1443,7 +1437,6 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       users: [],
       trends: [],
       hours: [],
-      flat: /* @__PURE__ */ new Map(),
       findings: [],
       notes: [],
       inMap: /* @__PURE__ */ new Map(),
@@ -1680,7 +1673,6 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     buildPinsD4(C);
     extractSystemD4(C, invoke);
     extractExtrasD4(C);
-    flattenD4(C);
     if (!M.name) M.name = label && !/^(datasave|param_backup)$/i.test(label) ? label : M.location && M.location !== M.stationType ? M.location : M.stationType ? M.stationType + (M.centralAddr ? " · Z" + M.centralAddr : "") : label;
     M.format = /^BMR/i.test(M.stationType) ? "BMR · D4PML " + M.d4pmlVersion : (M.stationType || "DDC4000") + " · D4PML " + M.d4pmlVersion;
     return C;
@@ -2056,67 +2048,6 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     C.trends = C.bacnet.filter((b) => b.fb === "FB_TR");
     C.schedules.sort((a, b) => natCmp(a.nodeId, b.nodeId));
   }
-  var VOLATILE = {
-    S238: "5101 5105 5110 5111 5112 5113 5169 5205 5207 5211 5255 i011 i012 i022",
-    S066: "2 3",
-    S337: "5101 5105 5110",
-    H614: "3 5 6 24",
-    H613: "7 8",
-    H601: "2 6 11 21 22",
-    H901: "2 9 19 27 28 30",
-    M: "6",
-    T: "t Tstart",
-    L: "1",
-    S336: "5570 5573 5574",
-    S116: "j",
-    S118: "actValue nxtValue rTime Info BACInfo",
-    S325: "32",
-    S335: "4",
-    S322: "5537 5538",
-    CAI: "b",
-    CAO: "Y y",
-    CDI: "k",
-    CDO: "K k"
-  };
-  var VOL_SET = Object.fromEntries(Object.entries(VOLATILE).map(([k, v]) => [k, new Set(v.split(" "))]));
-  var SY_KEEP = /* @__PURE__ */ new Set(["SY_BACDev", "SY_Network", "SY_Hosts", "SY_Email", "SY_SMTP", "SY_I18N", "SY_BMR400"]);
-  function flattenD4(C) {
-    const F = C.flat;
-    const put = (key, nid, label, val) => F.set(key, { nid, label, val });
-    for (const n of C.nodes.values()) {
-      if (n.ghost) continue;
-      if (n.type.startsWith("SY_") && !SY_KEEP.has(n.type)) continue;
-      if (n.name) put(n.id + "|Text", n.id, "Bezeichnung", n.name);
-      const doParas = (paras, sub, subType) => {
-        for (const p of paras) {
-          const vol = VOL_SET[n.type] && VOL_SET[n.type].has(p.addr) || subType && VOL_SET[subType] && VOL_SET[subType].has(p.addr) || sub === "CNetStat.01";
-          const base = n.id + "|" + (sub ? sub + "/" : "") + p.addr;
-          const lbl = (sub ? sub + " · " : "") + (p.texts[0] || portLabel(n.type, p.addr));
-          if (p.texts[0]) put(base + "|Text", n.id, lbl + " (Text)", p.texts[0]);
-          const v = pv(p);
-          if (!vol && v && v.type !== "Source" && v.type !== "Bool" && !v.deleted && !v.invalid && v.unit !== "71" && p.addr !== "password")
-            put(base, n.id, lbl, valText(v, p.stateTexts));
-          for (const fo of p.funcObjs) {
-            if (fo.type === "FSource") fo.sources.forEach((sv, i) => put(base + "|src" + (i || ""), n.id, lbl + " ◄ Quelle", sv.replace(/\s+/g, " ").trim()));
-            else if (fo.type === "FMSG" || fo.type === "F017") continue;
-            else for (const fp of fo.paras) {
-              if (fo.type === "FB_TR" && /^(12|13|14)$/.test(fp.addr)) continue;
-              const fv = pv(fp);
-              if (fv && fv.type !== "Source" && !fv.deleted && fv.type !== "Bool") put(base + "|" + fo.addr + "/" + fp.addr, n.id, lbl + " · " + fo.type + " " + fp.addr, valText(fv));
-            }
-          }
-          for (const sch of p.schedules) put(base + "|sched", n.id, lbl + " · Zeitprogramm", schedText(sch));
-        }
-      };
-      doParas(n.paras, "", "");
-      for (const sub of n.subObjs) {
-        doParas(sub.paras, sub.addr, sub.type);
-        sub.schedules.forEach((sch, i) => put(n.id + "|" + sub.addr + "|sched" + (i || ""), n.id, sub.addr + " · Zeitprogramm", schedText(sch)));
-      }
-      n.schedules.forEach((sch, i) => put(n.id + "|sched" + (i || ""), n.id, "Zeitprogramm", schedText(sch)));
-      if (n.calendar.length) put(n.id + "|cal", n.id, "Kalender", n.calendar.join("; "));
-    }
-  }
   var WD = { mo: "Mo", tu: "Di", we: "Mi", th: "Do", fr: "Fr", sa: "Sa", su: "So", ho: "Feiertag", sp: "Sondertag" };
   function schedText(days) {
     return (days || []).map((d) => (WD[d.weekday] || d.weekday) + " " + d.entries.map((e) => e.time + "=" + e.value).join(" ")).join(" · ");
@@ -2374,21 +2305,11 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         if (p.kind === "TX" && /^13\d\d$/.test(p.base) && p.GT) C.system.push({ group: "Neustarts (Protokoll)", k: "P" + p.base, v: p.GT });
         else if (p.kind === "TX" && val && val !== "---" && /^(1419|21[3-9]\d)$/.test(p.base)) C.system.push({ group: "Rufnummern / Ziele", k: "P" + p.P, v: val });
         else if ((p.kind === "AX" || p.kind === "DS" || p.kind === "TX") && val !== "" && val !== "---") C.system.push({ group: "Parameter Grundgerät", k: "P" + p.P + " " + (p.name || ""), v: val + unitTxt });
-        flatPut(C, p, t);
         continue;
       }
-      if (["i", "Q", "U"].includes(t.type) && (p.kind === "DM" || p.kind === "DS")) {
-        flatPut(C, p, t);
-        continue;
-      }
-      if ((t.type === "L" || t.type === "S") && p.kind === "DM") {
-        flatPut(C, p, t);
-        continue;
-      }
-      if (t.type === "P" && p.kind === "AI" && p.base === "899") {
-        flatPut(C, p, t);
-        continue;
-      }
+      if (["i", "Q", "U"].includes(t.type) && (p.kind === "DM" || p.kind === "DS")) continue;
+      if ((t.type === "L" || t.type === "S") && p.kind === "DM") continue;
+      if (t.type === "P" && p.kind === "AI" && p.base === "899") continue;
       const n = getNode(t, p.kreis, p.kind !== "V" || !t.pin);
       const portAddr = t.port || (p.kind === "V" ? null : p.kind === "T" ? "TZ" : "Wert");
       const lbl = p.name;
@@ -2431,7 +2352,6 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       } else if (p.kind === "DS" && t.type !== "RK") {
         addPara(n, "W", lbl || "Stellung", f.W);
       }
-      flatPut(C, p, t);
     }
     const DAYS = ["mo", "tu", "we", "th", "fr", "sa", "su"];
     for (const sc of scheds) {
@@ -2452,7 +2372,6 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       n.schedules.push(days);
       const dm = params.find((p) => p.kreis === sc.kreis && p.base === "N" && p.inst === sc.nr);
       n.name = dm && dm.GT || dm && dm.K || "Wochenprogramm " + sc.nr;
-      C.flat.set("K" + sc.kreis + "|N" + sc.nr + "|sched", { nid: n.id, label: n.name, val: schedText(days) });
     }
     for (const p of params) if (p.base === "5115" && isRK(p.kreis) && p.f.W) {
       const nid = "0:N" + parseInt(p.f.W, 10);
@@ -2577,17 +2496,6 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       else expr = "(" + expr + ") " + (x.ref.op === "or" ? "OR" : "AND") + " " + term;
     });
     return expr;
-  }
-  function flatPut(C, p, t) {
-    const f = p.f, base = "K" + p.kreis + "|" + p.P;
-    const nid = C.nodes.has(t.id) ? t.id : null;
-    const lbl = (p.name || "") + " (P " + p.P + (p.kreis ? ", Kreis " + p.kreis : "") + ")";
-    for (const k of ["W", "V1", "V2", "V3", "V4", "TV", "TZ", "LD", "LB", "F", "E", "UG", "OG", "INV"]) {
-      if (f[k] == null || f[k] === "" || f[k] === "---") continue;
-      if (p.kind === "TX" && /^13\d\d$/.test(p.base)) continue;
-      C.flat.set(base + "|" + k, { nid, label: lbl + " · " + k, val: f[k] });
-    }
-    if (p.GT) C.flat.set(base + "|GT", { nid, label: lbl + " · Text", val: p.GT });
   }
   FORMATS.add({
     id: "ddc3000",
@@ -3006,7 +2914,6 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     opts: {},
     vs: {},
     wd: {},
-    cmp: {},
     theme: store.get("theme", "system"),
     collapsed: store.get("navCollapsed", false)
   };
@@ -8937,7 +8844,6 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     alert: "M12 4 3 19.5h18zM12 10v4.5M12 17v.5",
     clock: "M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM12 7.5V12l3 2",
     doc: "M7 3.5h7l4.5 4.5v12.5H7zM14 3.5V8h4.5M9.5 12.5h6M9.5 15.5h6M9.5 9.5h2",
-    compare: "M8 4v16M16 4v16M4 8h4M4 12h4M16 9h4M16 15h4",
     folder: "M3.5 6.5h6l2 2h9v10.5h-17z",
     file: "M6.5 3.5h7.5l4 4v13h-11.5zM14 3.5v4h4",
     sun: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4",
@@ -9282,7 +9188,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
       h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
-      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.4.3")
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.4.4")
     ));
   }
   function renderTitle() {
@@ -9599,7 +9505,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           "div",
           null,
           h("h2", null, "DDC-Werkbank"),
-          h("p", null, "Datensicherungen von Kieback&Peter öffnen, Klemmen und Programm verstehen, Befunde finden, Zeitprogramme und Meldungen prüfen, zwei Stände vergleichen und die Wartungsdokumentation als WTGML erzeugen – alles in einer Datei, ohne Installation und ohne Internet.")
+          h("p", null, "Datensicherungen von Kieback&Peter öffnen, Klemmen und Programm verstehen, Befunde finden, Zeitprogramme und Meldungen prüfen und die Wartungsdokumentation als WTGML erzeugen – alles in einer Datei, ohne Installation und ohne Internet.")
         )
       ));
       const drop = h(
@@ -9899,163 +9805,6 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     detail: "Device " + (C.meta.bacnetDevId || "–") + (C.trends.length ? " · " + C.trends.length + " Trends" : ""),
     onclick: () => go2("sched", { tab: "bac" })
   } });
-
-  // src/ui/views/compare.js
-  function cmpGroupLabel(A, B, nid, key) {
-    const n = nid && (A.nodes.get(nid) || B.nodes.get(nid)) || null;
-    const C = n ? A.nodes.get(nid) ? A : B : A;
-    if (n) return { id: nid, label: (n.name ? n.name + " · " : "") + n.addr, place: n.pin ? "Klemme " + n.pin.klemme : nodePlace(C, n) };
-    const m = key.match(/^K(\d+)\|([^|]+)/);
-    if (m) return { id: "K" + m[1] + "|" + m[2].split("/")[0], label: "Parameter " + m[2].split("/")[0], place: m[1] === "0" ? "Grundgerät" : "Kreis " + m[1] };
-    return { id: key.split("|")[0], label: key.split("|")[0], place: "" };
-  }
-  function diffCentrals(A, B) {
-    const keys = /* @__PURE__ */ new Set([...A.flat.keys(), ...B.flat.keys()]);
-    const rows = [];
-    for (const k of keys) {
-      const a = A.flat.get(k), b = B.flat.get(k);
-      const va = a ? String(a.val) : null, vb = b ? String(b.val) : null;
-      if (va === vb) continue;
-      const st = a && b ? "chg" : a ? "onlyA" : "onlyB";
-      const g = cmpGroupLabel(A, B, (a || b).nid, k);
-      rows.push({ key: k, st, label: (a || b).label, va, vb, g, isText: /\|Text$|\(Text\)$/.test(k) || / · Text$/.test((a || b).label) });
-    }
-    rows.sort((x, y) => natCmp(x.g.place, y.g.place) || natCmp(x.g.id, y.g.id) || natCmp(x.key, y.key));
-    return rows;
-  }
-  VIEWS.add({
-    id: "compare",
-    label: "Vergleich",
-    icon: "compare",
-    group: 2,
-    order: 220,
-    render(root) {
-      const S = APP.cmp;
-      if (!S.show) Object.assign(S, { show: /* @__PURE__ */ new Set(["chg", "onlyA", "onlyB"]), q: "", noText: false });
-      root.appendChild(pageHead("Vergleich", "Zwei Sicherungen gegenüberstellen – was wurde zwischen den Ständen geändert?"));
-      const body = h("div", { class: "page-body" });
-      root.appendChild(body);
-      if (APP.centrals.length < 2) {
-        body.appendChild(h("div", { class: "card" }, emptyState(
-          "compare",
-          "Für den Vergleich werden zwei Sicherungen gebraucht",
-          "Zum Beispiel die Sicherung vor und nach einer Inbetriebnahme oder Wartung derselben Zentrale. Es werden Parameter, Texte, Verknüpfungen und Zeitprogramme verglichen; Messwerte und Zähler bleiben außen vor.",
-          h("div", { class: "row", style: { justifyContent: "center", marginTop: "14px" } }, btn("Dateien öffnen", "file", () => $("#fileIn").click(), "accent"), btn("Ordner öffnen", "folder", () => $("#dirIn").click()))
-        )));
-        return;
-      }
-      if (!byCid(S.a)) S.a = APP.cur || APP.centrals[0].cid;
-      if (!byCid(S.b) || S.b === S.a) {
-        const A0 = byCid(S.a);
-        const same = APP.centrals.find((c) => c.cid !== S.a && c.format === A0.format && c.meta.centralAddr === A0.meta.centralAddr);
-        S.b = (same || APP.centrals.find((c) => c.cid !== S.a)).cid;
-      }
-      const A = byCid(S.a), B = byCid(S.b);
-      const opts = APP.centrals.map((c) => [c.cid, stationLabel(c) + (c.meta.stamp && !stationLabel(c).includes(c.meta.stamp) ? " · " + c.meta.stamp : "")]);
-      body.appendChild(h(
-        "div",
-        { class: "card", style: { marginBottom: "12px" } },
-        h(
-          "div",
-          { class: "row" },
-          h("span", { class: "pill err" }, "A"),
-          selectEl(opts, S.a, (v) => {
-            S.a = v;
-            renderAll();
-          }),
-          btn(null, "swap", () => {
-            [S.a, S.b] = [S.b, S.a];
-            renderAll();
-          }, "subtle", "A und B tauschen"),
-          h("span", { class: "pill ok" }, "B"),
-          selectEl(opts, S.b, (v) => {
-            S.b = v;
-            renderAll();
-          })
-        ),
-        A.format !== B.format ? h("div", { class: "infobar warn", style: { marginTop: "12px" } }, icon("alert"), h("div", { class: "small" }, "Die beiden Sicherungen haben unterschiedliche Formate – ein Vergleich ist kaum aussagekräftig.")) : A.meta.centralAddr !== B.meta.centralAddr ? h("div", { class: "infobar inf", style: { marginTop: "12px" } }, icon("info"), h("div", { class: "small" }, "Unterschiedliche Zentralen (" + A.meta.centralAddr + " / " + B.meta.centralAddr + ") – sinnvoll z. B. für baugleiche Anlagen.")) : null
-      ));
-      if (A === B) {
-        body.appendChild(emptyState("compare", "A und B sind dieselbe Sicherung"));
-        return;
-      }
-      const rows = diffCentrals(A, B);
-      const cnt = { chg: 0, onlyA: 0, onlyB: 0 };
-      rows.forEach((r) => cnt[r.st]++);
-      const lbl = { chg: "geändert", onlyA: "nur in A", onlyB: "nur in B" };
-      const cls = { chg: "warn", onlyA: "err", onlyB: "ok" };
-      const wrap = h("div");
-      body.appendChild(h(
-        "div",
-        { class: "row", style: { marginBottom: "12px" } },
-        ...["chg", "onlyA", "onlyB"].map((k) => h(
-          "span",
-          { class: "chip" + (S.show.has(k) ? " on" : ""), onclick: (e) => {
-            S.show.has(k) ? S.show.delete(k) : S.show.add(k);
-            e.currentTarget.classList.toggle("on");
-            draw();
-          } },
-          h("span", { class: "sw-dot", style: { background: `var(--${cls[k]})` } }),
-          lbl[k],
-          h("span", { class: "n" }, cnt[k])
-        )),
-        h("span", { class: "sep" }),
-        chk("Texte ausblenden", S.noText, (v) => {
-          S.noText = v;
-          draw();
-        }),
-        searchBox("Parameter, Baustein, Wert …", S.q, (v) => {
-          S.q = v;
-          draw();
-        }),
-        h("span", { class: "grow" }),
-        btn("CSV", "download", () => download(safeName(A.meta.name) + "_Vergleich.csv", csv([["Status", "Ort", "Baustein", "Parameter", "A: " + A.meta.name, "B: " + B.meta.name], ...filtered().map((r) => [lbl[r.st], r.g.place, r.g.label, r.label, r.va ?? "", r.vb ?? ""])]), "text/csv;charset=utf-8"))
-      ));
-      body.appendChild(wrap);
-      function filtered() {
-        const q = norm(S.q);
-        return rows.filter((r) => S.show.has(r.st) && !(S.noText && r.isText) && (!q || norm([r.g.label, r.g.place, r.label, r.va, r.vb].join(" ")).includes(q)));
-      }
-      function draw() {
-        wrap.innerHTML = "";
-        const list = filtered();
-        if (!rows.length) {
-          wrap.appendChild(h("div", { class: "card" }, emptyState("check", "Keine Unterschiede", "Parameter, Texte und Verknüpfungen sind in beiden Sicherungen gleich.")));
-          return;
-        }
-        if (!list.length) {
-          wrap.appendChild(emptyState("filter", "Keine Unterschiede für diesen Filter"));
-          return;
-        }
-        const t = h("table", { class: "grid card-t" });
-        t.appendChild(h("thead", null, h("tr", null, h("th", { style: { width: "110px" } }, "Status"), h("th", null, "Parameter"), h("th", null, "A · " + trunc(A.meta.name, 30)), h("th", null, "B · " + trunc(B.meta.name, 30)))));
-        const tb = h("tbody");
-        let last = null, n = 0;
-        for (const r of list) {
-          if (++n > 2500) {
-            tb.appendChild(h("tr", null, h("td", { colspan: 4, class: "muted" }, "… " + (list.length - 2500) + " weitere – bitte filtern")));
-            break;
-          }
-          if (r.g.id !== last) {
-            last = r.g.id;
-            const C = A.nodes.has(r.g.id) ? A : B.nodes.has(r.g.id) ? B : null;
-            tb.appendChild(h("tr", { class: "grp-row" }, h("td", { colspan: 4 }, C ? h("a", { onclick: () => openNode(C.cid, r.g.id) }, r.g.label) : r.g.label, r.g.place ? h("span", { class: "faint" }, "  ·  " + r.g.place) : null)));
-          }
-          tb.appendChild(h(
-            "tr",
-            null,
-            h("td", null, h("span", { class: "pill " + cls[r.st] }, lbl[r.st])),
-            h("td", { class: "small" }, r.label),
-            h("td", { class: "diff-a" }, r.va ?? h("span", { class: "faint" }, "–")),
-            h("td", { class: "diff-b" }, r.vb ?? h("span", { class: "faint" }, "–"))
-          ));
-        }
-        t.appendChild(tb);
-        wrap.appendChild(h("div", { class: "card tight" }, t));
-      }
-      draw();
-    }
-  });
 
   // src/ui/wartung/air.js
   var AIR_DEFAULT = ["VSR", "BSK"];
@@ -10660,7 +10409,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
 
   // src/ui/main.js
   var api = {
-    version: "0.4.3",
+    version: "0.4.4",
     register: ALL,
     state: APP,
     curC,

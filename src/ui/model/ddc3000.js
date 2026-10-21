@@ -1,7 +1,6 @@
 import { natCmp } from "../core/util.js";
 import { FORMATS } from "../core/ext.js";
 import { edgeLabel, edgesIn, edgesOut, indexEdges, newCentral, nodePlace, pv } from "./model.js";
-import { schedText } from "./d4pml.js";
 
 /* =========================================================================
    DDC3000-Parser (.wwf – RTF-verpackte Parameterliste)
@@ -172,13 +171,12 @@ export function parseDDC3000(text, label, fileName) {
       if (p.kind === "TX" && /^13\d\d$/.test(p.base) && p.GT) C.system.push({ group: "Neustarts (Protokoll)", k: "P" + p.base, v: p.GT });
       else if (p.kind === "TX" && val && val !== "---" && /^(1419|21[3-9]\d)$/.test(p.base)) C.system.push({ group: "Rufnummern / Ziele", k: "P" + p.P, v: val });
       else if ((p.kind === "AX" || p.kind === "DS" || p.kind === "TX") && val !== "" && val !== "---") C.system.push({ group: "Parameter Grundgerät", k: "P" + p.P + " " + (p.name || ""), v: val + unitTxt });
-      flatPut(C, p, t);
       continue;
     }
     /* Optionale Knoten nur, wenn sie wirklich etwas tun */
-    if (["i", "Q", "U"].includes(t.type) && (p.kind === "DM" || p.kind === "DS")) { flatPut(C, p, t); continue; }
-    if ((t.type === "L" || t.type === "S") && p.kind === "DM") { flatPut(C, p, t); continue; }
-    if (t.type === "P" && p.kind === "AI" && p.base === "899") { flatPut(C, p, t); continue; }
+    if (["i", "Q", "U"].includes(t.type) && (p.kind === "DM" || p.kind === "DS")) continue;
+    if ((t.type === "L" || t.type === "S") && p.kind === "DM") continue;
+    if (t.type === "P" && p.kind === "AI" && p.base === "899") continue;
     const n = getNode(t, p.kreis, p.kind !== "V" || !t.pin);
     const portAddr = t.port || (p.kind === "V" ? null : (p.kind === "T" ? "TZ" : "Wert"));
     const lbl = p.name;
@@ -217,7 +215,6 @@ export function parseDDC3000(text, label, fileName) {
     } else if (p.kind === "DS" && t.type !== "RK") {
       addPara(n, "W", lbl || "Stellung", f.W);
     }
-    flatPut(C, p, t);
   }
 
   /* Wochenprogramme */
@@ -237,7 +234,6 @@ export function parseDDC3000(text, label, fileName) {
     n.schedules.push(days);
     const dm = params.find(p => p.kreis === sc.kreis && p.base === "N" && p.inst === sc.nr);
     n.name = (dm && dm.GT) || (dm && dm.K) || ("Wochenprogramm " + sc.nr);
-    C.flat.set("K" + sc.kreis + "|N" + sc.nr + "|sched", { nid: n.id, label: n.name, val: schedText(days) });
   }
   /* RK: Auswahl Wochenprogramm (5115) als Verbindung */
   for (const p of params) if (p.base === "5115" && isRK(p.kreis) && p.f.W) {
@@ -323,17 +319,6 @@ function d3Formula(refs) {
     else expr = "(" + expr + ") " + (x.ref.op === "or" ? "OR" : "AND") + " " + term;
   });
   return expr;
-}
-function flatPut(C, p, t) {
-  const f = p.f, base = "K" + p.kreis + "|" + p.P;
-  const nid = C.nodes.has(t.id) ? t.id : null;
-  const lbl = (p.name || "") + " (P " + p.P + (p.kreis ? ", Kreis " + p.kreis : "") + ")";
-  for (const k of ["W", "V1", "V2", "V3", "V4", "TV", "TZ", "LD", "LB", "F", "E", "UG", "OG", "INV"]) {
-    if (f[k] == null || f[k] === "" || f[k] === "---") continue;
-    if (p.kind === "TX" && /^13\d\d$/.test(p.base)) continue;
-    C.flat.set(base + "|" + k, { nid, label: lbl + " · " + k, val: f[k] });
-  }
-  if (p.GT) C.flat.set(base + "|GT", { nid, label: lbl + " · Text", val: p.GT });
 }
 
 

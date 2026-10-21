@@ -5,7 +5,7 @@
 import { store } from "./util.js";
 
 export const APP = {
-  centrals: [], cur: null, templates: [], view: "start", opts: {}, vs: {}, wd: {}, cmp: {},
+  centrals: [], cur: null, templates: [], view: "start", opts: {}, vs: {}, wd: {},
   theme: store.get("theme", "system"), collapsed: store.get("navCollapsed", false)
 };
 export const curC = () => APP.centrals.find(c => c.cid === APP.cur) || null;

@@ -29,7 +29,7 @@ src/ui/                 Oberfläche (wird zu EINER HTML-Datei gebaut)
     findings.js         Befunde aus allen Prüfungen, Prüfungen ein-/ausschalten
     checks/             je Thema eine Datei mit Prüfungen (melden sich in CHECKS an)
   shell/                Fenster-Gerüst, Navigation, Suche, Laden
-  views/                Ansichten: Start/Übersicht, Datenpunkte, Programm, Befunde/Zeit, Vergleich, Online
+  views/                Ansichten: Start/Übersicht, Datenpunkte, Programm, Befunde/Zeit, Online
   wartung/              Wartungsdoku: Generator, Anlagen, WTGML, Ansicht, Verknüpfung, Zu-/Abluft,
                         in-datenpunkten.js (Doku-Spalte/Filter/Knopf in den Datenpunkten)
   styles/               CSS, in Nummern-Reihenfolge zusammengefügt

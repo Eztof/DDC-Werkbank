@@ -21,7 +21,7 @@ VIEWS.add({
     const has = APP.centrals.length > 0;
     if (!has) body.appendChild(h("div", { class: "hero" }, logoSvg("logo"),
       h("div", null, h("h2", null, "DDC-Werkbank"),
-        h("p", null, "Datensicherungen von Kieback&Peter öffnen, Klemmen und Programm verstehen, Befunde finden, Zeitprogramme und Meldungen prüfen, zwei Stände vergleichen und die Wartungsdokumentation als WTGML erzeugen – alles in einer Datei, ohne Installation und ohne Internet."))));
+        h("p", null, "Datensicherungen von Kieback&Peter öffnen, Klemmen und Programm verstehen, Befunde finden, Zeitprogramme und Meldungen prüfen und die Wartungsdokumentation als WTGML erzeugen – alles in einer Datei, ohne Installation und ohne Internet."))));
     const drop = h("div", { class: "drop" + (has ? " small" : "") },
       icon("upload", "big"),
       h("div", null, h("div", { class: "t" }, has ? "Weitere Sicherungen oder eine WTGML-Vorlage hinzufügen" : "Sicherungen hierher ziehen"),

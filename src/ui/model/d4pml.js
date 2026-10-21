@@ -1,6 +1,6 @@
 import { fmtNum, fmtUnix, kid, kids, natCmp, textOf } from "../core/util.js";
 import { FORMATS } from "../core/ext.js";
-import { FB_TYPES, FUNC_NAMES, edgesIn, edgesOut, indexEdges, isOutputKind, newCentral, nodePlace, pe, portLabel, pv, valText } from "./model.js";
+import { FB_TYPES, FUNC_NAMES, edgesIn, edgesOut, indexEdges, isOutputKind, newCentral, nodePlace, pe, pv, valText } from "./model.js";
 
 /* =========================================================================
    D4PML-Parser (DDC4000 datasave.xml, BMR/DDC420 param_backup.d4pml)
@@ -134,7 +134,6 @@ export function parseD4PML(text, label, fileName) {
   buildPinsD4(C);
   extractSystemD4(C, invoke);
   extractExtrasD4(C);
-  flattenD4(C);
   if (!M.name) M.name = (label && !/^(datasave|param_backup)$/i.test(label)) ? label : (M.location && M.location !== M.stationType ? M.location : (M.stationType ? M.stationType + (M.centralAddr ? " · Z" + M.centralAddr : "") : label));
   M.format = /^BMR/i.test(M.stationType) ? "BMR · D4PML " + M.d4pmlVersion : (M.stationType || "DDC4000") + " · D4PML " + M.d4pmlVersion;
   return C;
@@ -383,52 +382,6 @@ function extractExtrasD4(C) {
   C.schedules.sort((a, b) => natCmp(a.nodeId, b.nodeId));
 }
 
-/* ---------- Abflachen für den Vergleich zweier Sicherungen ---------- */
-const VOLATILE = {
-  S238: "5101 5105 5110 5111 5112 5113 5169 5205 5207 5211 5255 i011 i012 i022", S066: "2 3", S337: "5101 5105 5110",
-  H614: "3 5 6 24", H613: "7 8", H601: "2 6 11 21 22", H901: "2 9 19 27 28 30", M: "6", T: "t Tstart", L: "1",
-  S336: "5570 5573 5574", S116: "j", S118: "actValue nxtValue rTime Info BACInfo", S325: "32", S335: "4", S322: "5537 5538",
-  CAI: "b", CAO: "Y y", CDI: "k", CDO: "K k"
-};
-const VOL_SET = Object.fromEntries(Object.entries(VOLATILE).map(([k, v]) => [k, new Set(v.split(" "))]));
-const SY_KEEP = new Set(["SY_BACDev", "SY_Network", "SY_Hosts", "SY_Email", "SY_SMTP", "SY_I18N", "SY_BMR400"]);
-function flattenD4(C) {
-  const F = C.flat;
-  const put = (key, nid, label, val) => F.set(key, { nid, label, val });
-  for (const n of C.nodes.values()) {
-    if (n.ghost) continue;
-    if (n.type.startsWith("SY_") && !SY_KEEP.has(n.type)) continue;
-    if (n.name) put(n.id + "|Text", n.id, "Bezeichnung", n.name);
-    const doParas = (paras, sub, subType) => {
-      for (const p of paras) {
-        const vol = (VOL_SET[n.type] && VOL_SET[n.type].has(p.addr)) || (subType && VOL_SET[subType] && VOL_SET[subType].has(p.addr)) || (sub === "CNetStat.01");
-        const base = n.id + "|" + (sub ? sub + "/" : "") + p.addr;
-        const lbl = (sub ? sub + " · " : "") + (p.texts[0] || portLabel(n.type, p.addr));
-        if (p.texts[0]) put(base + "|Text", n.id, lbl + " (Text)", p.texts[0]);
-        const v = pv(p);
-        if (!vol && v && v.type !== "Source" && v.type !== "Bool" && !v.deleted && !v.invalid && v.unit !== "71" && p.addr !== "password")
-          put(base, n.id, lbl, valText(v, p.stateTexts));
-        for (const fo of p.funcObjs) {
-          if (fo.type === "FSource") fo.sources.forEach((sv, i) => put(base + "|src" + (i || ""), n.id, lbl + " ◄ Quelle", sv.replace(/\s+/g, " ").trim()));
-          else if (fo.type === "FMSG" || fo.type === "F017") continue;
-          else for (const fp of fo.paras) {
-            if (fo.type === "FB_TR" && /^(12|13|14)$/.test(fp.addr)) continue;
-            const fv = pv(fp);
-            if (fv && fv.type !== "Source" && !fv.deleted && fv.type !== "Bool") put(base + "|" + fo.addr + "/" + fp.addr, n.id, lbl + " · " + fo.type + " " + fp.addr, valText(fv));
-          }
-        }
-        for (const sch of p.schedules) put(base + "|sched", n.id, lbl + " · Zeitprogramm", schedText(sch));
-      }
-    };
-    doParas(n.paras, "", "");
-    for (const sub of n.subObjs) {
-      doParas(sub.paras, sub.addr, sub.type);
-      sub.schedules.forEach((sch, i) => put(n.id + "|" + sub.addr + "|sched" + (i || ""), n.id, sub.addr + " · Zeitprogramm", schedText(sch)));
-    }
-    n.schedules.forEach((sch, i) => put(n.id + "|sched" + (i || ""), n.id, "Zeitprogramm", schedText(sch)));
-    if (n.calendar.length) put(n.id + "|cal", n.id, "Kalender", n.calendar.join("; "));
-  }
-}
 export const WD = { mo: "Mo", tu: "Di", we: "Mi", th: "Do", fr: "Fr", sa: "Sa", su: "So", ho: "Feiertag", sp: "Sondertag" };
 export function schedText(days) { return (days || []).map(d => (WD[d.weekday] || d.weekday) + " " + d.entries.map(e => e.time + "=" + e.value).join(" ")).join(" · "); }
 

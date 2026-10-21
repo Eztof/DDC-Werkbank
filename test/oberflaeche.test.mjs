@@ -20,7 +20,8 @@ test("alle Ansichten öffnen ohne Fehler", async () => {
     await page.setInputFiles("#fileIn", FIXTURE);
     await page.waitForFunction(() => document.body.innerText.includes("Testzentrale Halle"));
     const n = (await page.$$(".nav-item")).length;
-    assert.ok(n >= 9, "Navigation unvollständig: " + n);
+    assert.ok(n >= 8, "Navigation unvollständig: " + n);
+    assert.equal(await page.$$eval(".nav-item", els => els.some(e => /Vergleich/.test(e.textContent))), false, "Vergleich noch in der Navigation");
     for (let i = 0; i < n; i++) {
       const item = (await page.$$(".nav-item"))[i];
       const label = (await item.textContent()).trim();
