@@ -3,7 +3,7 @@ import { APP } from "../core/state.js";
 import { FORMATS, OVERVIEW_TILES, VIEWS } from "../core/ext.js";
 import { safely } from "../core/registry.js";
 import { $, copyText, h, trunc } from "../core/util.js";
-import { btn, findingsCount, icon, kbar, logoSvg, pageHead, removeCentral, stationSub, toast } from "../shell/shell.js";
+import { btn, centralTitle, findingsCount, icon, kbar, logoSvg, pageHead, removeCentral, stationSub, toast } from "../shell/shell.js";
 import { activeFindings } from "../core/persist.js";
 import { findingRow } from "./findings-sched.js";
 import { WDOC, wdocInfo } from "../wartung/wtgml.js";
@@ -41,8 +41,8 @@ VIEWS.add({
           h("div", { class: "station" },
             h("div", { class: "ic" }, icon(C.format === "DDC3000" ? "cpu" : "station")),
             h("div", { class: "grow", style: { minWidth: 0 } },
-              h("div", { class: "nm ellip" }, m.name),
-              h("div", { class: "meta" }, [m.format, m.centralAddr ? "Zentrale " + m.centralAddr : "", m.applRev ? "FW " + m.applRev : ""].filter(Boolean).join(" · ")),
+              h("div", { class: "nm ellip", title: centralTitle(C) }, centralTitle(C)),
+              h("div", { class: "meta" }, [m.stationName && m.name !== m.stationName ? m.name : "", m.format, m.centralAddr ? "Zentrale " + m.centralAddr : "", m.applRev ? "FW " + m.applRev : ""].filter(Boolean).join(" · ")),
               h("div", { class: "meta ellip", title: C.filePath || C.fileName }, (C.filePath || C.fileName) + (m.stamp ? " · Stand " + m.stamp : "")))),
           h("div", { class: "row", style: { marginTop: "12px" } },
             h("span", { class: "pill" }, used + " Klemmen belegt"),
@@ -86,7 +86,7 @@ VIEWS.add({
   needsC: true,
   render(root, C) {
     const m = C.meta;
-    root.appendChild(pageHead(m.name, stationSub(C), [
+    root.appendChild(pageHead(centralTitle(C), stationSub(C), [
       btn("Bericht drucken", "print", () => window.print()),
       btn("Steckbrief kopieren", "copy", () => copyText(stationProfileText(C)).then(() => toast("Steckbrief in die Zwischenablage kopiert.", "ok")))]));
     const body = h("div", { class: "page-body" });
@@ -158,7 +158,8 @@ VIEWS.add({
 function stationProfileText(C) {
   const m = C.meta, L = [];
   const kinds = {}; C.pins.forEach(p => kinds[p.kind] = (kinds[p.kind] || 0) + 1);
-  L.push(m.name, "=".repeat(Math.min(60, m.name.length || 10)));
+  const ti = centralTitle(C);
+  L.push(ti, "=".repeat(Math.min(60, ti.length || 10)));
   L.push("Format: " + m.format, "Zentrale: " + (m.centralAddr || "–") + (m.bacnetDevId ? " · BACnet Device " + m.bacnetDevId : ""));
   if (m.applRev) L.push("Firmware: " + m.applRev + (m.build ? " (Build " + m.build + ")" : ""));
   if (m.stamp) L.push("Stand der Sicherung: " + m.stamp + " (" + m.stampSrc + ")");

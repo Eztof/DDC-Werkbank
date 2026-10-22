@@ -1624,7 +1624,10 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         C.modules.push(mod);
         if (mAddr === "000") {
           M.stationType = mType;
-          if (mod.name) M.name = mod.name;
+          if (mod.name) {
+            M.name = mod.name;
+            M.modText = mod.name;
+          }
         }
         for (const plantEl of kids(modEl, "Plant")) {
           const pAddr = plantEl.getAttribute("Addr"), plantName = textOf(plantEl);
@@ -1678,6 +1681,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     buildPinsD4(C);
     extractSystemD4(C, invoke);
     extractExtrasD4(C);
+    M.stationName = M.objName || M.modText || "";
     if (!M.name) M.name = label && !/^(datasave|param_backup)$/i.test(label) ? label : M.location && M.location !== M.stationType ? M.location : M.stationType ? M.stationType + (M.centralAddr ? " · Z" + M.centralAddr : "") : label;
     M.format = /^BMR/i.test(M.stationType) ? "BMR · D4PML " + M.d4pmlVersion : (M.stationType || "DDC4000") + " · D4PML " + M.d4pmlVersion;
     return C;
@@ -1928,6 +1932,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       add("BACnet", "Objektname", (P(bd, "ObjName") || {}).text);
       add("BACnet", "Standort", (P(bd, "Location") || {}).text);
       M.location = (P(bd, "Location") || {}).text || "";
+      M.objName = ((P(bd, "ObjName") || {}).text || "").trim();
     } else add("BACnet", "Device-Instanz", M.bacnetDevId);
     const net = byType("SY_Network");
     if (net) {
@@ -2188,6 +2193,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         case "Z":
           M.centralAddr = (f.NR || "").trim();
           M.series = f.TYP || "DDC3000";
+          M.stationName = (f.GT || f.NAME || f.TXT || "").trim();
           break;
         case "B":
           M.stationType = f.TYP || f.GT || "";
@@ -8046,7 +8052,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       }
     }
     const nm = norm(bez);
-    const byName = cs.find((c) => norm(c.meta.name) === nm || APP.wd[c.cid] && norm(APP.wd[c.cid].isp.bez) === nm);
+    const byName = cs.find((c) => norm(c.meta.name) === nm || c.meta.stationName && norm(c.meta.stationName) === nm || APP.wd[c.cid] && norm(APP.wd[c.cid].isp.bez) === nm);
     if (byName) {
       res.C = byName;
       res.how = "Name";
@@ -9342,7 +9348,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
       h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
-      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.5.2")
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.5.3")
     ));
   }
   function renderTitle() {
@@ -9420,10 +9426,19 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       acts ? h("div", { class: "acts" }, acts) : null
     );
   }
+  function centralNr(c) {
+    const n = parseInt(c.meta.centralAddr, 10);
+    return isNaN(n) ? "" : String(n);
+  }
+  function centralTitle(c) {
+    const nr = centralNr(c), nm = c.meta.stationName || c.meta.name;
+    return nr ? nr + ": " + nm : nm;
+  }
   function stationLabel(c) {
     const m = c.meta, t = c.format === "DDC3000" ? "DDC3000" : m.stationType;
-    const base = [m.name, t && !m.name.includes(t) ? t : "", m.centralAddr && !m.name.includes("Z" + m.centralAddr) ? "Z" + m.centralAddr : ""].filter(Boolean).join(" · ");
-    const same = APP.centrals.filter((x) => x !== c && x.meta.name === m.name && x.meta.centralAddr === m.centralAddr);
+    const ti = centralTitle(c);
+    const base = m.stationName ? ti : [ti, t && !ti.includes(t) ? t : ""].filter(Boolean).join(" · ");
+    const same = APP.centrals.filter((x) => x !== c && centralTitle(x) === ti);
     if (!same.length) return base;
     const nr = "Nr. " + (APP.centrals.indexOf(c) + 1);
     if (m.stamp && !same.some((x) => x.meta.stamp === m.stamp)) return base + " · " + m.stamp;
@@ -9434,7 +9449,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     if (!C) return "";
     const m = C.meta;
     const t = C.format === "DDC3000" ? "DDC3000 " + (m.stationType || "") : m.stationType;
-    return [m.name, t && !m.name.includes(m.stationType) ? t : C.format === "DDC3000" ? "DDC3000" : "", m.centralAddr ? "Zentrale " + m.centralAddr : "", m.stamp ? "Stand " + m.stamp : ""].filter(Boolean).join("  ·  ");
+    const ti = centralTitle(C);
+    return [ti, m.stationName && m.name !== m.stationName ? m.name : "", t && !ti.includes(m.stationType) ? t : C.format === "DDC3000" ? "DDC3000" : "", m.stamp ? "Stand " + m.stamp : ""].filter(Boolean).join("  ·  ");
   }
   var LOADING = false;
   var tick = () => new Promise((r) => setTimeout(r, 0));
@@ -9481,7 +9497,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       APP.centrals.sort((a, b) => (parseInt(a.meta.centralAddr, 10) || 0) - (parseInt(b.meta.centralAddr, 10) || 0) || natCmp(a.meta.name, b.meta.name));
       if (added.length) {
         APP.cur = added[0].cid;
-        toast(added.length === 1 ? `„${added[0].meta.name}“ geladen – ${added[0].pins.filter((p) => p.kind !== "frei").length} belegte Klemmen, ${activeFindings(added[0]).filter((f) => f.sev !== "info").length} Befunde.` : `${added.length} Sicherungen geladen.`, "ok");
+        toast(added.length === 1 ? `„${centralTitle(added[0])}“ geladen – ${added[0].pins.filter((p) => p.kind !== "frei").length} belegte Klemmen, ${activeFindings(added[0]).filter((f) => f.sev !== "info").length} Befunde.` : `${added.length} Sicherungen geladen.`, "ok");
         if (APP.view === "start") APP.view = "overview";
         emit("zentralen", { centrals: APP.centrals });
       }
@@ -9545,7 +9561,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       const res = [];
       let more = 0, hitSt = 0;
       for (const C of cs) {
-        const pre = many ? C.meta.name + " · " : "";
+        const pre = many ? centralTitle(C) + " · " : "";
         let cut = 0, tot = 0;
         for (const P of SEARCH.list()) {
           const hits = [];
@@ -9558,7 +9574,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           }
         }
         if (tot) hitSt++;
-        if (cut && many) res.push({ g: pre + "mehr", more: true, a: "", n: "Alle " + tot + " Treffer in " + C.meta.name + " zeigen", w: "", go: () => {
+        if (cut && many) res.push({ g: pre + "mehr", more: true, a: "", n: "Alle " + tot + " Treffer in " + centralTitle(C) + " zeigen", w: "", go: () => {
           APP._searchQ = inp.value;
           scope = "cur";
           setPref("searchScope", "cur");
@@ -9696,8 +9712,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
               h(
                 "div",
                 { class: "grow", style: { minWidth: 0 } },
-                h("div", { class: "nm ellip" }, m.name),
-                h("div", { class: "meta" }, [m.format, m.centralAddr ? "Zentrale " + m.centralAddr : "", m.applRev ? "FW " + m.applRev : ""].filter(Boolean).join(" · ")),
+                h("div", { class: "nm ellip", title: centralTitle(C) }, centralTitle(C)),
+                h("div", { class: "meta" }, [m.stationName && m.name !== m.stationName ? m.name : "", m.format, m.centralAddr ? "Zentrale " + m.centralAddr : "", m.applRev ? "FW " + m.applRev : ""].filter(Boolean).join(" · ")),
                 h("div", { class: "meta ellip", title: C.filePath || C.fileName }, (C.filePath || C.fileName) + (m.stamp ? " · Stand " + m.stamp : ""))
               )
             ),
@@ -9771,7 +9787,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     needsC: true,
     render(root, C) {
       const m = C.meta;
-      root.appendChild(pageHead(m.name, stationSub(C), [
+      root.appendChild(pageHead(centralTitle(C), stationSub(C), [
         btn("Bericht drucken", "print", () => window.print()),
         btn("Steckbrief kopieren", "copy", () => copyText(stationProfileText(C)).then(() => toast("Steckbrief in die Zwischenablage kopiert.", "ok")))
       ]));
@@ -9885,7 +9901,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const m = C.meta, L = [];
     const kinds = {};
     C.pins.forEach((p) => kinds[p.kind] = (kinds[p.kind] || 0) + 1);
-    L.push(m.name, "=".repeat(Math.min(60, m.name.length || 10)));
+    const ti = centralTitle(C);
+    L.push(ti, "=".repeat(Math.min(60, ti.length || 10)));
     L.push("Format: " + m.format, "Zentrale: " + (m.centralAddr || "–") + (m.bacnetDevId ? " · BACnet Device " + m.bacnetDevId : ""));
     if (m.applRev) L.push("Firmware: " + m.applRev + (m.build ? " (Build " + m.build + ")" : ""));
     if (m.stamp) L.push("Stand der Sicherung: " + m.stamp + " (" + m.stampSrc + ")");
@@ -10626,7 +10643,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     store.set("kpIps", o);
   }
   var kpCentrals = () => APP.centrals.filter((C) => C.format !== "DDC3000");
-  var nameOf = (C) => C.meta.name || C.label || C.fileName || C.cid;
+  var nameOf = (C) => centralTitle(C) || C.label || C.fileName || C.cid;
   function conn(key) {
     if (!KP.conns.has(key)) KP.conns.set(key, {
       key,
@@ -11241,7 +11258,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
 
   // src/ui/main.js
   var api = {
-    version: "0.5.2",
+    version: "0.5.3",
     register: ALL,
     state: APP,
     curC,

@@ -6,7 +6,7 @@ import { openNode, openPin } from "../core/nav.js";
 import { APP, byCid, curC } from "../core/state.js";
 import { fmtNum, h, nowStamp, store } from "../core/util.js";
 import { svcJson } from "../core/service.js";
-import { btn, chk, emptyState, icon, pageHead, toast } from "../shell/shell.js";
+import { btn, centralTitle, chk, emptyState, icon, pageHead, toast } from "../shell/shell.js";
 
 /* =========================================================================
    Online – K&P direkt (CTOS, Port 18090), wie das Service-Tool.
@@ -62,7 +62,7 @@ const ipKey = C => "kpip|" + (C.meta.centralAddr || "") + "|" + (C.meta.name || 
 function ipOf(C) { const o = store.get("kpIps", {}); return (o[ipKey(C)] || C.meta.ip || "").trim(); }
 function setIpOf(C, ip) { const o = store.get("kpIps", {}); if (ip && ip !== C.meta.ip) o[ipKey(C)] = ip; else delete o[ipKey(C)]; store.set("kpIps", o); }
 const kpCentrals = () => APP.centrals.filter(C => C.format !== "DDC3000");
-const nameOf = C => C.meta.name || C.label || C.fileName || C.cid;
+const nameOf = C => centralTitle(C) || C.label || C.fileName || C.cid;
 
 /* Verbindung: { key, cid, ip, port, on, host, busy, err, values, stamp, gen, want } */
 function conn(key) {

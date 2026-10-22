@@ -91,7 +91,7 @@ export function parseD4PML(text, label, fileName) {
       const res = modEl.getAttribute("ResInfo") || "";
       const mod = { addr: mAddr, type: mType, name: textOf(modEl), active: !/inactive/i.test(res), res, hw: "", fw: "", pinCount: 0, kinds: {} };
       C.modules.push(mod);
-      if (mAddr === "000") { M.stationType = mType; if (mod.name) M.name = mod.name; }
+      if (mAddr === "000") { M.stationType = mType; if (mod.name) { M.name = mod.name; M.modText = mod.name; } }
       for (const plantEl of kids(modEl, "Plant")) {
         const pAddr = plantEl.getAttribute("Addr"), plantName = textOf(plantEl);
         for (const groupEl of kids(plantEl, "Group")) {
@@ -134,6 +134,8 @@ export function parseD4PML(text, label, fileName) {
   buildPinsD4(C);
   extractSystemD4(C, invoke);
   extractExtrasD4(C);
+  /* Zentralenname wie im Service-Tool („1: DDC4200e BT D ISP 51“): BACnet-Objektname, sonst Text des Grundmoduls */
+  M.stationName = M.objName || M.modText || "";
   if (!M.name) M.name = (label && !/^(datasave|param_backup)$/i.test(label)) ? label : (M.location && M.location !== M.stationType ? M.location : (M.stationType ? M.stationType + (M.centralAddr ? " · Z" + M.centralAddr : "") : label));
   M.format = /^BMR/i.test(M.stationType) ? "BMR · D4PML " + M.d4pmlVersion : (M.stationType || "DDC4000") + " · D4PML " + M.d4pmlVersion;
   return C;
@@ -288,6 +290,7 @@ function extractSystemD4(C, invoke) {
     add("BACnet", "Objektname", (P(bd, "ObjName") || {}).text);
     add("BACnet", "Standort", (P(bd, "Location") || {}).text);
     M.location = (P(bd, "Location") || {}).text || "";
+    M.objName = ((P(bd, "ObjName") || {}).text || "").trim();
   } else add("BACnet", "Device-Instanz", M.bacnetDevId);
   const net = byType("SY_Network");
   if (net) {

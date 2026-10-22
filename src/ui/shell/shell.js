@@ -328,10 +328,15 @@ export function pageHead(title, sub, acts) {
     h("div", { class: "grow" }, h("h1", null, title), sub ? h("div", { class: "sub" }, sub) : null),
     acts ? h("div", { class: "acts" }, acts) : null);
 }
+/* Zentralennummer ohne führende Nullen („07“ → „7“) */
+export function centralNr(c) { const n = parseInt(c.meta.centralAddr, 10); return isNaN(n) ? "" : String(n); }
+/* Titel einer Zentrale wie im Service-Tool: „Nr: Zentralenname“ (ohne Namen in der Sicherung: Ordner-/Dateiname) */
+export function centralTitle(c) { const nr = centralNr(c), nm = c.meta.stationName || c.meta.name; return nr ? nr + ": " + nm : nm; }
 export function stationLabel(c) {
   const m = c.meta, t = c.format === "DDC3000" ? "DDC3000" : m.stationType;
-  const base = [m.name, t && !m.name.includes(t) ? t : "", m.centralAddr && !m.name.includes("Z" + m.centralAddr) ? "Z" + m.centralAddr : ""].filter(Boolean).join(" · ");
-  const same = APP.centrals.filter(x => x !== c && x.meta.name === m.name && x.meta.centralAddr === m.centralAddr);
+  const ti = centralTitle(c);
+  const base = m.stationName ? ti : [ti, t && !ti.includes(t) ? t : ""].filter(Boolean).join(" · ");
+  const same = APP.centrals.filter(x => x !== c && centralTitle(x) === ti);
   if (!same.length) return base;
   const nr = "Nr. " + (APP.centrals.indexOf(c) + 1);
   if (m.stamp && !same.some(x => x.meta.stamp === m.stamp)) return base + " · " + m.stamp;
@@ -342,7 +347,8 @@ export function stationSub(C) {
   if (!C) return "";
   const m = C.meta;
   const t = C.format === "DDC3000" ? "DDC3000 " + (m.stationType || "") : m.stationType;
-  return [m.name, t && !m.name.includes(m.stationType) ? t : (C.format === "DDC3000" ? "DDC3000" : ""), m.centralAddr ? "Zentrale " + m.centralAddr : "", m.stamp ? "Stand " + m.stamp : ""].filter(Boolean).join("  ·  ");
+  const ti = centralTitle(C);
+  return [ti, m.stationName && m.name !== m.stationName ? m.name : "", t && !ti.includes(m.stationType) ? t : (C.format === "DDC3000" ? "DDC3000" : ""), m.stamp ? "Stand " + m.stamp : ""].filter(Boolean).join("  ·  ");
 }
 
 /* ---------- Laden ---------- */
@@ -371,7 +377,7 @@ async function loadFiles(files, handles) {
     APP.centrals.sort((a, b) => (parseInt(a.meta.centralAddr, 10) || 0) - (parseInt(b.meta.centralAddr, 10) || 0) || natCmp(a.meta.name, b.meta.name));
     if (added.length) {
       APP.cur = added[0].cid;
-      toast(added.length === 1 ? `„${added[0].meta.name}“ geladen – ${added[0].pins.filter(p => p.kind !== "frei").length} belegte Klemmen, ${activeFindings(added[0]).filter(f => f.sev !== "info").length} Befunde.`
+      toast(added.length === 1 ? `„${centralTitle(added[0])}“ geladen – ${added[0].pins.filter(p => p.kind !== "frei").length} belegte Klemmen, ${activeFindings(added[0]).filter(f => f.sev !== "info").length} Befunde.`
         : `${added.length} Sicherungen geladen.`, "ok");
       if (APP.view === "start") APP.view = "overview";
       emit("zentralen", { centrals: APP.centrals });
@@ -421,7 +427,7 @@ function globalSearch() {
     const res = [];
     let more = 0, hitSt = 0;
     for (const C of cs) {
-      const pre = many ? C.meta.name + " · " : "";
+      const pre = many ? centralTitle(C) + " · " : "";
       let cut = 0, tot = 0;
       for (const P of SEARCH.list()) {
         const hits = [];
@@ -430,7 +436,7 @@ function globalSearch() {
         for (const it of hits.slice(0, cap)) { const r = safely("Suche " + P.id, () => P.hit(C, it), null); if (r) res.push(Object.assign(r, { g: pre + P.label })); }
       }
       if (tot) hitSt++;
-      if (cut && many) res.push({ g: pre + "mehr", more: true, a: "", n: "Alle " + tot + " Treffer in " + C.meta.name + " zeigen", w: "", go: () => { APP._searchQ = inp.value; scope = "cur"; setPref("searchScope", "cur"); APP.cur = C.cid; if (APP.view === "start") APP.view = "overview"; renderAll(); } });
+      if (cut && many) res.push({ g: pre + "mehr", more: true, a: "", n: "Alle " + tot + " Treffer in " + centralTitle(C) + " zeigen", w: "", go: () => { APP._searchQ = inp.value; scope = "cur"; setPref("searchScope", "cur"); APP.cur = C.cid; if (APP.view === "start") APP.view = "overview"; renderAll(); } });
       else more += cut;
     }
     items = res.slice(0, many ? 300 : 60); more += res.filter(r => !r.more).length - items.filter(r => !r.more).length;

@@ -21,6 +21,10 @@ test("alle Ansichten öffnen ohne Fehler", async () => {
     await page.waitForFunction(() => document.body.innerText.includes("Testzentrale Halle"));
     const n = (await page.$$(".nav-item")).length;
     assert.ok(n >= 8, "Navigation unvollständig: " + n);
+    /* Titel „Nr: Zentralenname“ (BACnet-Objektname) im Auswahlfeld oben und auf der Startkarte */
+    assert.equal(await page.$eval("#tbStation option:checked", o => o.textContent), "12: Z12_Halle");
+    await page.click(".nav-item:has-text('Start')");
+    assert.equal(await page.$eval(".card .station .nm", e => e.textContent), "12: Z12_Halle");
     assert.equal(await page.$$eval(".nav-item", els => els.some(e => /Vergleich/.test(e.textContent))), false, "Vergleich noch in der Navigation");
     for (let i = 0; i < n; i++) {
       const item = (await page.$$(".nav-item"))[i];

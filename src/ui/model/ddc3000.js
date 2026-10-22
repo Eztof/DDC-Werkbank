@@ -86,7 +86,7 @@ export function parseDDC3000(text, label, fileName) {
   for (const r of recs) {
     const f = r.f;
     switch (r.kind) {
-      case "Z": M.centralAddr = (f.NR || "").trim(); M.series = f.TYP || "DDC3000"; break;
+      case "Z": M.centralAddr = (f.NR || "").trim(); M.series = f.TYP || "DDC3000"; M.stationName = (f.GT || f.NAME || f.TXT || "").trim(); break;
       case "B": M.stationType = f.TYP || f.GT || ""; break;
       case "K": kreis = parseInt(f.NR, 10) || 0; kreise.set(kreis, { nr: kreis, typ: f.TYP || "", name: f.GT || "", rk: f.RK || "", anl: f.ANL || "", modules: [] }); break;
       case "M": (kreise.get(kreis) || kreise.get(0)).modules.push({ nr: f.NR, aktiv: f.AKTIV }); break;

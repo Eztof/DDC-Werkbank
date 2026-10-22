@@ -222,7 +222,7 @@ function lkDetect(D, isp, useManual) {
   if (man === "-") { res.how = "manuell keine"; return res; }
   if (man) { const C = cs.find(c => lkCentralKey(c) === man); if (C) { res.C = C; res.how = "manuell"; return res; } }
   const nm = norm(bez);
-  const byName = cs.find(c => norm(c.meta.name) === nm || (APP.wd[c.cid] && norm(APP.wd[c.cid].isp.bez) === nm));
+  const byName = cs.find(c => norm(c.meta.name) === nm || (c.meta.stationName && norm(c.meta.stationName) === nm) || (APP.wd[c.cid] && norm(APP.wd[c.cid].isp.bez) === nm));
   if (byName) { res.C = byName; res.how = "Name"; return res; }
   /* Abstimmung: wie viele Einträge finden ihr AKS / ihren Klartext / ihre Klemme in der Sicherung? */
   const arts = lkArts(isp).filter(x => !x.station);
