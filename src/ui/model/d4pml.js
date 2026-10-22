@@ -66,6 +66,17 @@ function parseSrc(raw, centralAddr) {
 }
 const nodeIdOf = (src) => (src.foreign ? "Z" + src.central + ":" : "") + src.mod + "/" + src.plant + "/" + src.group + "/" + src.obj;
 
+/* Erster sinnvoller Name im Dateikopf (alles vor der ersten Anlage) */
+function headName(root) {
+  const NAMEISH = /name|text|bez|desc|title|titel|station|zentrale/i;
+  for (const el of root.getElementsByTagName("*")) {
+    if (el.tagName === "Plant" || el.tagName === "Object") break;
+    for (const a of el.attributes) if (NAMEISH.test(a.name) && a.value.trim() && !/^\d+$/.test(a.value.trim())) return a.value.trim();
+    if (!el.children.length && (NAMEISH.test(el.tagName) || el.parentElement && NAMEISH.test(el.parentElement.tagName))) { const t = (el.textContent || "").trim(); if (t && !/^\d+$/.test(t)) return t; }
+  }
+  return "";
+}
+
 export function parseD4PML(text, label, fileName) {
   const doc = new DOMParser().parseFromString(text, "application/xml");
   if (doc.getElementsByTagName("parsererror").length) throw new Error("XML nicht lesbar");
@@ -134,8 +145,10 @@ export function parseD4PML(text, label, fileName) {
   buildPinsD4(C);
   extractSystemD4(C, invoke);
   extractExtrasD4(C);
-  /* Zentralenname wie im Service-Tool („1: DDC4200e BT D ISP 51“): BACnet-Objektname, sonst Text des Grundmoduls */
-  M.stationName = M.objName || M.modText || "";
+  /* Zentralenname wie im Service-Tool („1: DDC4200e BT D ISP 51“): steht im Kopf der Datei vor der ersten Anlage
+     (Text/Name-Element oder -Attribut); sonst Text des Grundmoduls, sonst BACnet-Objektname, wenn nicht der Vorgabename „DDC4000_#01“ */
+  const isDefault = v => !v || /^(DDC|BMR)\w*_#\d*$/i.test(v) || v === M.stationType || /^(System|datasave|param_backup)$/i.test(v);
+  M.stationName = [headName(root), M.modText, M.objName].find(v => !isDefault(v)) || "";
   if (!M.name) M.name = (label && !/^(datasave|param_backup)$/i.test(label)) ? label : (M.location && M.location !== M.stationType ? M.location : (M.stationType ? M.stationType + (M.centralAddr ? " · Z" + M.centralAddr : "") : label));
   M.format = /^BMR/i.test(M.stationType) ? "BMR · D4PML " + M.d4pmlVersion : (M.stationType || "DDC4000") + " · D4PML " + M.d4pmlVersion;
   return C;
