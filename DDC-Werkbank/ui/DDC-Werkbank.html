@@ -1598,18 +1598,6 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return { central, foreign, mod, plant, group, obj, rest: rest.join("/"), transform, raw: t };
   }
   var nodeIdOf = (src) => (src.foreign ? "Z" + src.central + ":" : "") + src.mod + "/" + src.plant + "/" + src.group + "/" + src.obj;
-  function headName(root) {
-    const NAMEISH = /name|text|bez|desc|title|titel|station|zentrale/i;
-    for (const el of root.getElementsByTagName("*")) {
-      if (el.tagName === "Plant" || el.tagName === "Object") break;
-      for (const a of el.attributes) if (NAMEISH.test(a.name) && a.value.trim() && !/^\d+$/.test(a.value.trim())) return a.value.trim();
-      if (!el.children.length && (NAMEISH.test(el.tagName) || el.parentElement && NAMEISH.test(el.parentElement.tagName))) {
-        const t = (el.textContent || "").trim();
-        if (t && !/^\d+$/.test(t)) return t;
-      }
-    }
-    return "";
-  }
   function parseD4PML(text, label, fileName) {
     const doc = new DOMParser().parseFromString(text, "application/xml");
     if (doc.getElementsByTagName("parsererror").length) throw new Error("XML nicht lesbar");
@@ -1629,6 +1617,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const pending = [];
     const content = kid(root, "Content");
     for (const central of kids(content, "Central")) {
+      if (!M.centralText) M.centralText = textOf(central);
       for (const modEl of kids(central, "Module")) {
         const mAddr = modEl.getAttribute("Addr"), mType = modEl.getAttribute("Type") || "";
         const res = modEl.getAttribute("ResInfo") || "";
@@ -1694,7 +1683,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     extractSystemD4(C, invoke);
     extractExtrasD4(C);
     const isDefault = (v) => !v || /^(DDC|BMR)\w*_#\d*$/i.test(v) || v === M.stationType || /^(System|datasave|param_backup)$/i.test(v);
-    M.stationName = [headName(root), M.modText, M.objName].find((v) => !isDefault(v)) || "";
+    M.stationName = [M.centralText, M.modText, M.objName].find((v) => !isDefault(v)) || "";
     if (!M.name) M.name = label && !/^(datasave|param_backup)$/i.test(label) ? label : M.location && M.location !== M.stationType ? M.location : M.stationType ? M.stationType + (M.centralAddr ? " · Z" + M.centralAddr : "") : label;
     M.format = /^BMR/i.test(M.stationType) ? "BMR · D4PML " + M.d4pmlVersion : (M.stationType || "DDC4000") + " · D4PML " + M.d4pmlVersion;
     return C;
@@ -9361,7 +9350,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
       h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
-      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.5.4")
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.5.5")
     ));
   }
   function renderTitle() {
@@ -11271,7 +11260,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
 
   // src/ui/main.js
   var api = {
-    version: "0.5.4",
+    version: "0.5.5",
     register: ALL,
     state: APP,
     curC,

@@ -8,6 +8,7 @@
  </Header>
  <Content>
   <Central Addr="12">
+   <Text Lang="de">DDC4200 Halle ISP 12</Text>
    <Module Addr="000" Type="DDC4200">
     <Text>Testzentrale Halle</Text>
     <Plant Addr="00" Type="SY"><Text>System</Text>

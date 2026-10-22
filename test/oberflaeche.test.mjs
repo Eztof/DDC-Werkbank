@@ -21,10 +21,10 @@ test("alle Ansichten öffnen ohne Fehler", async () => {
     await page.waitForFunction(() => document.body.innerText.includes("Testzentrale Halle"));
     const n = (await page.$$(".nav-item")).length;
     assert.ok(n >= 8, "Navigation unvollständig: " + n);
-    /* Titel „Nr: Zentralenname“ (aus dem Dateikopf) im Auswahlfeld oben und auf der Startkarte */
-    assert.equal(await page.$eval("#tbStation option:checked", o => o.textContent), "12: Testzentrale Halle");
+    /* Titel „Nr: Zentralenname“ (<Central><Text> der Sicherung) im Auswahlfeld oben und auf der Startkarte */
+    assert.equal(await page.$eval("#tbStation option:checked", o => o.textContent), "12: DDC4200 Halle ISP 12");
     await page.click(".nav-item:has-text('Start')");
-    assert.equal(await page.$eval(".card .station .nm", e => e.textContent), "12: Testzentrale Halle");
+    assert.equal(await page.$eval(".card .station .nm", e => e.textContent), "12: DDC4200 Halle ISP 12");
     assert.equal(await page.$$eval(".nav-item", els => els.some(e => /Vergleich/.test(e.textContent))), false, "Vergleich noch in der Navigation");
     for (let i = 0; i < n; i++) {
       const item = (await page.$$(".nav-item"))[i];
