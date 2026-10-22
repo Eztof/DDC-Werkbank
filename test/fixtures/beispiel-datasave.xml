@@ -14,6 +14,7 @@
      <Group Addr="00" Type="SY"><Text>System</Text>
       <Object Addr="SY.01" Type="SY_Modul"><Para Addr="899"><Value Type="Text">1.9.3</Value></Para><Para Addr="HwRev"><Value Type="Text">B</Value></Para></Object>
       <Object Addr="SY.02" Type="SY_BACDev"><Para Addr="ObjId"><Value Type="Int">4012</Value></Para><Para Addr="ObjName"><Value Type="Text">Z12_Halle</Value></Para><Para Addr="Location"><Value Type="Text">Halle Nord</Value></Para></Object>
+      <Object Addr="SY.04" Type="SY_Network"><SubObj Addr="CEth.01" Type="CEth"><Para Addr="4"><Value Type="Text">192.168.3.212</Value></Para></SubObj></Object>
       <Object Addr="SY.03" Type="SY_Clock"><Para Addr="1"><Value Type="Int">1768469400</Value></Para></Object>
      </Group>
     </Plant>

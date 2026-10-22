@@ -291,7 +291,9 @@ function extractSystemD4(C, invoke) {
   } else add("BACnet", "Device-Instanz", M.bacnetDevId);
   const net = byType("SY_Network");
   if (net) {
-    add("Netzwerk", "IP-Adresse", (P(net, "4", "CEth.01") || {}).text);
+    const ipTxt = (P(net, "4", "CEth.01") || {}).text;
+    add("Netzwerk", "IP-Adresse", ipTxt);
+    const ipM = /\b(\d{1,3}(?:\.\d{1,3}){3})\b/.exec(ipTxt || ""); if (ipM) M.ip = ipM[1];
     add("Netzwerk", "Gateway", (P(net, "Gateway") || {}).text);
     add("Netzwerk", "DNS", (P(net, "DNS1") || {}).text);
     add("Netzwerk", "MAC", (P(net, "MACAdr") || {}).text);

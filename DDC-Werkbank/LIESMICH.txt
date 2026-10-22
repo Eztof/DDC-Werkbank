@@ -39,6 +39,10 @@ Reiter „K&P direkt“     wie das Service-Tool (Port 18090): nach Anmeldung mi
                         (aus plugins\de.hologarage.kup.util_*.jar) in den
                         Ordner daten\ legen. Das Passwort bleibt nur im
                         Arbeitsspeicher des Dienstes, es wird nicht gespeichert.
+                        Liste „Zentralen“: alle geladenen Sicherungen mit der
+                        IP aus der Sicherung (änderbar). Eine, mehrere
+                        (anhaken) oder alle gleichzeitig verbinden.
+                        „automatisch alle … s“: Abfrage-Takt frei einstellbar.
 
 Ohne laufenden Dienst merkt sich der Browser alles; beim nächsten Start mit
 Dienst wird es in daten\ übernommen.
