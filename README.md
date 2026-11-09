@@ -1,6 +1,6 @@
 # DDC-Werkbank
 
-Werkzeug für Sicherungen von Kieback&Peter-Zentralen (DDC4000/BMR `.d4pml`/`datasave.xml`, DDC3000 `.wwf`) und Wartungsdokus (WTGML). Oberfläche im Browser, optional mit lokalem Dienst (BACnet lesen, Merkliste).
+Werkzeug für Sicherungen von Kieback&Peter-Zentralen (DDC4000/BMR `.d4pml`/`datasave.xml`, DDC3000 `.wwf` und `.p90`) und Wartungsdokus (WTGML). Oberfläche im Browser, optional mit lokalem Dienst (BACnet lesen, Merkliste).
 
 ## Für die Benutzung
 
@@ -25,11 +25,14 @@ src/ui/                 Oberfläche (wird zu EINER HTML-Datei gebaut)
   model/                Einlesen und Auswerten
     model.js            gemeinsames Modell der Zentrale (Klemmen, Bausteine, Kanten), pinOf()
     d4pml.js, ddc3000.js  Dateiformate (melden sich in FORMATS an)
+    p90.js              DDC3000-Sicherung (.p90) → Datensätze wie .wwf → ddc3000.js
     pipeline.js         nach dem Einlesen: Auswertungen (ANALYSES), dann Prüfungen
     findings.js         Befunde aus allen Prüfungen, Prüfungen ein-/ausschalten
     checks/             je Thema eine Datei mit Prüfungen (melden sich in CHECKS an)
+  p90/                  DDC3000 über RS232 (P90): Protokoll, Sicherung, Web Serial, nachgebaute DDC
+                        (Protokoll: docs/P90-PROTOKOLL.md)
   shell/                Fenster-Gerüst, Navigation, Suche, Laden
-  views/                Ansichten: Start/Übersicht, Datenpunkte, Programm, Befunde/Zeit, Online
+  views/                Ansichten: Start/Übersicht, Datenpunkte, Programm, Befunde/Zeit, Online, DDC3000 sichern
   wartung/              Wartungsdoku: Generator, Anlagen, WTGML, Ansicht, Verknüpfung, Zu-/Abluft,
                         in-datenpunkten.js (Doku-Spalte/Filter/Knopf in den Datenpunkten)
   styles/               CSS, in Nummern-Reihenfolge zusammengefügt

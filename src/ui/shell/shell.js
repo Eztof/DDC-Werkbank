@@ -354,7 +354,7 @@ export function stationSub(C) {
 /* ---------- Laden ---------- */
 let LOADING = false;
 const tick = () => new Promise(r => setTimeout(r, 0));
-async function loadFiles(files, handles) {
+export async function loadFiles(files, handles) {
   if (!files || !files.length || LOADING) return;
   LOADING = true;
   const note = toast("Lese " + files.length + " Datei(en) …", "inf", 60000);
@@ -368,10 +368,14 @@ async function loadFiles(files, handles) {
       try {
         if (f.fmt.open) { const r = f.fmt.open(f.text, f, handles && handles.get(f.name)); if (r) opened.push(r); continue; }
         const hash = textHash(f.text);
-        if (APP.centrals.some(x => x.hash === hash)) { bad.push(f.name + ": bereits geladen"); continue; }
-        const C = prepareCentral(f.fmt.parse(f.text, f), f, hash);
-        refreshSev(C);
-        APP.centrals.push(C); added.push(C);
+        if (APP.centrals.some(x => x.hash === hash || (x.hash || "").startsWith(hash + "#"))) { bad.push(f.name + ": bereits geladen"); continue; }
+        /* ein Format darf mehrere Zentralen liefern (P90: alle Zentralen am Bus) */
+        const res = f.fmt.parse(f.text, f), list = Array.isArray(res) ? res : [res];
+        list.forEach((one, k) => {
+          const C = prepareCentral(one, f, list.length > 1 ? hash + "#" + k : hash);
+          refreshSev(C);
+          APP.centrals.push(C); added.push(C);
+        });
       } catch (e) { console.error(e); bad.push(f.name + ": " + e.message); }
     }
     APP.centrals.sort((a, b) => (parseInt(a.meta.centralAddr, 10) || 0) - (parseInt(b.meta.centralAddr, 10) || 0) || natCmp(a.meta.name, b.meta.name));

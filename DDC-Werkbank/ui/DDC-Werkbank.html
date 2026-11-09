@@ -657,6 +657,15 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
 .wdoc .extlink { color: var(--text-3); white-space: nowrap; }
 .wdoc .nolink { white-space: nowrap; }
 
+/* DDC3000 sichern (P90) */
+.p90-prog { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.p90-bar { height: 6px; border-radius: 3px; background: var(--card-3); border: 1px solid var(--stroke); overflow: hidden; max-width: 640px; }
+.p90-bar > span { display: block; height: 100%; background: var(--accent); transition: width .2s; }
+.p90-devs { margin-top: 10px; }
+.p90-log { max-height: 260px; overflow: auto; padding: 8px 10px; margin-top: 6px; background: var(--card-3); border: 1px solid var(--stroke); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.p90-log .tx { color: var(--accent); }
+.p90-log .err { color: var(--err); }
+.p90-log .warn { color: var(--warn); }
 </style>
 </head>
 <body>
@@ -1017,8 +1026,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       off += 46 + nlen + elen + clen;
       if (name.endsWith("/")) continue;
       const lnlen = dv.getUint16(lho + 26, true), lelen = dv.getUint16(lho + 28, true);
-      const start = lho + 30 + lnlen + lelen;
-      const comp = u8.subarray(start, start + csize);
+      const start2 = lho + 30 + lnlen + lelen;
+      const comp = u8.subarray(start2, start2 + csize);
       let data;
       if (method === 0) data = comp.slice();
       else if (method === 8) {
@@ -1419,12 +1428,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return r.map((x) => (x.neg ? "≠" : "=") + st(x.from) + "→" + x.to).join(", ");
   }
   var CID = 1;
-  function newCentral(format, label, fileName) {
+  function newCentral(format, label, fileName2) {
     return {
       cid: "c" + CID++,
       format,
       label,
-      fileName,
+      fileName: fileName2,
       meta: { name: "", stationType: "", centralAddr: "", bacnetDevId: "", applRev: "", build: "", defdata: "", stamp: "", stampSrc: "", d4pmlVersion: "" },
       system: [],
       // [{group, k, v, warn}]
@@ -1598,12 +1607,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return { central, foreign, mod, plant, group, obj, rest: rest.join("/"), transform, raw: t };
   }
   var nodeIdOf = (src) => (src.foreign ? "Z" + src.central + ":" : "") + src.mod + "/" + src.plant + "/" + src.group + "/" + src.obj;
-  function parseD4PML(text, label, fileName) {
+  function parseD4PML(text, label, fileName2) {
     const doc = new DOMParser().parseFromString(text, "application/xml");
     if (doc.getElementsByTagName("parsererror").length) throw new Error("XML nicht lesbar");
     const root = doc.documentElement;
     if (root.tagName !== "D4PML") throw new Error("Kein D4PML-Dokument");
-    const C = newCentral("D4PML", label, fileName);
+    const C = newCentral("D4PML", label, fileName2);
     const M = C.meta;
     const hd = kid(root, "Header");
     const ident = hd && kid(hd, "Identity"), ver = hd && kid(hd, "Version");
@@ -2165,7 +2174,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     if (!m) return null;
     return { z: +m[1], kreis: +m[2], base: m[3], inst: +m[4], inv: (m[5] || "").toUpperCase() === "I", op: (m[6] || "").toLowerCase(), raw: v.trim() };
   }
-  function parseDDC3000(text, label, fileName) {
+  function parseDDC3000(text, label, fileName2) {
     const txt = /^\s*\{\\rtf/.test(text) ? rtfToText(text) : text;
     const recs = [];
     let cur = null;
@@ -2184,7 +2193,10 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       } else if (cur) d3Fields(cur, line.trim());
     }
     if (!recs.length) throw new Error("Keine DDC3000-Parameter erkannt");
-    const C = newCentral("DDC3000", label, fileName);
+    return buildDDC3000(recs, label, fileName2);
+  }
+  function buildDDC3000(recs, label, fileName2, opt = {}) {
+    const C = newCentral("DDC3000", label, fileName2);
     const M = C.meta;
     const kreise = /* @__PURE__ */ new Map([[0, { nr: 0, typ: "Grundgerät", name: "", modules: [] }]]);
     const params = [], scheds = [];
@@ -2219,10 +2231,10 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       }
     }
     M.name = label;
-    M.format = "DDC3000 · Parameterliste (.wwf)";
+    M.format = opt.format || "DDC3000 · Parameterliste (.wwf)";
     M.applRev = "";
-    M.stamp = "";
-    M.stampSrc = "";
+    M.stamp = opt.stamp || "";
+    M.stampSrc = opt.stampSrc || "";
     const typOf = (n) => (kreise.get(n) || {}).typ || "";
     const isSBM = (n) => /^SBM/i.test(typOf(n)), isFBM = (n) => /^FBM/i.test(typOf(n));
     const isRK = (n) => n > 0 && !isSBM(n) && !isFBM(n);
@@ -2369,11 +2381,11 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         addPara(n, "W", lbl || "Stellung", f.W);
       }
     }
-    const DAYS = ["mo", "tu", "we", "th", "fr", "sa", "su"];
+    const DAYS3 = ["mo", "tu", "we", "th", "fr", "sa", "su"];
     for (const sc of scheds) {
       const t = target(sc.kreis, "N", sc.nr);
       const n = getNode(t, sc.kreis, true);
-      const days = DAYS.map((d, di) => {
+      const days = DAYS3.map((d, di) => {
         const entries = [];
         for (let i = 1; i <= 4; i++) {
           const b = (sc.sched["BEG" + i] || [])[di + 1], e = (sc.sched["END" + i] || [])[di + 1];
@@ -2450,7 +2462,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         kind,
         declaredKind: null,
         subType: { AE: "Fühler", AA: "Analogausgang", BE: "Kontakt (Eingang)", BA: "Kontakt (Ausgang)", frei: "" }[kind],
-        value: { stored: null, eff: null, invalid: false, deleted: false },
+        value: opt.values ? d3Value(n.d3.def) : { stored: null, eff: null, invalid: false, deleted: false },
         corr,
         invert: false,
         trend: false,
@@ -2504,6 +2516,14 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     C.d3kreise = kreise;
     return C;
   }
+  function d3Value(p) {
+    const f = p && p.f || {};
+    const w = f.W != null ? String(f.W).trim() : "";
+    const invalid = /^2/.test(f.ST || "") || /^\?+$/.test(w);
+    const unit = f.E && !/keine/i.test(f.E) ? " " + f.E : "";
+    const stored = w && !invalid ? { type: "Text", text: w + unit } : null;
+    return { stored, eff: null, invalid, deleted: false };
+  }
   function d3Formula(refs) {
     let expr = "";
     refs.forEach((x, idx) => {
@@ -2522,6 +2542,516 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     exts: ["wwf", "rtf", "txt"],
     sniff: (name, head, text) => /^\s*\{\\rtf/.test(head) && /(TYP=DDC3|NR=\d+\s*;\s*TYP=|\bAI\s+P=)/.test(text.slice(0, 2e4)) || /^\s*Z\s+NR=\s*\d+\s*;\s*TYP=/m.test(head),
     parse: (text, f) => parseDDC3000(text, f.label, f.name)
+  });
+
+  // src/ui/p90/cp850.js
+  var HIGH = "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜø£Ø×ƒáíóúñÑªº¿®¬½¼¡«»░▒▓│┤ÁÂÀ©╣║╗╝¢¥┐└┴┬├─┼ãÃ╚╔╩╦╠═╬¤ðÐÊËÈıÍÎÏ┘┌█▄¦Ì▀ÓßÔÒõÕµþÞÚÛÙýÝ¯´­±‗¾¶§÷¸°¨·¹³²■ ";
+  var DECODE = new Array(256);
+  for (let i = 0; i < 128; i++) DECODE[i] = String.fromCharCode(i);
+  for (let i = 0; i < 128; i++) DECODE[128 + i] = HIGH[i];
+  var ENCODE = /* @__PURE__ */ new Map();
+  DECODE.forEach((ch, i) => ENCODE.set(ch, i));
+  function decode(bytes) {
+    let s2 = "";
+    for (const b of bytes) s2 += DECODE[b];
+    return s2;
+  }
+  function encode(str) {
+    const out = new Uint8Array(str.length);
+    for (let i = 0; i < str.length; i++) {
+      const c = ENCODE.get(str[i]);
+      out[i] = c === void 0 ? 63 : c;
+    }
+    return out;
+  }
+
+  // src/ui/p90/devtypes.js
+  var DEVTYPES = {
+    "1 1": "DDC20",
+    "1 2": "DDC21",
+    "1 6": "DDC30/50",
+    "1 7": "DDC30/100",
+    "1 8": "DDC30/100F",
+    "1 9": "DDC30/100U",
+    "1 10": "DDC30/10mB",
+    "1 11": "DDC32/50",
+    "1 12": "DDC32/100",
+    "1 13": "DDC32/100F",
+    "1 14": "DDC32/100U",
+    "1 15": "DDC32/10mB",
+    "1 16": "DDC34/50",
+    "1 17": "DDC34/100",
+    "1 18": "DDC44",
+    "1 19": "DDC31",
+    "1 20": "DDC42",
+    "1 21": "DDC46",
+    "1 22": "DDC34/100F",
+    "1 24": "DDC40",
+    "1 29": "DDC41",
+    "1 30": "DDC43",
+    "1 32": "DDC35",
+    "29 33": "FBK34",
+    "1 48": "DDC70",
+    "1 49": "DDC71",
+    "1 50": "DDC72",
+    "29 51": "FBR05H",
+    "28 59": "LON-NODE",
+    "29 60": "DDC110",
+    "29 61": "DDC130",
+    "29 64": "MC200Bus",
+    "29 65": "FBR01/02",
+    "29 66": "FBR03",
+    "29 67": "FBR04",
+    "29 68": "FBR05",
+    "29 69": "FBR06",
+    "16 70": "EZR10",
+    "16 71": "EZR11",
+    "16 72": "EZR20",
+    "16 73": "EZR21",
+    "16 74": "EZR30",
+    "16 75": "EZR31",
+    "16 76": "EZR40",
+    "16 77": "EZR41",
+    "29 78": "FBM26/38",
+    "29 79": "FBM45/48",
+    "29 80": "FBM01",
+    "29 81": "FBM14",
+    "29 82": "FBM24",
+    "29 83": "FBM34/100",
+    "29 84": "FBM44",
+    "29 85": "FBM34",
+    "29 86": "FBM18",
+    "29 87": "FBM20",
+    "29 89": "FBM21",
+    "32 90": "DDC3035E",
+    "32 92": "DDC3010",
+    "32 93": "DDC3035",
+    "32 94": "DDC3100",
+    "32 96": "DDC3200",
+    "32 98": "DDC3300",
+    "32 99": "DDC3350",
+    "32 100": "DDC3400",
+    "32 102": "DDC3002",
+    "32 103": "DDC3003",
+    "32 104": "DDC3004",
+    "31 109": "FESTWERT",
+    "31 110": "LÜFTUNG",
+    "31 111": "HEIZUNG",
+    "30 112": "SBM20",
+    "30 113": "SBM21",
+    "30 114": "SBM22",
+    "30 115": "SBM23",
+    "30 116": "SBM41",
+    "30 117": "SBM42",
+    "30 118": "SBM43",
+    "30 119": "SBM44",
+    "30 120": "SBM30",
+    "30 121": "SBM52",
+    "30 122": "SBM30/250",
+    "30 123": "SBM08",
+    "30 124": "SBM45",
+    "30 125": "SBM50",
+    "30 126": "SBM31",
+    "30 127": "SBM51"
+  };
+
+  // src/ui/p90/backup.js
+  var isZ6 = (t) => /^Z6 /.test(t);
+  var isError = (t) => /^Z2 /.test(t) || /^Z6 (?!000 )\d{3} /.test(t);
+  function devName(group, type, extra) {
+    const k = `${group} ${type}`;
+    return extra && extra[k] || DEVTYPES[k] || `Typ ${group}/${type}`;
+  }
+  async function createBackup(link, options = {}) {
+    const { definitions = true, onProgress: onProgress2 = () => {
+    }, signal } = options;
+    const t0 = Date.now();
+    const out = [];
+    let failed = 0, aborted = false;
+    const prog = (phase, text, extra = {}) => onProgress2({ phase, text, ...extra });
+    const checkAbort = () => {
+      if (signal && signal.aborted) throw new Error("abgebrochen");
+    };
+    let abortDone = null;
+    const onAbort = () => {
+      abortDone = link.abort();
+    };
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
+    let ident = null;
+    const zentralen = [];
+    const devices = [];
+    try {
+      prog("login", "Anmelden …");
+      ident = await link.login();
+      checkAbort();
+      prog("zentralen", "Suche Zentralen am Bus …");
+      const zres = await link.request("T0 *.0", isZ6);
+      checkAbort();
+      for (const t of [...zres.lines, zres.end || ""]) {
+        const m = t.match(/^(?:t1|Z6) (\d+\.\d+\.0) /);
+        if (m && !zentralen.includes(m[1])) zentralen.push(m[1]);
+      }
+      if (!zentralen.length) throw new Error("Keine Zentrale gefunden (" + zres.status + ")");
+      for (const z of zentralen) {
+        checkAbort();
+        const k = z.split(".")[1];
+        prog("geraete", `Geräteliste von Zentrale ${z} …`);
+        const dres = await link.request(`T0 ${k}.*`, isZ6);
+        const seen = new Set(devices.map((d) => d.addr));
+        for (const t of [...dres.lines, dres.end || ""]) {
+          const m = t.match(/^(?:t1|Z6) (\d+\.\d+\.\d+) (\d+) (\d+)/);
+          if (m && !seen.has(m[1])) {
+            seen.add(m[1]);
+            devices.push({ addr: m[1], group: m[2], type: m[3] });
+          }
+        }
+      }
+      prog("geraete", `${devices.length} Geräte gefunden`, { total: devices.length });
+      out.push(
+        "# P90-Sicherung (Kieback&Peter DDC3000)",
+        `# Erstellt: ${(/* @__PURE__ */ new Date()).toLocaleString("de-DE")}`,
+        `# Kennung: ${ident}`,
+        `# Geräte: ${devices.length}`,
+        "# Zeichensatz: UTF-8 (Klartexte der DDC aus CP850 umgewandelt)",
+        ""
+      );
+      let n = 0;
+      for (const d of devices) {
+        checkAbort();
+        n++;
+        const [, k, p] = d.addr.split(".");
+        const name = devName(d.group, d.type);
+        prog("geraet", `Gerät ${n}/${devices.length}: ${d.addr} ${name}`, { device: d.addr, done: n - 1, total: devices.length });
+        const mres = await link.request(`m0 ${k}.${p} *`, isZ6);
+        checkAbort();
+        const pres = await link.request(`p0 ${k}.${p} *`, isZ6, {
+          onLine: (c) => prog("geraet", `Gerät ${n}/${devices.length}: ${d.addr} ${name} – ${c} Werte`, { device: d.addr, done: n - 1, total: devices.length, count: c })
+        });
+        const ok = mres.status === "ok" && pres.status === "ok" && !isError(mres.end || "") && !isError(pres.end || "");
+        if (!ok) failed++;
+        d.name = name;
+        d.menus = mres.lines.length;
+        d.values = pres.lines.length;
+        d.ok = ok;
+        out.push(
+          `[Gerät ${d.addr} ${name} ${d.group} ${d.type}]`,
+          ...mres.lines,
+          ...pres.lines,
+          `# Ende m0: ${mres.end || mres.status} | Ende p0: ${pres.end || pres.status}`,
+          ""
+        );
+        prog("geraet", `Gerät ${n}/${devices.length}: ${d.addr} ${name} – ${d.menus} Menüs, ${d.values} Werte`, { device: d.addr, done: n, total: devices.length, ok });
+      }
+      if (definitions) {
+        for (const z of zentralen) {
+          const k = z.split(".")[1];
+          for (const [cmd, what] of [[`D0 ${k}  *`, "Parameterdefinitionen"], [`D2 ${k} *`, "Menüdefinitionen"], [`D4 ${k} *`, "Gerätedefinitionen"]]) {
+            checkAbort();
+            prog("definitionen", `${what} von Zentrale ${z} …`);
+            const r = await link.request(cmd, isZ6, { onLine: (c) => prog("definitionen", `${what} von Zentrale ${z} … ${c} Zeilen`, { count: c }) });
+            out.push(`[Definitionen ${z} ${cmd.slice(0, 2)} ${what}]`, ...r.lines, `# Ende ${cmd.slice(0, 2)}: ${r.end || r.status}`, "");
+          }
+        }
+      }
+    } catch (e) {
+      aborted = true;
+      out.push(`# ABGEBROCHEN: ${e.message}`);
+      prog("fehler", "Abgebrochen: " + e.message);
+    } finally {
+      if (signal) signal.removeEventListener("abort", onAbort);
+      if (abortDone) {
+        prog("fehler", "Abgebrochen – warte, bis die DDC aufhört zu senden …");
+        await abortDone;
+      }
+    }
+    const seconds = Math.round((Date.now() - t0) / 1e3);
+    if (!aborted) {
+      out.push(`# Fertig nach ${seconds} s, ${failed ? failed + " Gerät(e) mit Fehler" : "ohne Fehler"}`);
+      prog("fertig", `Fertig: ${devices.length} Geräte in ${seconds} s${failed ? `, ${failed} mit Fehler` : ""}`);
+    }
+    return { text: out.join("\r\n") + "\r\n", ident, zentralen, devices, failed, seconds, aborted };
+  }
+  function parseBackup(text) {
+    const old = !/Zeichensatz: UTF-8/.test(text.slice(0, 2e3));
+    const fix = (s2) => old ? s2.replace(/[\x80-\xff]+/g, (x) => decode(Array.from(x, (ch) => ch.charCodeAt(0)))) : s2;
+    const res = { header: {}, devices: [], definitions: { D1: [], D3: [], D5: [] }, aborted: false };
+    let dev = null, def = null;
+    for (const raw of text.split(/\r?\n/)) {
+      const l = raw.replace(/\r$/, "");
+      let m;
+      if (m = l.match(/^# (Erstellt|Kennung|Geräte): (.*)$/)) {
+        res.header[m[1]] = m[2];
+        continue;
+      }
+      if (/^# ABGEBROCHEN/.test(l)) {
+        res.aborted = true;
+        continue;
+      }
+      if (m = l.match(/^\[Gerät (\S+) (.+) (\d+) (\d+)\]$/)) {
+        dev = { addr: m[1], name: fix(m[2]), group: m[3], type: m[4], menus: [], values: [], ok: true };
+        res.devices.push(dev);
+        def = null;
+        continue;
+      }
+      if (m = l.match(/^\[Definitionen \S+ (D[024]) /)) {
+        def = { D0: "D1", D2: "D3", D4: "D5" }[m[1]];
+        dev = null;
+        continue;
+      }
+      if (dev && (m = l.match(/^# Ende m0: (.*) \| Ende p0: (.*)$/))) {
+        dev.ok = [m[1], m[2]].every((e) => /^Z6 000 /.test(e));
+        continue;
+      }
+      if (!l || l.startsWith("#")) continue;
+      if (dev && l.startsWith("m1 ")) dev.menus.push(fix(l));
+      else if (dev && l.startsWith("p1 ")) dev.values.push(fix(l));
+      else if (def && l.startsWith(def + " ")) res.definitions[def].push(fix(l));
+    }
+    return res;
+  }
+
+  // src/ui/model/p90.js
+  var UNITS2 = { "108": "°C" };
+  var unitText = (c) => UNITS2[c] || "";
+  var HEX2 = /^[0-9A-F]{2}$/;
+  var REF_Z = /^(\d{3})\.(\d{3})$/;
+  function parseP1(line) {
+    const m = line.match(/^p1 (\d+)\.(\d+)\.(\d+) ([^\s/]*)\/(\d+) ?(.*)$/);
+    if (!m) return null;
+    const r = { a: m[1], z: +m[2], g: +m[3], base: m[4], inst: parseInt(m[5], 10) || 1, val: "", unit: "", attr: "", st: "", gt: "", quoted: false, tok: [] };
+    let rest = m[6];
+    if (rest.startsWith('"')) {
+      const j = rest.indexOf('"', 1);
+      r.val = rest.slice(1, j < 0 ? void 0 : j);
+      r.quoted = true;
+      rest = j < 0 ? "" : rest.slice(j + 1).trim();
+      const t2 = rest.split(" ");
+      if (HEX2.test(t2[0] || "") && HEX2.test(t2[1] || "")) {
+        r.attr = t2[0];
+        r.st = t2[1];
+        r.gt = t2.slice(2).join(" ").trim();
+      }
+      return r;
+    }
+    const t = rest.split(" ");
+    let i = -1;
+    for (let k = 1; k < t.length - 1; k++) if (t[k] === "0F" && HEX2.test(t[k + 1])) {
+      i = k;
+      break;
+    }
+    if (i < 0) {
+      for (let k = 1; k < t.length - 1; k++) if (HEX2.test(t[k]) && HEX2.test(t[k + 1])) {
+        i = k;
+        break;
+      }
+    }
+    if (i < 0) {
+      r.val = rest.trim();
+      return r;
+    }
+    let v = t.slice(0, i).filter((x) => x !== "");
+    if (v.length >= 2 && /^\d+$/.test(v[v.length - 1]) && !REF_Z.test(v[0])) r.unit = v.pop();
+    r.tok = v;
+    r.val = v.join(" ");
+    r.attr = t[i];
+    r.st = t[i + 1];
+    r.gt = t.slice(i + 2).join(" ").trim();
+    return r;
+  }
+  function defIndex(lines) {
+    const byGroup = /* @__PURE__ */ new Map();
+    for (const l of lines) {
+      const t = l.split(" ");
+      if (t.length < 12) continue;
+      const pm = t[2].match(/^([A-Za-z]*)(\d*)(?:-([A-Za-z]*)(\d+))?$/);
+      if (!pm) continue;
+      const d = {
+        letter: pm[1],
+        lo: pm[2] === "" ? null : +pm[2],
+        hi: pm[4] != null ? +pm[4] : pm[2] === "" ? null : +pm[2],
+        typ: +t[3],
+        max: t[5],
+        min: t[6],
+        dflt: t[7],
+        unit: t[8],
+        attr: parseInt(t[9], 16) || 0,
+        name: t.slice(12).join(" ").trim(),
+        range: pm[4] != null
+      };
+      if (!byGroup.has(t[1])) byGroup.set(t[1], []);
+      byGroup.get(t[1]).push(d);
+    }
+    return (group, base) => {
+      const L = byGroup.get(String(group));
+      if (!L) return null;
+      const m = base.match(/^([A-Za-z]*)(\d*)$/);
+      if (!m) return null;
+      const num = m[2] === "" ? null : +m[2];
+      return L.find((d) => d.letter === m[1] && (num == null ? d.lo == null : d.lo != null && num >= d.lo && num <= d.hi)) || null;
+    };
+  }
+  function kindFromDef(d) {
+    const ist = !!(d.attr & 64);
+    if ([1, 2, 3, 14, 20].includes(d.typ)) return ist ? "AI" : "AX";
+    if ([10, 13].includes(d.typ)) return ist ? "DM" : "DS";
+    if (d.typ === 4) return "TX";
+    if (d.typ === 31 || d.typ === 34) return "V";
+    if (d.typ === 32) return "T";
+    if (d.typ === 33) return "L";
+    return null;
+  }
+  function kindGuess(r) {
+    if (r.quoted) return "TX";
+    if (REF_Z.test(r.tok[0] || "")) return / [EA] \d\d:\d\d/.test(r.val) ? "T" : /^L\d/.test(r.base) ? "L" : "V";
+    const dig = /^[01]$/.test(r.val) && !r.unit;
+    const letter = (r.base.match(/^[A-Za-z]+/) || [""])[0];
+    if (letter === "b" || letter === "y") return "AI";
+    if (letter === "k") return "DM";
+    if (letter && letter === letter.toLowerCase()) return dig ? "DM" : "AI";
+    if (/^2/.test(r.st)) return dig ? "DM" : "AI";
+    return dig ? "DS" : "AX";
+  }
+  function refsOf(tok2) {
+    const out = [];
+    let op = "";
+    for (let i = 0; i < tok2.length; i++) {
+      const z = tok2[i].match(REF_Z);
+      if (z && tok2[i + 1] && /\//.test(tok2[i + 1])) {
+        const [b, n] = tok2[i + 1].split("/");
+        const ni = /^[NI]$/.test(tok2[i + 2] || "") ? tok2[i + 2] : "N";
+        out.push(`${+z[1]}.${+z[2]} ${b}/${parseInt(n, 10) || 1}${ni}${op}`);
+        i += /^[NI]$/.test(tok2[i + 2] || "") ? 2 : 1;
+        const o = (tok2[i + 1] || "").toLowerCase();
+        op = o === "and" || o === "or" ? o : "";
+        if (o && !REF_Z.test(tok2[i + 1])) i++;
+      }
+    }
+    return out;
+  }
+  var DAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+  var timeOk = (v) => {
+    const m = String(v || "").match(/^(\d\d):(\d\d)$/);
+    return m && (+m[1] < 24 || v === "24:00") ? v : "--:--";
+  };
+  function recordsOf(z, devices, def) {
+    const recs = [];
+    const dev0 = devices.find((d) => +d.addr.split(".")[2] === 0);
+    const typ0 = dev0 ? devName(dev0.group, dev0.type) : "DDC3000";
+    recs.push({ kind: "Z", f: { NR: String(z), TYP: typ0 }, sched: {} });
+    recs.push({ kind: "B", f: { TYP: typ0 }, sched: {} });
+    const progs = /* @__PURE__ */ new Map();
+    for (const d of devices) {
+      const g = +d.addr.split(".")[2];
+      if (g !== 0) recs.push({ kind: "K", f: { NR: String(g), TYP: devName(d.group, d.type), GT: "" }, sched: {} });
+      for (const l of d.menus) {
+        const m = l.match(/^m1 \S+ (\S+)(?: (\S+))?/);
+        if (m) recs.push({ kind: "M", f: { NR: m[1], AKTIV: "1" }, sched: {} });
+      }
+      for (const l of d.values) {
+        const r = parseP1(l);
+        if (!r) continue;
+        const D = def(d.group, r.base);
+        const kind = D && kindFromDef(D) || kindGuess(r);
+        const f = { P: r.base + "/" + r.inst, W: r.val, ST: r.st };
+        if (r.gt) f.GT = r.gt;
+        if (D && D.name) {
+          const n = D.range && D.lo != null ? parseInt(r.base.replace(/^[A-Za-z]*/, ""), 10) - D.lo + 1 : r.inst;
+          f.K = D.name.replace(/%\((\d+)\)/, "%(" + n + ")");
+        }
+        const u = unitText(r.unit || D && D.unit || "");
+        if (u) f.E = u;
+        if (kind === "AX" && D) {
+          f.UG = D.min;
+          f.OG = D.max;
+        }
+        if (kind === "V") refsOf(r.tok).slice(0, 4).forEach((x, i) => {
+          f["V" + (i + 1)] = x;
+        });
+        else if (kind === "T") {
+          const [ref] = refsOf(r.tok);
+          if (ref) f.TV = ref;
+          const tz = r.val.match(/ ([EA]) (\S+)$/);
+          if (tz) f.TZ = tz[1] + " " + tz[2].replace(/\/00:00:00$/, "");
+        } else if (kind === "L") {
+          const [a, b] = refsOf(r.tok);
+          if (a) f.LD = a;
+          if (b) f.LB = b;
+        }
+        const sm = D && D.name.match(/^(Mo|Di|Mi|Do|Fr|Sa|So)-(BEGINN|ENDE)(\d)$/i);
+        if (sm && g === 0) {
+          if (!progs.has(r.inst)) progs.set(r.inst, {});
+          const key = (/^B/i.test(sm[2]) ? "BEG" : "END") + sm[3];
+          const P = progs.get(r.inst);
+          if (!P[key]) P[key] = ["", "--:--", "--:--", "--:--", "--:--", "--:--", "--:--", "--:--"];
+          P[key][DAYS.findIndex((x) => x.toLowerCase() === sm[1].toLowerCase()) + 1] = timeOk(r.val);
+          continue;
+        }
+        recs.push({ kind, f, sched: {}, kreis: g });
+      }
+    }
+    return { recs, progs };
+  }
+  function ordered(z, devices, def) {
+    const { recs, progs } = recordsOf(z, devices, def);
+    const out = recs.filter((r) => r.kind === "Z" || r.kind === "B");
+    const rest = recs.filter((r) => r.kind !== "Z" && r.kind !== "B");
+    let cur = 0;
+    const groups = /* @__PURE__ */ new Map([[0, []]]);
+    for (const r of rest) {
+      if (r.kind === "K") {
+        cur = +r.f.NR;
+        groups.set(cur, [r]);
+        continue;
+      }
+      groups.get(cur).push(r);
+    }
+    out.push(...groups.get(0));
+    for (const [nr, sc] of progs) out.push({ kind: "N", f: { NR: String(nr) }, sched: sc });
+    for (const [k, L] of groups) if (k !== 0) out.push(...L);
+    return out;
+  }
+  function parseP90(text, label, fileName2) {
+    const B = parseBackup(text);
+    if (!B.devices.length) throw new Error(B.aborted ? "Sicherung wurde abgebrochen, bevor ein Gerät gelesen war" : "Keine Geräte in der P90-Sicherung");
+    const def = defIndex(B.definitions.D1);
+    const byZ = /* @__PURE__ */ new Map();
+    for (const d of B.devices) {
+      const z = +d.addr.split(".")[1];
+      if (!byZ.has(z)) byZ.set(z, []);
+      byZ.get(z).push(d);
+    }
+    const stamp2 = (B.header.Erstellt || "").replace(/,/, "");
+    const out = [];
+    for (const [z, devices] of byZ) {
+      const C = buildDDC3000(ordered(z, devices, def), label, fileName2, {
+        format: "DDC3000 · P90-Sicherung (.p90)" + (B.definitions.D1.length ? "" : " ohne Definitionen"),
+        stamp: stamp2,
+        stampSrc: stamp2 ? "Sicherung erstellt" : "",
+        values: true
+      });
+      const failed = devices.filter((d) => !d.ok).map((d) => d.addr);
+      C.system.push(
+        { group: "Sicherung", k: "Erstellt", v: B.header.Erstellt || "–" },
+        { group: "Sicherung", k: "Kennung", v: B.header.Kennung || "–" },
+        { group: "Sicherung", k: "Geräte", v: String(devices.length) },
+        { group: "Sicherung", k: "Definitionen", v: B.definitions.D1.length ? B.definitions.D1.length + " Parameterdefinitionen" : "nicht mitgesichert – Art der Werte geschätzt", warn: !B.definitions.D1.length }
+      );
+      if (failed.length) C.system.push({ group: "Sicherung", k: "Geräte mit Fehler", v: failed.join(", "), warn: true });
+      if (B.aborted) C.system.push({ group: "Sicherung", k: "Status", v: "abgebrochen – unvollständig", warn: true });
+      C.p90 = { failed, aborted: B.aborted, defs: B.definitions.D1.length };
+      out.push(C);
+    }
+    return out.length === 1 ? out[0] : out;
+  }
+  FORMATS.add({
+    id: "ddc3000-p90",
+    order: 11,
+    icon: "list",
+    label: "DDC3000 (P90)",
+    desc: "*.p90 – Datensicherung der DDC3000 über RS232 (Reiter „DDC3000 sichern“), alle Zentralen am Bus.",
+    exts: ["p90"],
+    sniff: (name, head) => /^\s*# P90-Sicherung/.test(head) || /\.p90$/i.test(name) && /^\[Gerät \S+ /m.test(head),
+    parse: (text, f) => parseP90(text, f.label, f.name)
   });
 
   // src/ui/model/checks/handeingriffe.js
@@ -2997,32 +3527,32 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return { t: String(o.value), cls: "" };
   }
   function liveText(o) {
-    const S = o && o.source && LIVE_SOURCES.get(o.source);
-    if (S && S.format) {
+    const S2 = o && o.source && LIVE_SOURCES.get(o.source);
+    if (S2 && S2.format) {
       try {
-        return S.format(o);
+        return S2.format(o);
       } catch (e) {
-        console.error("Live-Quelle " + S.id + ":", e);
+        console.error("Live-Quelle " + S2.id + ":", e);
       }
     }
     return defaultLiveText(o);
   }
   function setLive(cid, values, opt) {
-    const o = opt || {}, source = o.source || "bacnet", S = LIVE_SOURCES.get(source);
+    const o = opt || {}, source = o.source || "bacnet", S2 = LIVE_SOURCES.get(source);
     const byNode = /* @__PURE__ */ new Map();
     for (const v of values || []) if (v && v.nodeId && !byNode.has(v.nodeId)) byNode.set(v.nodeId, Object.assign({ source }, v));
     if (!LIVE.has(cid)) LIVE.set(cid, /* @__PURE__ */ new Map());
     const old = LIVE.get(cid).get(source);
-    LIVE.get(cid).set(source, { source, label: S ? S.label : source, ip: o.ip || "", stamp: o.stamp || "", t: Date.now(), byNode, byAddr: old && old.byAddr || /* @__PURE__ */ new Map() });
+    LIVE.get(cid).set(source, { source, label: S2 ? S2.label : source, ip: o.ip || "", stamp: o.stamp || "", t: Date.now(), byNode, byAddr: old && old.byAddr || /* @__PURE__ */ new Map() });
     emit("live", { cid, source, stamp: o.stamp });
   }
   function setLiveAddr(cid, values, opt) {
-    const o = opt || {}, source = o.source || "kp", S = LIVE_SOURCES.get(source);
+    const o = opt || {}, source = o.source || "kp", S2 = LIVE_SOURCES.get(source);
     if (!LIVE.has(cid)) LIVE.set(cid, /* @__PURE__ */ new Map());
     const M = LIVE.get(cid);
     let L = M.get(source);
     if (!L) {
-      L = { source, label: S ? S.label : source, ip: o.ip || "", stamp: "", t: 0, byNode: /* @__PURE__ */ new Map(), byAddr: /* @__PURE__ */ new Map() };
+      L = { source, label: S2 ? S2.label : source, ip: o.ip || "", stamp: "", t: 0, byNode: /* @__PURE__ */ new Map(), byAddr: /* @__PURE__ */ new Map() };
       M.set(source, L);
     }
     const now = Date.now();
@@ -3059,16 +3589,16 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   function wantLive(cid, addrs) {
     const list = [...new Set((addrs || []).filter(Boolean))];
     if (!list.length) return;
-    for (const S of LIVE_SOURCES.list()) if (S.want) {
+    for (const S2 of LIVE_SOURCES.list()) if (S2.want) {
       try {
-        S.want(cid, list);
+        S2.want(cid, list);
       } catch (e) {
-        console.error("Live-Quelle " + S.id + ":", e);
+        console.error("Live-Quelle " + S2.id + ":", e);
       }
     }
   }
   function liveConnected(cid) {
-    return LIVE_SOURCES.list().some((S) => S.connected && S.connected(cid));
+    return LIVE_SOURCES.list().some((S2) => S2.connected && S2.connected(cid));
   }
   function clearLive(cid, source) {
     const M = LIVE.get(cid);
@@ -4866,7 +5396,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     }
     if (!C._mgDoc.isp) return null;
     if (!C._mgDoc.map.has(f.id)) {
-      const S = mangelState(C.cid), rec = S.get(fKey(f));
+      const S2 = mangelState(C.cid), rec = S2.get(fKey(f));
       C._mgDoc.map.set(f.id, docMangelState(C, f, C._mgDoc.isp, rec).st);
     }
     return C._mgDoc.map.get(f.id);
@@ -4940,7 +5470,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const guessed = ix < 0 && isps.length > 1;
     if (ix < 0) ix = 0;
     const isp = isps[ix].isp;
-    const S = mangelState(C.cid);
+    const S2 = mangelState(C.cid);
     APP.mgSev = APP.mgSev || /* @__PURE__ */ new Set(["err", "warn"]);
     const dateIn = h("input", { type: "date", class: "in sm", value: wDateToInput(D.date) });
     dateIn.addEventListener("change", () => {
@@ -4970,11 +5500,11 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const q = norm(APP.mgQ || "");
     const pass = (f) => APP.mgSev.has(f.sev) && (!APP.mgCat || f.cat === APP.mgCat) && ignPass(C, f) && (!q || norm(f.title + " " + f.detail + " " + f.cat + " " + ((findingWhere(C, f) || {}).pin ? findingWhere(C, f).pin.name : "")).includes(q));
     const rowsAll = C.findings.filter(pass).map((f) => {
-      let rec = S.get(fKey(f));
+      let rec = S2.get(fKey(f));
       const ds = docMangelState(C, f, isp, rec);
       if (!rec) {
         rec = { use: !!ds.st, status: ds.st || "offen", text: ds.text || "", origText: ds.text || null, written: [] };
-        S.set(fKey(f), rec);
+        S2.set(fKey(f), rec);
       }
       if (!rec.text) rec.text = mangelText(f, !!(ds.tgt && ds.tgt.art && !ds.tgt.station));
       return { f, rec, tgt: ds.tgt, st: ds.st, ign: isIgnored(C, f) };
@@ -5172,7 +5702,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       return [fc.err && { n: fc.err, cls: "err", title: fc.err + " Fehler" }, fc.warn && { n: fc.warn, cls: "warn", title: fc.warn + " Warnungen" }, fc.err && { dot: true }];
     },
     render(root, C, opts) {
-      const S = vstate("findings", C, () => ({ sev: /* @__PURE__ */ new Set(["err", "warn", "info"]), cat: "", q: "", open: null }));
+      const S2 = vstate("findings", C, () => ({ sev: /* @__PURE__ */ new Set(["err", "warn", "info"]), cat: "", q: "", open: null }));
       const fc = findingsCount(C);
       root.appendChild(pageHead("Befunde", stationSub(C), [
         btn("Bericht kopieren", "copy", () => copyText(findingsText(C, list())).then(() => toast("Befundbericht kopiert.", "ok"))),
@@ -5183,7 +5713,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         }),
         btn("Prüfungen", "sliders", (e) => checksMenu(e.currentTarget, C), "", "Welche automatischen Prüfungen laufen sollen"),
         btn("Drucken", "print", () => {
-          S.open = new Set(cats());
+          S2.open = new Set(cats());
           LAZY.all = true;
           try {
             renderAll();
@@ -5195,16 +5725,16 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       ]));
       const cats = () => uniq(C.findings.map((f) => f.cat));
       const list = () => {
-        const q = norm(S.q);
-        return C.findings.filter((f) => S.sev.has(f.sev) && (!S.cat || f.cat === S.cat) && ignPass(C, f) && (!q || norm(f.title + " " + f.detail + " " + f.cat).includes(q)));
+        const q = norm(S2.q);
+        return C.findings.filter((f) => S2.sev.has(f.sev) && (!S2.cat || f.cat === S2.cat) && ignPass(C, f) && (!q || norm(f.title + " " + f.detail + " " + f.cat).includes(q)));
       };
       const cmd = h(
         "div",
         { class: "cmdbar", style: { padding: "0 32px 12px", borderBottom: "0", background: "transparent" } },
         ...["err", "warn", "info"].map((sv) => h(
           "span",
-          { class: "chip" + (S.sev.has(sv) ? " on" : ""), onclick: () => {
-            S.sev.has(sv) ? S.sev.delete(sv) : S.sev.add(sv);
+          { class: "chip" + (S2.sev.has(sv) ? " on" : ""), onclick: () => {
+            S2.sev.has(sv) ? S2.sev.delete(sv) : S2.sev.add(sv);
             renderAll();
           } },
           h("span", { class: "sw-dot", style: { background: `var(--${sv === "info" ? "inf" : sv})` } }),
@@ -5212,13 +5742,13 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           h("span", { class: "n" }, fc[sv])
         )),
         h("span", { class: "sep" }),
-        selectEl([["", "Alle Bereiche"], ...cats().map((c) => [c, c + " (" + C.findings.filter((f) => f.cat === c && !isIgnored(C, f)).length + ")"])], S.cat, (v) => {
-          S.cat = v;
+        selectEl([["", "Alle Bereiche"], ...cats().map((c) => [c, c + " (" + C.findings.filter((f) => f.cat === c && !isIgnored(C, f)).length + ")"])], S2.cat, (v) => {
+          S2.cat = v;
           renderAll();
         }, "sm"),
         ignFilterEl(),
-        searchBox("Befunde durchsuchen …", S.q, (v) => {
-          S.q = v;
+        searchBox("Befunde durchsuchen …", S2.q, (v) => {
+          S2.q = v;
           draw();
         }, "260px"),
         h("span", { class: "grow" }),
@@ -5242,13 +5772,13 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         body.appendChild(emptyState("check", "Keine Befunde", "Die automatischen Prüfungen haben nichts gefunden."));
         return;
       }
-      if (!S.open) S.open = new Set(uniq(activeFindings(C).filter((f) => f.sev !== "info").map((f) => f.cat)));
+      if (!S2.open) S2.open = new Set(uniq(activeFindings(C).filter((f) => f.sev !== "info").map((f) => f.cat)));
       if (PERSIST.old) body.appendChild(h("div", { class: "infobar warn", style: { marginBottom: "10px" } }, icon("alert"), h("div", { class: "small" }, "Der laufende Dienst ist eine ältere Version ohne Merkliste – Abgehaktes wird nur im Browser gespeichert. Die neue DDC-Werkbank.exe verwenden.")));
       if (opts.focus != null) {
         const f = C.findings.find((x) => x.id === opts.focus);
         if (f) {
-          S.open.add(f.cat);
-          S.sev.add(f.sev);
+          S2.open.add(f.cat);
+          S2.sev.add(f.sev);
           if (isIgnored(C, f) && (APP.ignView || "aus") === "aus") APP.ignView = "an";
         }
       }
@@ -5274,7 +5804,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         }
         const order = [...byCat.entries()].sort((a, b) => Math.max(...b[1].map((f) => SEV[f.sev])) - Math.max(...a[1].map((f) => SEV[f.sev])) || b[1].length - a[1].length);
         for (const [cat, fs] of order) {
-          const open = S.open.has(cat) || !!S.q || APP.ignView === "nur";
+          const open = S2.open.has(cat) || !!S2.q || APP.ignView === "nur";
           const c = { err: 0, warn: 0, info: 0 };
           fs.forEach((f) => c[f.sev]++);
           const bd = h("div", { class: "bd" });
@@ -5292,7 +5822,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
             h(
               "div",
               { class: "hd", onclick: () => {
-                S.open.has(cat) ? S.open.delete(cat) : S.open.add(cat);
+                S2.open.has(cat) ? S2.open.delete(cat) : S2.open.add(cat);
                 build();
                 g.classList.toggle("open");
               } },
@@ -5398,8 +5928,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     order: 150,
     needsC: true,
     render(root, C, opts) {
-      const S = vstate("sched", C, () => ({ tab: C.schedules.length ? "sched" : "alarm", q: "", bsort: "inst" }));
-      if (opts.tab) S.tab = opts.tab;
+      const S2 = vstate("sched", C, () => ({ tab: C.schedules.length ? "sched" : "alarm", q: "", bsort: "inst" }));
+      if (opts.tab) S2.tab = opts.tab;
       root.appendChild(pageHead("Zeit & Meldungen", stationSub(C)));
       const tabs = [
         ["sched", "Zeitprogramme", C.schedules.length, "clock"],
@@ -5409,8 +5939,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         ["bac", "BACnet", C.bacnet.length, "bacnet"],
         ["hours", "Betriebsstunden", C.hours.length, "hours"]
       ].filter((t) => t[2] || t[0] === "sched" || t[0] === "alarm");
-      root.appendChild(h("div", { class: "pivot" }, tabs.map(([k, l, n, ic]) => h("button", { class: S.tab === k ? "on" : "", onclick: () => {
-        S.tab = k;
+      root.appendChild(h("div", { class: "pivot" }, tabs.map(([k, l, n, ic]) => h("button", { class: S2.tab === k ? "on" : "", onclick: () => {
+        S2.tab = k;
         renderAll();
       } }, icon(ic), l, h("span", { class: "badge soft" }, n)))));
       const body = h("div", { class: "page-body", style: { paddingTop: "16px" } });
@@ -5541,7 +6071,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           body.appendChild(g);
         }
       };
-      (T[S.tab] || T.sched)();
+      (T[S2.tab] || T.sched)();
     }
   });
   function table(heads, rows) {
@@ -5594,18 +6124,18 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     order: 120,
     needsC: true,
     render(root, C, opts) {
-      const S = vstate("points", C, () => ({ q: "", kinds: /* @__PURE__ */ new Set(["AE", "AA", "BE", "BA"]), mod: null, flag: "", sort: { k: "klemme", dir: 1 }, sel: null }));
+      const S2 = vstate("points", C, () => ({ q: "", kinds: /* @__PURE__ */ new Set(["AE", "AA", "BE", "BA"]), mod: null, flag: "", sort: { k: "klemme", dir: 1 }, sel: null }));
       if (opts.pin) {
-        S.sel = opts.pin;
+        S2.sel = opts.pin;
         const p = pinOf(C, opts.pin);
         if (p) {
-          if (!S.kinds.has(p.kind)) S.kinds.add(p.kind);
-          if (S.mod && S.mod !== p.module) S.mod = null;
-          S.q = "";
+          if (!S2.kinds.has(p.kind)) S2.kinds.add(p.kind);
+          if (S2.mod && S2.mod !== p.module) S2.mod = null;
+          S2.q = "";
         }
       }
       if (opts.mod) {
-        S.mod = opts.mod;
+        S2.mod = opts.mod;
       }
       let ctx = pinCtx(C);
       root.appendChild(pageHead("Datenpunkte", stationSub(C), [
@@ -5620,8 +6150,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       const mods = C.modules.filter((m) => m.pinCount);
       const railItem = (key, label, small, cnt2) => h(
         "div",
-        { class: "rail-item" + (S.mod === key ? " on" : ""), onclick: () => {
-          S.mod = key;
+        { class: "rail-item" + (S2.mod === key ? " on" : ""), onclick: () => {
+          S2.mod = key;
           renderAll();
         } },
         h("div", { class: "lbl" }, label, small ? h("small", null, small) : null),
@@ -5636,22 +6166,22 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       const cnt = h("span", { class: "muted small" });
       const kc = {};
       C.pins.forEach((p) => {
-        if (!S.mod || p.module === S.mod) kc[p.kind] = (kc[p.kind] || 0) + 1;
+        if (!S2.mod || p.module === S2.mod) kc[p.kind] = (kc[p.kind] || 0) + 1;
       });
       const flags = PIN_FILTERS.list((F) => !F.show || safely("Filter " + F.id, () => F.show(C, ctx), false));
-      if (S.flag && !flags.some((F) => F.id === S.flag)) S.flag = "";
+      if (S2.flag && !flags.some((F) => F.id === S2.flag)) S2.flag = "";
       const cmd = h(
         "div",
         { class: "cmdbar" },
-        searchBox("Klemme, Bezeichnung, Quelle …", S.q, (v) => {
-          S.q = v;
+        searchBox("Klemme, Bezeichnung, Quelle …", S2.q, (v) => {
+          S2.q = v;
           drawTable();
         }, "300px"),
         h("span", { class: "sep" }),
         ...["AE", "AA", "BE", "BA", "frei"].map((k) => h(
           "span",
-          { class: "chip" + (S.kinds.has(k) ? " on" : ""), title: (KIND_INFO[k] || {}).name, onclick: (e) => {
-            S.kinds.has(k) ? S.kinds.delete(k) : S.kinds.add(k);
+          { class: "chip" + (S2.kinds.has(k) ? " on" : ""), title: (KIND_INFO[k] || {}).name, onclick: (e) => {
+            S2.kinds.has(k) ? S2.kinds.delete(k) : S2.kinds.add(k);
             e.currentTarget.classList.toggle("on");
             drawTable();
           } },
@@ -5660,8 +6190,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           h("span", { class: "n" }, kc[k] || 0)
         )),
         h("span", { class: "sep" }),
-        selectEl([["", "Alle Datenpunkte"], ...flags.map((F) => [F.id, F.label])], S.flag, (v) => {
-          S.flag = v;
+        selectEl([["", "Alle Datenpunkte"], ...flags.map((F) => [F.id, F.label])], S2.flag, (v) => {
+          S2.flag = v;
           drawTable();
         }, "sm"),
         h("span", { class: "grow" }),
@@ -5670,16 +6200,16 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       center.appendChild(cmd);
       const wrap = h("div", { class: "grid-wrap" });
       center.appendChild(wrap);
-      const drawer = h("div", { class: "drawer", hidden: !S.sel });
+      const drawer = h("div", { class: "drawer", hidden: !S2.sel });
       split.appendChild(drawer);
       function filtered() {
         ctx = pinCtx(C);
-        const q = norm(S.q);
-        let list = C.pins.filter((p) => S.kinds.has(p.kind) && (!S.mod || p.module === S.mod));
+        const q = norm(S2.q);
+        let list = C.pins.filter((p) => S2.kinds.has(p.kind) && (!S2.mod || p.module === S2.mod));
         if (q) list = list.filter((p) => norm([p.klemme, p.name, p.paraText, p.kind, p.subType, pinValue(p), p.sources.map((e) => edgeLabel(C, e)).join(" "), pinBac(p)].join(" ")).includes(q));
-        const F = S.flag && PIN_FILTERS.get(S.flag);
+        const F = S2.flag && PIN_FILTERS.get(S2.flag);
         if (F) list = list.filter((p) => safely("Filter " + F.id, () => F.test(p, ctx, C), false));
-        const col = PIN_COLUMNS.get(S.sort.k), d = S.sort.dir;
+        const col = PIN_COLUMNS.get(S2.sort.k), d = S2.sort.dir;
         const key = col && col.sort ? (p) => col.sort(p, ctx) : (p) => p.klemme;
         const keyed = list.map((p) => [key(p), p]);
         keyed.sort((a, b) => {
@@ -5694,12 +6224,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         return h(
           "th",
           { class: "sort " + (col.cls || ""), title, onclick: () => {
-            if (S.sort.k === col.id) S.sort.dir *= -1;
-            else S.sort = { k: col.id, dir: 1 };
+            if (S2.sort.k === col.id) S2.sort.dir *= -1;
+            else S2.sort = { k: col.id, dir: 1 };
             drawTable();
           } },
           col.label,
-          S.sort.k === col.id ? h("span", { class: "arr" }, S.sort.dir > 0 ? "▲" : "▼") : null
+          S2.sort.k === col.id ? h("span", { class: "arr" }, S2.sort.dir > 0 ? "▲" : "▼") : null
         );
       }
       function drawTable() {
@@ -5717,7 +6247,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         t.appendChild(tb);
         wrap.appendChild(t);
         const row = (p) => {
-          const tr = h("tr", { class: "click" + (S.sel === p.uid ? " on" : "") + (p.kind === "frei" ? " dim" : ""), "data-uid": p.uid });
+          const tr = h("tr", { class: "click" + (S2.sel === p.uid ? " on" : "") + (p.kind === "frei" ? " dim" : ""), "data-uid": p.uid });
           for (const X of cols) {
             const v = safely("Spalte " + X.id, () => X.cell(C, p, ctx), null);
             const isTd = v && typeof v === "object" && "td" in v;
@@ -5728,12 +6258,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         tb.addEventListener("click", (e) => {
           const tr = e.target.closest("tr[data-uid]");
           if (!tr || e.defaultPrevented) return;
-          S.sel = tr.dataset.uid;
+          S2.sel = tr.dataset.uid;
           $$("tr.on", tb).forEach((x) => x.classList.remove("on"));
           tr.classList.add("on");
           drawDrawer();
         });
-        const selIdx = S.sel ? list.findIndex((p) => p.uid === S.sel) : -1;
+        const selIdx = S2.sel ? list.findIndex((p) => p.uid === S2.sel) : -1;
         lazyAppend(tb, list, row, { first: 120, until: selIdx >= 0 ? selIdx + 20 : null, scroller: wrap });
         const on2 = $("tr.on", tb);
         if (on2 && opts.pin) {
@@ -5745,7 +6275,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         }
       }
       function drawDrawer() {
-        const p = pinOf(C, S.sel);
+        const p = pinOf(C, S2.sel);
         drawer.innerHTML = "";
         if (!p) {
           drawer.hidden = true;
@@ -5753,7 +6283,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         }
         drawer.hidden = false;
         drawer.appendChild(pinDetail(C, p, () => {
-          S.sel = null;
+          S2.sel = null;
           drawer.hidden = true;
           $$("tr.on", wrap).forEach((x) => x.classList.remove("on"));
         }));
@@ -6092,7 +6622,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     needsC: true,
     compact: true,
     render(root, C, opts) {
-      const S = vstate("program", C, () => ({
+      const S2 = vstate("program", C, () => ({
         vis: defaultVis(C),
         sel: null,
         mode: "plan",
@@ -6111,39 +6641,39 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       let center = null;
       if (opts.node && C.nodes.has(opts.node)) {
         const n = C.nodes.get(opts.node);
-        S.sel = n.id;
+        S2.sel = n.id;
         center = n.id;
         if (opts.chain) {
-          S.mode = "chain";
-          S.chain = { target: n.id, dir: opts.chain };
-          S.cview = null;
-          S.tab = "diag";
+          S2.mode = "chain";
+          S2.chain = { target: n.id, dir: opts.chain };
+          S2.cview = null;
+          S2.tab = "diag";
         } else {
-          S.mode = "plan";
-          if (!S.vis.has(n.gKey) && !(n.isPin && opts.add)) {
-            if (opts.add) S.vis.add(n.gKey);
-            else S.vis = /* @__PURE__ */ new Set([n.gKey]);
-            S.view = null;
+          S2.mode = "plan";
+          if (!S2.vis.has(n.gKey) && !(n.isPin && opts.add)) {
+            if (opts.add) S2.vis.add(n.gKey);
+            else S2.vis = /* @__PURE__ */ new Set([n.gKey]);
+            S2.view = null;
           }
           const pk = programTree(C).find((p) => p.groups.some((g) => g.key === n.gKey));
-          if (pk) S.open.add(pk.key);
+          if (pk) S2.open.add(pk.key);
         }
       }
       root.appendChild(pageHead("Programm & Wirkkette", stationSub(C), [
         h(
           "div",
           { class: "seg" },
-          h("button", { class: S.mode === "plan" ? "on" : "", onclick: () => {
-            S.mode = "plan";
+          h("button", { class: S2.mode === "plan" ? "on" : "", onclick: () => {
+            S2.mode = "plan";
             renderAll();
           } }, icon("flow"), "Plan"),
-          h("button", { class: S.mode === "chain" ? "on" : "", onclick: () => {
-            if (!S.chain) {
-              if (!S.sel) return toast("Erst einen Baustein auswählen – dann zeigt die Wirkkette, wovon er abhängt oder worauf er wirkt.", "inf");
-              S.chain = { target: S.sel, dir: "up" };
+          h("button", { class: S2.mode === "chain" ? "on" : "", onclick: () => {
+            if (!S2.chain) {
+              if (!S2.sel) return toast("Erst einen Baustein auswählen – dann zeigt die Wirkkette, wovon er abhängt oder worauf er wirkt.", "inf");
+              S2.chain = { target: S2.sel, dir: "up" };
             }
-            S.mode = "chain";
-            S.tab = "diag";
+            S2.mode = "chain";
+            S2.tab = "diag";
             renderAll();
           } }, icon("target"), "Wirkkette")
         )
@@ -6155,9 +6685,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       const rail = h("div", { class: "rail", style: { width: "260px", padding: "0" } });
       split.appendChild(rail);
       const treeBox = h("div", { class: "tree" });
-      const tq = h("input", { type: "search", placeholder: "Gruppe filtern …", value: S.q });
+      const tq = h("input", { type: "search", placeholder: "Gruppe filtern …", value: S2.q });
       tq.addEventListener("input", () => {
-        S.q = tq.value;
+        S2.q = tq.value;
         drawTree();
       });
       rail.appendChild(h(
@@ -6168,52 +6698,52 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           "div",
           { class: "row", style: { marginTop: "8px", gap: "4px" } },
           btn("Alle", null, () => {
-            S.vis = new Set(programTree(C).filter((p) => p.kind === 2).flatMap((p) => p.groups.map((g) => g.key)));
-            S.view = null;
-            S.mode = "plan";
+            S2.vis = new Set(programTree(C).filter((p) => p.kind === 2).flatMap((p) => p.groups.map((g) => g.key)));
+            S2.view = null;
+            S2.mode = "plan";
             renderAll();
           }, "sm", "Alle Anlagen zeigen (ohne System)"),
           btn("Keine", null, () => {
-            S.vis = /* @__PURE__ */ new Set();
-            S.mode = "plan";
+            S2.vis = /* @__PURE__ */ new Set();
+            S2.mode = "plan";
             renderAll();
           }, "sm"),
           h("span", { class: "grow" }),
-          h("span", { class: "small muted" }, S.vis.size + " sichtbar")
+          h("span", { class: "small muted" }, S2.vis.size + " sichtbar")
         )
       ));
       rail.appendChild(treeBox);
       function drawTree() {
         treeBox.innerHTML = "";
-        const q = norm(S.q);
+        const q = norm(S2.q);
         for (const P of programTree(C)) {
           const gs = P.groups.filter((g) => !q || norm(P.label + " " + groupLabel(C, g) + " " + g.key).includes(q));
           if (!gs.length) continue;
-          const open = S.open.has(P.key) || !!q;
-          const allVis = gs.every((g) => S.vis.has(g.key)), anyVis = gs.some((g) => S.vis.has(g.key));
+          const open = S2.open.has(P.key) || !!q;
+          const allVis = gs.every((g) => S2.vis.has(g.key)), anyVis = gs.some((g) => S2.vis.has(g.key));
           const pSev = maxSev(gs.flatMap((g) => g.nodes.map((id) => C.nodeSev.get(id))));
           const row = h(
             "div",
             { class: "tree-row" + (open ? " open" : "") },
             h("span", { class: "tw", onclick: (e) => {
               e.stopPropagation();
-              open ? S.open.delete(P.key) : S.open.add(P.key);
+              open ? S2.open.delete(P.key) : S2.open.add(P.key);
               drawTree();
             } }, icon("chev")),
             h("span", { class: "lbl", style: { fontWeight: 600 }, title: P.label, onclick: () => {
-              S.vis = new Set(gs.map((g) => g.key));
-              S.mode = "plan";
-              S.view = null;
-              S.open.add(P.key);
+              S2.vis = new Set(gs.map((g) => g.key));
+              S2.mode = "plan";
+              S2.view = null;
+              S2.open.add(P.key);
               renderAll();
             } }, P.label),
             pSev ? h("span", { class: "sevdot " + pSev }) : null,
             h("span", { class: "cnt" }, gs.reduce((s2, g) => s2 + g.nodes.length, 0)),
             h("span", { class: "vis" + (anyVis ? " on" : ""), title: allVis ? "ausblenden" : "einblenden", onclick: (e) => {
               e.stopPropagation();
-              gs.forEach((g) => allVis ? S.vis.delete(g.key) : S.vis.add(g.key));
-              S.mode = "plan";
-              S.view = null;
+              gs.forEach((g) => allVis ? S2.vis.delete(g.key) : S2.vis.add(g.key));
+              S2.mode = "plan";
+              S2.view = null;
               renderAll();
             } }, icon(anyVis ? "eye" : "eyeoff"))
           );
@@ -6221,24 +6751,24 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           if (!open) continue;
           const kidsBox = h("div", { class: "tree-kids" });
           for (const g of gs) {
-            const vis = S.vis.has(g.key);
+            const vis = S2.vis.has(g.key);
             const gSev = maxSev(g.nodes.map((id) => C.nodeSev.get(id)));
             kidsBox.appendChild(h(
               "div",
-              { class: "tree-row" + (vis && S.vis.size === 1 ? " on" : ""), title: g.key },
+              { class: "tree-row" + (vis && S2.vis.size === 1 ? " on" : ""), title: g.key },
               h("span", { class: "lbl", onclick: () => {
-                S.vis = /* @__PURE__ */ new Set([g.key]);
-                S.mode = "plan";
-                S.view = null;
+                S2.vis = /* @__PURE__ */ new Set([g.key]);
+                S2.mode = "plan";
+                S2.view = null;
                 renderAll();
               } }, groupLabel(C, g), g.ghostGroup ? h("span", { class: "faint" }, " (fehlt)") : null),
               gSev ? h("span", { class: "sevdot " + gSev }) : null,
               h("span", { class: "cnt" }, g.nodes.length),
               h("span", { class: "vis" + (vis ? " on" : ""), onclick: (e) => {
                 e.stopPropagation();
-                vis ? S.vis.delete(g.key) : S.vis.add(g.key);
-                S.mode = "plan";
-                S.view = null;
+                vis ? S2.vis.delete(g.key) : S2.vis.add(g.key);
+                S2.mode = "plan";
+                S2.view = null;
                 renderAll();
               } }, icon(vis ? "eye" : "eyeoff"))
             ));
@@ -6262,11 +6792,11 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       const world = s("g", null, svg);
       const panel = h("div", { class: "drawer", style: { width: "400px", position: "relative" } });
       split.appendChild(panel);
-      const viewKey = S.mode === "chain" ? "cview" : "view";
+      const viewKey = S2.mode === "chain" ? "cview" : "view";
       const V = { x: 0, y: 0, k: 1 };
       const apply = () => {
         world.setAttribute("transform", `translate(${V.x},${V.y}) scale(${V.k})`);
-        S[viewKey] = { x: V.x, y: V.y, k: V.k };
+        S2[viewKey] = { x: V.x, y: V.y, k: V.k };
       };
       let L = null;
       canvas.addEventListener("wheel", (e) => {
@@ -6294,8 +6824,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         apply();
       };
       const onUp = () => {
-        if (pan && !pan.moved && S.mode === "plan" && S.sel) {
-          S.sel = null;
+        if (pan && !pan.moved && S2.mode === "plan" && S2.sel) {
+          S2.sel = null;
           highlight();
           drawPanel();
         }
@@ -6353,7 +6883,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       function buildPlan() {
         world.innerHTML = "";
         const vis = /* @__PURE__ */ new Set();
-        for (const gk of S.vis) {
+        for (const gk of S2.vis) {
           const g = C.groups.get(gk);
           if (g) g.nodes.forEach((id) => vis.add(id));
         }
@@ -6366,9 +6896,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           const g = C.groups.get(n.gKey);
           if (isSysNode(n) && !(g && groupIsSystem(C, g))) vis.delete(id);
           else if (n.isPin && n.pin && n.pin.kind === "frei" && !edgesIn(C, id).length && !edgesOut(C, id).length) vis.delete(id);
-          else if (S.orphans && !edgesIn(C, id).length && !edgesOut(C, id).length) vis.delete(id);
+          else if (S2.orphans && !edgesIn(C, id).length && !edgesOut(C, id).length) vis.delete(id);
         }
-        if (S.withPins) {
+        if (S2.withPins) {
           const extra = [];
           for (const id of vis) {
             for (const e of edgesIn(C, id)) {
@@ -6504,7 +7034,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           const b = boxes.get(n.id);
           b.x = G.x + b.rx;
           b.y = G.y + b.ry;
-          const p = S.pos.get(n.id);
+          const p = S2.pos.get(n.id);
           if (p) {
             b.x = p.x;
             b.y = p.y;
@@ -6571,9 +7101,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
             const hit = s("path", { d, class: "ehit" }, el);
             hit.addEventListener("mousemove", (ev) => showTip(ev, edgeTipHtml(e)));
             hit.addEventListener("mouseleave", hideTip);
-            hit.addEventListener("click", () => selectNode(e.from === S.sel ? e.to : e.from, true));
+            hit.addEventListener("click", () => selectNode(e.from === S2.sel ? e.to : e.from, true));
             edgeEls.push({ e, p, hit });
-            if (S.labels && (e.fromRest || e.transform)) {
+            if (S2.labels && (e.fromRest || e.transform)) {
               const t = s("text", { x: b.x - 6, y: y2 - 3, class: "elbl", "text-anchor": "end" }, el);
               t.textContent = trunc((e.fromRest ? "/" + e.fromRest : "") + (isInvertedEdge(e) ? " INV" : ""), 22);
             }
@@ -6651,7 +7181,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           const up = () => {
             window.removeEventListener("mousemove", mv);
             window.removeEventListener("mouseup", up);
-            if (drag.moved) S.pos.set(n.id, { x: b.x, y: b.y });
+            if (drag.moved) S2.pos.set(n.id, { x: b.x, y: b.y });
             else selectNode(n.id, false);
             drag = null;
           };
@@ -6674,8 +7204,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         }
       }
       function highlight() {
-        if (S.mode !== "plan") return;
-        const sel = S.sel && L && L.boxes.has(S.sel) ? S.sel : null;
+        if (S2.mode !== "plan") return;
+        const sel = S2.sel && L && L.boxes.has(S2.sel) ? S2.sel : null;
         const near = /* @__PURE__ */ new Set();
         if (sel) {
           near.add(sel);
@@ -6695,8 +7225,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         }
       }
       function selectNode(id, centerIt) {
-        S.sel = id;
-        if (S.mode === "plan") highlight();
+        S2.sel = id;
+        if (S2.mode === "plan") highlight();
         else markChain();
         drawPanel();
         if (centerIt) centerOn(id);
@@ -6704,14 +7234,14 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       function focusNode(id) {
         const n = C.nodes.get(id);
         if (!n) return;
-        if (S.mode === "chain") {
+        if (S2.mode === "chain") {
           if (L && L.boxes.has(id)) return selectNode(id, true);
-          S.sel = id;
-          S.mode = "plan";
+          S2.sel = id;
+          S2.mode = "plan";
         }
         if (L && L.boxes.has(id)) return selectNode(id, true);
         if (n.isPin) {
-          S.sel = id;
+          S2.sel = id;
           highlight();
           drawPanel();
           return;
@@ -6719,21 +7249,21 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         go("program", { node: id, add: true });
       }
       function startChain(id, dir) {
-        S.chain = { target: id, dir };
-        S.sel = id;
-        S.mode = "chain";
-        S.cview = null;
-        S.tab = "diag";
+        S2.chain = { target: id, dir };
+        S2.sel = id;
+        S2.mode = "chain";
+        S2.cview = null;
+        S2.tab = "diag";
         renderAll();
       }
       let CH = null;
       function buildChainLayout() {
         world.innerHTML = "";
-        if (!S.chain || !C.nodes.has(S.chain.target)) {
+        if (!S2.chain || !C.nodes.has(S2.chain.target)) {
           L = null;
           return false;
         }
-        CH = buildChain(C, S.chain.target, S.chain.dir, 10, 140);
+        CH = buildChain(C, S2.chain.target, S2.chain.dir, 10, 140);
         const boxes = /* @__PURE__ */ new Map();
         const maxL = CH.levels.length - 1;
         const colH = [];
@@ -6741,10 +7271,10 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           let y = 50;
           for (const id of ids) {
             const n = C.nodes.get(id);
-            const rows = cardRows(C, n, S.allRows, CH);
+            const rows = cardRows(C, n, S2.allRows, CH);
             const nameH = n.name ? 16 : 0, fH = n.formula ? 16 : 0;
             const hgt = PG.CHEAD + nameH + fH + rows.length * PG.CROW + 10;
-            const x = (S.chain.dir === "up" ? maxL - lvl : lvl) * (PG.CW + PG.CGX);
+            const x = (S2.chain.dir === "up" ? maxL - lvl : lvl) * (PG.CW + PG.CGX);
             boxes.set(id, { id, rows, x, y, w: PG.CW, h: hgt, lvl, nameH, fH, outY: 17 });
             y += hgt + PG.CGY;
           }
@@ -6767,9 +7297,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         edgeEls = [];
         nodeEls = /* @__PURE__ */ new Map();
         for (let lvl = 0; lvl <= maxL; lvl++) {
-          const x = (S.chain.dir === "up" ? maxL - lvl : lvl) * (PG.CW + PG.CGX);
+          const x = (S2.chain.dir === "up" ? maxL - lvl : lvl) * (PG.CW + PG.CGX);
           const t = s("text", { x, y: 26, class: "lvl" }, ll);
-          t.textContent = lvl === 0 ? "★ ZIEL" : (S.chain.dir === "up" ? "QUELLEN · STUFE " : "WIRKUNG · STUFE ") + lvl;
+          t.textContent = lvl === 0 ? "★ ZIEL" : (S2.chain.dir === "up" ? "QUELLEN · STUFE " : "WIRKUNG · STUFE ") + lvl;
         }
         for (const e of CH.edges) {
           const a = L.boxes.get(e.from), b = L.boxes.get(e.to);
@@ -6777,7 +7307,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           const ri = b.rows.findIndex((r) => !r.isOut && r.addr === e.toPara && (r.sub || "") === (e.toSub || ""));
           const y2 = ri >= 0 ? rowY(b, ri) : b.y + b.h / 2;
           const role = ri >= 0 ? b.rows[ri].role : "";
-          const cls = "e" + (isInvertedEdge(e) ? " inv" : role === "release" ? " gate" : role === "block" ? " blk" : e.to === S.chain.target || e.from === S.chain.target ? " hot" : "");
+          const cls = "e" + (isInvertedEdge(e) ? " inv" : role === "release" ? " gate" : role === "block" ? " blk" : e.to === S2.chain.target || e.from === S2.chain.target ? " hot" : "");
           const d = edgeD(a, b, y2);
           const p = s("path", { d, class: cls, "marker-end": "url(#ahN)" }, el);
           const hit = s("path", { d, class: "ehit" }, el);
@@ -6787,7 +7317,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         }
         for (const [id, b] of L.boxes) {
           const n = C.nodes.get(id);
-          const g = s("g", { class: "card-c nd" + (id === S.chain.target ? " target" : "") + (n.ghost ? " ghost" : "") + (n.isPin && n.pin ? " pin " + n.pin.kind : ""), transform: `translate(${b.x},${b.y})` }, nl);
+          const g = s("g", { class: "card-c nd" + (id === S2.chain.target ? " target" : "") + (n.ghost ? " ghost" : "") + (n.isPin && n.pin ? " pin " + n.pin.kind : ""), transform: `translate(${b.x},${b.y})` }, nl);
           s("rect", { class: "b", width: b.w, height: b.h, rx: 6 }, g);
           s("rect", { class: "hd", width: b.w - 2, height: PG.CHEAD - 6, x: 1, y: 1, rx: 5 }, g);
           const ad = s("text", { x: 10, y: 16, class: "ad" }, g);
@@ -6824,37 +7354,37 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           const sev = C.nodeSev.get(id);
           if (sev) s("circle", { cx: b.w - 2, cy: 2, r: 5, class: "sevmark " + sev }, g);
           g.addEventListener("click", () => selectNode(id, false));
-          g.addEventListener("dblclick", () => startChain(id, S.chain.dir));
+          g.addEventListener("dblclick", () => startChain(id, S2.chain.dir));
           nodeEls.set(id, g);
         }
         markChain();
       }
       function markChain() {
-        for (const [id, g] of nodeEls) g.classList.toggle("sel", id === S.sel && id !== (S.chain && S.chain.target));
+        for (const [id, g] of nodeEls) g.classList.toggle("sel", id === S2.sel && id !== (S2.chain && S2.chain.target));
       }
       const ov = h("div", { class: "overlay-tl" });
       canvas.appendChild(ov);
       let ok;
-      if (S.mode === "chain") {
+      if (S2.mode === "chain") {
         ok = buildChainLayout();
         if (ok) {
-          const t = C.nodes.get(S.chain.target);
+          const t = C.nodes.get(S2.chain.target);
           ov.appendChild(h(
             "div",
             { class: "chainbar" },
             btn(null, "left", () => {
-              S.mode = "plan";
+              S2.mode = "plan";
               renderAll();
             }, "subtle sm", "Zurück zum Plan"),
-            h("div", null, h("b", null, "Wirkkette " + (S.chain.dir === "up" ? "← Ursachen" : "→ Wirkung") + ": " + t.addr), " ", h("span", { class: "m" }, trunc(t.name || TYPE_NAMES[t.type] || "", 40) + " · " + CH.nodes.size + " Bausteine · " + CH.edges.length + " Verknüpfungen" + (CH.cut ? " · gekürzt" : ""))),
+            h("div", null, h("b", null, "Wirkkette " + (S2.chain.dir === "up" ? "← Ursachen" : "→ Wirkung") + ": " + t.addr), " ", h("span", { class: "m" }, trunc(t.name || TYPE_NAMES[t.type] || "", 40) + " · " + CH.nodes.size + " Bausteine · " + CH.edges.length + " Verknüpfungen" + (CH.cut ? " · gekürzt" : ""))),
             h(
               "div",
               { class: "seg" },
-              h("button", { class: S.chain.dir === "up" ? "on" : "", title: "Was beeinflusst diesen Baustein?", onclick: () => startChain(S.chain.target, "up") }, icon("left"), "Ursachen"),
-              h("button", { class: S.chain.dir === "down" ? "on" : "", title: "Worauf wirkt dieser Baustein?", onclick: () => startChain(S.chain.target, "down") }, "Wirkung", icon("right"))
+              h("button", { class: S2.chain.dir === "up" ? "on" : "", title: "Was beeinflusst diesen Baustein?", onclick: () => startChain(S2.chain.target, "up") }, icon("left"), "Ursachen"),
+              h("button", { class: S2.chain.dir === "down" ? "on" : "", title: "Worauf wirkt dieser Baustein?", onclick: () => startChain(S2.chain.target, "down") }, "Wirkung", icon("right"))
             ),
-            chk("alle Parameter", S.allRows, (v) => {
-              S.allRows = v;
+            chk("alle Parameter", S2.allRows, (v) => {
+              S2.allRows = v;
               renderAll();
             })
           ));
@@ -6865,42 +7395,42 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           "div",
           { class: "chainbar" },
           h("span", { class: "m" }, L ? L.vis.size + " Bausteine · Doppelklick öffnet die Wirkkette" : ""),
-          chk("Klemmen einblenden", S.withPins, (v) => {
-            S.withPins = v;
-            S.view = null;
+          chk("Klemmen einblenden", S2.withPins, (v) => {
+            S2.withPins = v;
+            S2.view = null;
             renderAll();
           }),
-          chk("Ausgang-Beschriftung", S.labels, (v) => {
-            S.labels = v;
+          chk("Ausgang-Beschriftung", S2.labels, (v) => {
+            S2.labels = v;
             renderAll();
           }),
-          chk("Unverknüpfte ausblenden", S.orphans, (v) => {
-            S.orphans = v;
-            S.view = null;
+          chk("Unverknüpfte ausblenden", S2.orphans, (v) => {
+            S2.orphans = v;
+            S2.view = null;
             renderAll();
           })
         ));
       }
-      if (!ok) canvas.appendChild(h("div", { style: { position: "absolute", inset: "70px 0 0 0" } }, emptyState("flow", S.mode === "chain" ? "Keine Wirkkette" : "Nichts eingeblendet", S.mode === "chain" ? "Baustein im Plan auswählen und „Wirkkette“ wählen." : "Links eine Anlage oder Gruppe anklicken.")));
+      if (!ok) canvas.appendChild(h("div", { style: { position: "absolute", inset: "70px 0 0 0" } }, emptyState("flow", S2.mode === "chain" ? "Keine Wirkkette" : "Nichts eingeblendet", S2.mode === "chain" ? "Baustein im Plan auswählen und „Wirkkette“ wählen." : "Links eine Anlage oder Gruppe anklicken.")));
       canvas.appendChild(h("div", { class: "note" }, h("span", null, "Ziehen = verschieben · Mausrad = zoomen · Linie: ", h("span", { style: { color: "var(--e-inv)" } }, "rot gestrichelt = invertiert"), " · ", h("span", { style: { color: "var(--e-gate)" } }, "grün = Freigabe"))));
       function drawPanel() {
         panel.innerHTML = "";
-        const id = S.sel;
-        const showDiag = S.mode === "chain" && CH;
+        const id = S2.sel;
+        const showDiag = S2.mode === "chain" && CH;
         if (showDiag) {
           panel.appendChild(h(
             "div",
             { class: "pivot", style: { padding: "0 12px" } },
-            h("button", { class: S.tab === "diag" ? "on" : "", onclick: () => {
-              S.tab = "diag";
+            h("button", { class: S2.tab === "diag" ? "on" : "", onclick: () => {
+              S2.tab = "diag";
               drawPanel();
             } }, icon("wrench"), "Diagnose"),
-            h("button", { class: S.tab === "detail" ? "on" : "", onclick: () => {
-              S.tab = "detail";
+            h("button", { class: S2.tab === "detail" ? "on" : "", onclick: () => {
+              S2.tab = "detail";
               drawPanel();
             } }, icon("info"), "Details")
           ));
-          if (S.tab === "diag") {
+          if (S2.tab === "diag") {
             panel.appendChild(checklist(C, CH, (x) => selectNode(x, true)));
             return;
           }
@@ -6912,8 +7442,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         }
         panel.hidden = false;
         panel.appendChild(btn(null, "close", () => {
-          S.sel = null;
-          if (S.mode === "plan") highlight();
+          S2.sel = null;
+          if (S2.mode === "plan") highlight();
           else markChain();
           drawPanel();
         }, "subtle sm", "Schließen")).style.cssText = "position:absolute;right:10px;top:" + (showDiag ? "54px" : "10px") + ";z-index:5";
@@ -6925,12 +7455,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       drawPanel();
       requestAnimationFrame(() => {
         if (!L) return;
-        const saved = S[viewKey];
+        const saved = S2[viewKey];
         const r = canvas.getBoundingClientRect();
-        if (S.mode === "chain" && !saved && S.chain) {
-          const b = L.boxes.get(S.chain.target);
+        if (S2.mode === "chain" && !saved && S2.chain) {
+          const b = L.boxes.get(S2.chain.target);
           V.k = Math.min(1, Math.max(0.85, Math.min((r.width - 60) / L.w, (r.height - 90) / L.h)));
-          V.x = L.w * V.k <= r.width - 40 ? (r.width - L.w * V.k) / 2 : S.chain.dir === "up" ? r.width - (b.x + b.w) * V.k - 40 : 40 - b.x * V.k;
+          V.x = L.w * V.k <= r.width - 40 ? (r.width - L.w * V.k) / 2 : S2.chain.dir === "up" ? r.width - (b.x + b.w) * V.k - 40 : 40 - b.x * V.k;
           V.y = L.h * V.k <= r.height - 70 ? Math.max(56, (r.height - L.h * V.k) / 2 + 20) : r.height / 2 - (b.y + Math.min(b.h, 240) / 2) * V.k;
           apply();
         } else if (center && L.boxes.has(center)) {
@@ -8260,12 +8790,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return pref("lkInfoMode", "klemme");
   }
   function lkDecide(D, isp, x, patch) {
-    const S = lkStore(D), k = lkIspKey(isp) + "|" + x.key;
-    const d = Object.assign({}, S.art[k] || {}, patch);
+    const S2 = lkStore(D), k = lkIspKey(isp) + "|" + x.key;
+    const d = Object.assign({}, S2.art[k] || {}, patch);
     if (d.rej && !d.rej.length) delete d.rej;
     if (!d.none) delete d.none;
-    if (Object.keys(d).length) S.art[k] = d;
-    else delete S.art[k];
+    if (Object.keys(d).length) S2.art[k] = d;
+    else delete S2.art[k];
     lkSave(D);
   }
   function lkCommit(D, items) {
@@ -8408,7 +8938,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     go("wartung", { tab: "link" });
   }
   function wdLinkTab(body, D) {
-    const S = D.lk || (D.lk = { sel: null, filter: "offen" });
+    const S2 = D.lk || (D.lk = { sel: null, filter: "offen" });
     const rerender = () => renderAll();
     if (!APP.centrals.length) {
       body.appendChild(h("div", { class: "card", style: { maxWidth: "860px" } }, emptyState(
@@ -8428,7 +8958,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       const L = lkLinks(D, o.isp);
       return Object.assign({}, o, { L, s: lkIspStats(L) });
     });
-    if (!S.sel || !D.doc.contains(S.sel)) S.sel = (all.find((o) => o.s.open || !o.L.C) || all[0]).isp;
+    if (!S2.sel || !D.doc.contains(S2.sel)) S2.sel = (all.find((o) => o.s.open || !o.L.C) || all[0]).isp;
     const T = all.reduce((t, o) => {
       t.total += o.s.total;
       t.on += o.s.on;
@@ -8486,8 +9016,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const main = h("div", { class: "center wd-main", style: { padding: "16px 20px", overflow: "auto" } });
     split.appendChild(rail);
     split.appendChild(main);
-    if (S._last !== S.sel) main.dataset.noRestore = "1";
-    S._last = S.sel;
+    if (S2._last !== S2.sel) main.dataset.noRestore = "1";
+    S2._last = S2.sel;
     let lastB = null;
     for (const o of all) {
       if (o.bte !== lastB) {
@@ -8497,9 +9027,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       const dot = !o.L.C ? "err" : o.s.open ? "warn" : "ok";
       rail.appendChild(h(
         "div",
-        { class: "rail-item" + (S.sel === o.isp ? " on" : ""), onclick: () => {
-          S.sel = o.isp;
-          S.flash = null;
+        { class: "rail-item" + (S2.sel === o.isp ? " on" : ""), onclick: () => {
+          S2.sel = o.isp;
+          S2.flash = null;
           rerender();
         } },
         h("span", { class: "sevdot " + dot }),
@@ -8512,9 +9042,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         o.s.open ? h("span", { class: "badge warn" }, o.s.open) : null
       ));
     }
-    lkIspDetail(main, D, all.find((o) => o.isp === S.sel), S, rerender);
+    lkIspDetail(main, D, all.find((o) => o.isp === S2.sel), S2, rerender);
   }
-  function lkIspDetail(main, D, o, S, rerender) {
+  function lkIspDetail(main, D, o, S2, rerender) {
     const { isp, L, s: s2 } = o;
     const C = L.C;
     const man = lkStore(D).isp[lkIspKey(isp)];
@@ -8548,9 +9078,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       ok: rows.filter((r) => LK_ON.has(r.l.st) && !r.l.conflict),
       fehlt: L.missing
     };
-    if (!F[S.filter]) S.filter = "offen";
-    const seg = h("div", { class: "seg" }, [["offen", "Offen"], ["alle", "Alle"], ["ok", "Verknüpft"], ["fehlt", "Klemmen ohne Eintrag"]].map(([k, l]) => h("button", { class: S.filter === k ? "on" : "", onclick: () => {
-      S.filter = k;
+    if (!F[S2.filter]) S2.filter = "offen";
+    const seg = h("div", { class: "seg" }, [["offen", "Offen"], ["alle", "Alle"], ["ok", "Verknüpft"], ["fehlt", "Klemmen ohne Eintrag"]].map(([k, l]) => h("button", { class: S2.filter === k ? "on" : "", onclick: () => {
+      S2.filter = k;
       rerender();
     } }, l + " (" + (k === "fehlt" ? L.missing.length - L.missingDev.size + (L.missingDev.size ? " · " + L.missingDev.size + " weitere" : "") : F[k].length) + ")")));
     const ispSure = rows.filter((r) => r.l.st === "sicher");
@@ -8560,7 +9090,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "row", style: { marginBottom: "10px" } },
       seg,
       h("span", { class: "grow" }),
-      ispNone.length && S.filter !== "fehlt" ? btn("Ohne Treffer → ohne Klemme (" + ispNone.length + ")", "eyeoff", () => {
+      ispNone.length && S2.filter !== "fehlt" ? btn("Ohne Treffer → ohne Klemme (" + ispNone.length + ")", "eyeoff", () => {
         if (!confirm(ispNone.length + " Einträge ohne Treffer als „ohne Klemme“ markieren?\nTypisch für Zähler, LAB-Controller und andere Busgeräte. Die Doku selbst wird dabei nicht verändert.")) return;
         const st = lkStore(D);
         for (const r of ispNone) {
@@ -8576,10 +9106,10 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         rerender();
       }, "accent") : null
     ));
-    if (S.filter === "fehlt") return lkMissingTable(main, D, isp, L, rerender);
-    const list = F[S.filter];
+    if (S2.filter === "fehlt") return lkMissingTable(main, D, isp, L, rerender);
+    const list = F[S2.filter];
     if (!list.length) {
-      main.appendChild(emptyState("check", S.filter === "offen" ? "Alles zugeordnet" : "Keine Einträge", S.filter === "offen" ? "Für jeden Eintrag dieser ISP gibt es eine sichere oder eingetragene Klemme." : ""));
+      main.appendChild(emptyState("check", S2.filter === "offen" ? "Alles zugeordnet" : "Keine Einträge", S2.filter === "offen" ? "Für jeden Eintrag dieser ISP gibt es eine sichere oder eingetragene Klemme." : ""));
       return;
     }
     const tb = h("tbody");
@@ -8678,7 +9208,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       );
       const tr = h(
         "tr",
-        { class: S.flash === a ? "flash" : "" },
+        { class: S2.flash === a ? "flash" : "" },
         h(
           "td",
           null,
@@ -8693,10 +9223,10 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       );
       tb.appendChild(tr);
     }
-    if (S.flash) {
+    if (S2.flash) {
       const r = tb.querySelector("tr.flash");
       if (r) setTimeout(() => r.scrollIntoView({ block: "center" }), 30);
-      S.flash = null;
+      S2.flash = null;
     }
   }
   function lkMissingTable(main, D, isp, L, rerender) {
@@ -9350,7 +9880,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
       h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
-      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.5.5")
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.6.0")
     ));
   }
   function renderTitle() {
@@ -9415,10 +9945,10 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   function holdScroll(el, pos) {
     el._wantScroll = pos;
     lazyKick(el);
-    const stop = () => {
+    const stop2 = () => {
       el._wantScroll = null;
     };
-    for (const ev of ["wheel", "pointerdown", "keydown", "touchstart"]) el.addEventListener(ev, stop, { once: true, passive: true });
+    for (const ev of ["wheel", "pointerdown", "keydown", "touchstart"]) el.addEventListener(ev, stop2, { once: true, passive: true });
   }
   function pageHead(title, sub, acts) {
     return h(
@@ -9483,14 +10013,17 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
             continue;
           }
           const hash = textHash(f.text);
-          if (APP.centrals.some((x) => x.hash === hash)) {
+          if (APP.centrals.some((x) => x.hash === hash || (x.hash || "").startsWith(hash + "#"))) {
             bad.push(f.name + ": bereits geladen");
             continue;
           }
-          const C = prepareCentral(f.fmt.parse(f.text, f), f, hash);
-          refreshSev(C);
-          APP.centrals.push(C);
-          added.push(C);
+          const res = f.fmt.parse(f.text, f), list = Array.isArray(res) ? res : [res];
+          list.forEach((one, k) => {
+            const C = prepareCentral(one, f, list.length > 1 ? hash + "#" + k : hash);
+            refreshSev(C);
+            APP.centrals.push(C);
+            added.push(C);
+          });
         } catch (e) {
           console.error(e);
           bad.push(f.name + ": " + e.message);
@@ -10055,7 +10588,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     }
   }
   function wdAirTab(body, D) {
-    const S = D.air || (D.air = { sel: null, filter: "offen" });
+    const S2 = D.air || (D.air = { sel: null, filter: "offen" });
     const rerender = () => renderAll();
     const isps = wIsps(D);
     if (!isps.length) {
@@ -10117,15 +10650,15 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         "„Zuluft“ oder „Abluft“ wird hinten an den Namen gehängt – nur wenn der Name es nicht schon sagt. Die Verknüpfung wertet dieses Anhängsel nicht als Abweichung. Vorschläge stammen aus den Klemmennamen der Sicherung."
       )
     ));
-    if (!S.sel || !D.doc.contains(S.sel)) S.sel = (all.find((o2) => o2.devs.some((d) => !d.side)) || all.find((o2) => o2.devs.length) || all[0]).isp;
+    if (!S2.sel || !D.doc.contains(S2.sel)) S2.sel = (all.find((o2) => o2.devs.some((d) => !d.side)) || all.find((o2) => o2.devs.length) || all[0]).isp;
     const split = h("div", { class: "split card tight", style: { minHeight: "420px", alignItems: "stretch" } });
     body.appendChild(split);
     const rail = h("div", { class: "rail", style: { width: "300px" } });
     const main = h("div", { class: "center wd-main", style: { padding: "16px 20px", overflow: "auto" } });
     split.appendChild(rail);
     split.appendChild(main);
-    if (S._last !== S.sel) main.dataset.noRestore = "1";
-    S._last = S.sel;
+    if (S2._last !== S2.sel) main.dataset.noRestore = "1";
+    S2._last = S2.sel;
     let lastB = null;
     for (const o2 of all) {
       if (o2.bte !== lastB) {
@@ -10135,8 +10668,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       const open = o2.devs.filter((d) => !d.side).length;
       rail.appendChild(h(
         "div",
-        { class: "rail-item" + (S.sel === o2.isp ? " on" : ""), onclick: () => {
-          S.sel = o2.isp;
+        { class: "rail-item" + (S2.sel === o2.isp ? " on" : ""), onclick: () => {
+          S2.sel = o2.isp;
           rerender();
         } },
         h("span", { class: "sevdot " + (!o2.devs.length ? "info" : open ? "warn" : "ok") }),
@@ -10144,7 +10677,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         open ? h("span", { class: "badge soft" }, open) : null
       ));
     }
-    const o = all.find((x) => x.isp === S.sel);
+    const o = all.find((x) => x.isp === S2.sel);
     main.appendChild(h(
       "div",
       { class: "row", style: { marginBottom: "10px" } },
@@ -10160,11 +10693,11 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       return;
     }
     const F = { offen: o.devs.filter((d) => !d.side || d.warn), alle: o.devs };
-    main.appendChild(h("div", { class: "seg", style: { marginBottom: "10px" } }, [["offen", "Ohne Angabe / Hinweis"], ["alle", "Alle"]].map(([k, l]) => h("button", { class: S.filter === k ? "on" : "", onclick: () => {
-      S.filter = k;
+    main.appendChild(h("div", { class: "seg", style: { marginBottom: "10px" } }, [["offen", "Ohne Angabe / Hinweis"], ["alle", "Alle"]].map(([k, l]) => h("button", { class: S2.filter === k ? "on" : "", onclick: () => {
+      S2.filter = k;
       rerender();
     } }, l + " (" + F[k].length + ")"))));
-    const list = F[S.filter] || F.alle;
+    const list = F[S2.filter] || F.alle;
     if (!list.length) {
       main.appendChild(emptyState("check", "Alles zugeordnet", "Jedes Gerät dieser ISP hat eine Zu- oder Abluft-Angabe."));
       return;
@@ -11258,9 +11791,894 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     }
   });
 
+  // src/ui/p90/protocol.js
+  var SYN = 22;
+  var STX = 2;
+  var ETX = 3;
+  var ETB = 23;
+  var SUB = 26;
+  var CR = 13;
+  var CTRL = {
+    ENQ: 5,
+    // Anfrage "bereit?"
+    ACK: 6,
+    // Block empfangen, Prüfsumme ok
+    DC2: 18,
+    // bitte warten (beschäftigt)
+    DC4: 20,
+    // bereit
+    NAK: 21
+    // Block fehlerhaft, bitte wiederholen
+  };
+  var CTRL_NAME = Object.fromEntries(Object.entries(CTRL).map(([k, v]) => [v, k]));
+  function crc16(bytes) {
+    let c = 0;
+    for (const b of bytes) {
+      c ^= b << 8;
+      for (let i = 0; i < 8; i++) c = c & 32768 ? (c << 1 ^ 4129) & 65535 : c << 1 & 65535;
+    }
+    return c;
+  }
+  var hex4 = (n) => n.toString(16).toUpperCase().padStart(4, "0");
+  var ascii = (s2) => Uint8Array.from(s2, (ch) => ch.charCodeAt(0) & 255);
+  var asciiText = (bytes) => String.fromCharCode(...bytes);
+  function concat(...parts) {
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let o = 0;
+    for (const p of parts) {
+      out.set(p, o);
+      o += p.length;
+    }
+    return out;
+  }
+  function buildBlock(text) {
+    const body = concat([STX], encode(text), [ETX]);
+    return concat(body, ascii(hex4(crc16(body))), [SUB]);
+  }
+  var ctrlFrame = (code) => Uint8Array.of(SYN, code);
+  var FrameParser = class {
+    constructor(onEvent) {
+      this.onEvent = onEvent;
+      this.reset();
+    }
+    reset() {
+      this.st = "idle";
+      this.buf = [];
+      this.hex = "";
+      this.syn = false;
+      this.last = 0;
+    }
+    push(chunk) {
+      const now = Date.now();
+      if (this.st !== "idle" && now - this.last > 1500) this.reset();
+      this.last = now;
+      for (const b of chunk) this._byte(b);
+    }
+    _byte(b) {
+      if (this.syn) {
+        this.syn = false;
+        this.onEvent({ type: "ctrl", code: b, name: CTRL_NAME[b] || "0x" + b.toString(16) });
+        return;
+      }
+      if (b === SYN && this.st !== "blk") {
+        this.syn = true;
+        return;
+      }
+      switch (this.st) {
+        case "idle":
+          if (b === STX) {
+            this.st = "blk";
+            this.buf = [b];
+          } else if (b >= 32 && b < 127) {
+            this.st = "line";
+            this.buf = [b];
+          }
+          return;
+        case "blk":
+          this.buf.push(b);
+          if (b === ETX || b === ETB) {
+            this.st = "crc";
+            this.hex = "";
+          } else if (this.buf.length > 2e3) this.reset();
+          return;
+        case "crc":
+          if (b === SUB || this.hex.length >= 4) {
+            const calc = crc16(this.buf);
+            const inner = this.buf.slice(1, -1).filter((x) => x !== CR);
+            this.onEvent({
+              type: "block",
+              text: decode(inner),
+              ok: calc === parseInt(this.hex, 16),
+              crcRx: this.hex,
+              crcCalc: hex4(calc),
+              etb: this.buf[this.buf.length - 1] === ETB
+            });
+            this.reset();
+            if (b !== SUB) this._byte(b);
+          } else this.hex += String.fromCharCode(b);
+          return;
+        case "line":
+          if (b === CR) {
+            const s2 = decode(this.buf);
+            let sum = 0;
+            for (const x of this.buf.slice(2)) sum = sum + x & 255;
+            this.onEvent({ type: "line", text: s2.slice(2), ok: /^[0-9A-Fa-f]{2}/.test(s2) && parseInt(s2.slice(0, 2), 16) === sum });
+            this.reset();
+          } else this.buf.push(b);
+          return;
+      }
+    }
+  };
+
+  // src/ui/p90/link.js
+  var LOGIN_IDENT = "0000 Terminalprog.__ 128 0 1.04 A 0.0.0 2 KPT001";
+  var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  var Emitter = class {
+    constructor() {
+      this._ev = {};
+    }
+    on(n, fn) {
+      (this._ev[n] = this._ev[n] || []).push(fn);
+      return this;
+    }
+    off(n, fn) {
+      this._ev[n] = (this._ev[n] || []).filter((f) => f !== fn);
+      return this;
+    }
+    removeListener(n, fn) {
+      return this.off(n, fn);
+    }
+    emit(n, ...a) {
+      for (const f of (this._ev[n] || []).slice()) {
+        try {
+          f(...a);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
+  };
+  var P90Link = class extends Emitter {
+    constructor(transport, opts = {}) {
+      super();
+      this.t = transport;
+      this.ackTimeout = opts.ackTimeout ?? 3e3;
+      this.maxTries = opts.maxTries ?? 4;
+      this.autoAck = true;
+      this.ackSuppressed = false;
+      this.pending = null;
+      this.collector = null;
+      this.lastRx = 0;
+      this.lastG0 = "";
+      this._chain = Promise.resolve();
+      this._rxParser = new FrameParser((ev) => this._onRx(ev));
+      this._txParser = new FrameParser((ev) => this.emit("frame", ev, "tx"));
+      this._onData = (buf) => {
+        this.emit("rx", buf);
+        this._rxParser.push(buf);
+      };
+      this.t.on("data", this._onData);
+    }
+    log(level, text) {
+      this.emit("log", level, text);
+    }
+    /** Rohbytes senden (nacheinander). */
+    write(buf) {
+      this.emit("tx", buf);
+      this._txParser.push(buf);
+      const job = this._chain.then(() => this.t.write(buf)).then(() => true, (e) => {
+        this.log("error", "Senden: " + (e && e.message || e));
+        return false;
+      });
+      this._chain = job;
+      return job;
+    }
+    sendCtrl(code) {
+      return this.write(ctrlFrame(code));
+    }
+    /** Block senden und auf ACK warten. -> "ack" | "fail" */
+    sendBlock(text) {
+      return new Promise((resolve) => {
+        if (this.pending) {
+          this.log("error", "Es wartet noch ein Block auf Quittung.");
+          return resolve("fail");
+        }
+        this.pending = { buf: buildBlock(text), text, tries: 1, resolve, timer: null, poll: null };
+        this.write(this.pending.buf);
+        this._armAck();
+      });
+    }
+    _armAck() {
+      const p = this.pending;
+      if (!p) return;
+      clearTimeout(p.timer);
+      p.timer = setTimeout(() => {
+        if (this.pending !== p) return;
+        if (p.tries >= this.maxTries) {
+          this.log("error", `Keine Quittung für "${p.text}" nach ${p.tries} Versuchen.`);
+          return this._done("fail");
+        }
+        p.tries++;
+        this.log("warn", `Keine Quittung – Versuch ${p.tries}.`);
+        this.write(p.buf);
+        this._armAck();
+      }, this.ackTimeout);
+    }
+    _done(result) {
+      const p = this.pending;
+      if (!p) return;
+      clearTimeout(p.timer);
+      clearInterval(p.poll);
+      this.pending = null;
+      p.resolve(result);
+    }
+    _onRx(ev) {
+      this.emit("frame", ev, "rx");
+      if (ev.type === "block") {
+        if (this.autoAck && !this.ackSuppressed) this.sendCtrl(ev.ok ? CTRL.ACK : CTRL.NAK);
+      }
+      const p = this.pending;
+      if (ev.type === "ctrl") {
+        switch (ev.code) {
+          case CTRL.ACK:
+            if (p) this._done("ack");
+            break;
+          case CTRL.NAK:
+            if (!p) break;
+            if (p.tries >= this.maxTries) {
+              this.log("error", "DDC meldet wiederholt NAK.");
+              this._done("fail");
+              break;
+            }
+            p.tries++;
+            this.write(p.buf);
+            this._armAck();
+            break;
+          case CTRL.DC2:
+            if (p && !p.poll) {
+              clearTimeout(p.timer);
+              p.poll = setInterval(() => this.sendCtrl(CTRL.ENQ), 2e3);
+            }
+            break;
+          case CTRL.DC4:
+            if (p && p.poll) {
+              clearInterval(p.poll);
+              p.poll = null;
+              this.write(p.buf);
+              this._armAck();
+            }
+            break;
+          case CTRL.ENQ:
+            if (this.autoAck) this.sendCtrl(CTRL.DC4);
+            break;
+        }
+        return;
+      }
+      if (!ev.ok) return;
+      this.lastRx = Date.now();
+      if (/^G0 /.test(ev.text)) this.lastG0 = ev.text;
+      if (this.collector && !this.ackSuppressed && !/^(Z5|G0) /.test(ev.text)) this.collector(ev.text);
+    }
+    /**
+     * Anfrage senden, Antworten sammeln bis isEnd(text) zutrifft.
+     * -> { status: "ok"|"timeout"|"noack"|"abort", lines: [...], end: "Z6 …" | null }
+     */
+    request(cmd, isEnd, { idleMs = 15e3, onLine = null } = {}) {
+      return new Promise((resolve) => {
+        const lines = [];
+        let last = Date.now(), done = false;
+        const finish = (status, end = null) => {
+          if (done) return;
+          done = true;
+          clearInterval(iv2);
+          this.collector = null;
+          this._abortRequest = null;
+          resolve({ status, lines, end });
+        };
+        this._abortRequest = () => finish("abort");
+        this.collector = (text) => {
+          last = Date.now();
+          if (isEnd(text)) finish("ok", text);
+          else {
+            lines.push(text);
+            if (onLine) onLine(lines.length, text);
+          }
+        };
+        const iv2 = setInterval(() => {
+          if (Date.now() - last > idleMs) finish("timeout");
+        }, 200);
+        this.sendBlock(cmd).then((r) => {
+          if (r !== "ack") finish("noack");
+          else last = Date.now();
+        });
+      });
+    }
+    /** Laufende Anfrage abbrechen. Quittungen werden ausgesetzt, bis die DDC quietMs lang still ist. */
+    async abort(quietMs = 8e3) {
+      if (this._abortRequest) this._abortRequest();
+      this._done("fail");
+      this.ackSuppressed = true;
+      this.lastRx = Date.now();
+      while (Date.now() - this.lastRx < quietMs) await sleep(200);
+      this.ackSuppressed = false;
+    }
+    /** Als Terminal anmelden (wie das K&P-Programm). -> Kennung der DDC ("G1 …") */
+    async login() {
+      const r = await this.request("G0 " + LOGIN_IDENT, (t) => /^G1 /.test(t), { idleMs: 8e3 });
+      if (r.status !== "ok") throw new Error("Anmeldung fehlgeschlagen (" + r.status + ")");
+      return r.end;
+    }
+    async close() {
+      if (this.t.removeListener) this.t.removeListener("data", this._onData);
+      if (this.pending) this._done("fail");
+      if (this.t.close) await this.t.close();
+    }
+  };
+
+  // src/ui/p90/serial.js
+  var serialSupported = () => typeof navigator !== "undefined" && !!navigator.serial;
+  var VENDORS = { 1659: "Prolific", 1027: "FTDI", 4292: "Silicon Labs", 6790: "CH340", 9025: "Arduino" };
+  function portLabel2(port, i) {
+    const inf = port.getInfo && port.getInfo() || {};
+    if (inf.usbVendorId == null) return "Port " + (i + 1) + " (seriell)";
+    const v = VENDORS[inf.usbVendorId] || "USB " + inf.usbVendorId.toString(16).padStart(4, "0");
+    return "Port " + (i + 1) + " · " + v + (inf.usbProductId != null ? " " + inf.usbProductId.toString(16).padStart(4, "0") : "");
+  }
+  async function knownPorts() {
+    return serialSupported() ? navigator.serial.getPorts() : [];
+  }
+  async function pickPort() {
+    return navigator.serial.requestPort();
+  }
+  async function openSerial(port, { baudRate = 9600 } = {}) {
+    try {
+      await port.open({ baudRate, dataBits: 8, parity: "none", stopBits: 1, flowControl: "none", bufferSize: 65536 });
+    } catch (e) {
+      if (!/already open/i.test(e.message || "")) throw new Error("Port lässt sich nicht öffnen: " + e.message + " (von einem anderen Programm belegt?)");
+    }
+    try {
+      await port.setSignals({ dataTerminalReady: true, requestToSend: true });
+    } catch (e) {
+    }
+    const listeners = /* @__PURE__ */ new Set();
+    let keep = true, reader = null;
+    const loop = (async () => {
+      while (keep && port.readable) {
+        reader = port.readable.getReader();
+        try {
+          for (; ; ) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (value && value.length) for (const fn of listeners) fn(value);
+          }
+        } catch (e) {
+          console.warn("Seriell lesen:", e.message);
+        } finally {
+          try {
+            reader.releaseLock();
+          } catch (e) {
+          }
+        }
+      }
+    })();
+    return {
+      port,
+      async write(bytes) {
+        const w = port.writable.getWriter();
+        try {
+          await w.write(bytes);
+        } finally {
+          w.releaseLock();
+        }
+      },
+      on(ev, fn) {
+        if (ev === "data") listeners.add(fn);
+      },
+      removeListener(ev, fn) {
+        listeners.delete(fn);
+      },
+      async close() {
+        keep = false;
+        try {
+          if (reader) await reader.cancel();
+        } catch (e) {
+        }
+        await loop;
+        try {
+          await port.close();
+        } catch (e) {
+        }
+      }
+    };
+  }
+
+  // src/ui/p90/sim.js
+  var SimDDC = class extends Emitter {
+    constructor(opts = {}) {
+      super();
+      this.opts = { valuesPerDevice: 20, nakFirst: false, corruptOnce: false, failDevice: null, ...opts };
+      this.rx = [];
+      this.queue = [];
+      this.tries = 0;
+      this.timer = null;
+      this.received = [];
+      this.gaveUp = 0;
+      this.nakDone = false;
+      this.corruptDone = false;
+    }
+    // ---- Transport-Schnittstelle ----
+    async write(buf) {
+      setTimeout(() => this._in(buf), 2);
+    }
+    async close() {
+      clearTimeout(this.timer);
+    }
+    _out(bytes) {
+      setTimeout(() => this.emit("data", Uint8Array.from(bytes)), 2);
+    }
+    _block(text, corrupt = false) {
+      const b = buildBlock(text + "\r");
+      if (corrupt) b[b.length - 2] ^= 1;
+      return b;
+    }
+    _in(buf) {
+      for (const b of buf) this.rx.push(b);
+      while (this.rx.length) {
+        if (this.rx[0] === SYN) {
+          if (this.rx.length < 2) return;
+          const c = this.rx[1];
+          this.rx.splice(0, 2);
+          if (c === CTRL.ACK && this.queue.length) {
+            this.queue.shift();
+            this.tries = 0;
+            clearTimeout(this.timer);
+            setTimeout(() => this._next(), 3);
+          }
+          if (c === CTRL.NAK && this.queue.length) {
+            clearTimeout(this.timer);
+            setTimeout(() => this._next(true), 3);
+          }
+          if (c === CTRL.ENQ) this._out([SYN, CTRL.DC4]);
+          continue;
+        }
+        if (this.rx[0] === STX) {
+          const i = this.rx.indexOf(SUB);
+          if (i < 0) return;
+          const fr = this.rx.splice(0, i + 1);
+          const e = fr.indexOf(ETX);
+          const body = fr.slice(0, e + 1);
+          const ok = hex4(crc16(body)) === asciiText(fr.slice(e + 1, e + 5));
+          if (this.opts.nakFirst && !this.nakDone) {
+            this.nakDone = true;
+            this._out([SYN, CTRL.NAK]);
+            continue;
+          }
+          if (!ok) {
+            this._out([SYN, CTRL.NAK]);
+            continue;
+          }
+          this._out([SYN, CTRL.ACK]);
+          const text = decode(body.slice(1, -1));
+          this.received.push(text);
+          setTimeout(() => this._command(text), 10);
+          continue;
+        }
+        this.rx.shift();
+      }
+    }
+    _send(list) {
+      this.queue = list.slice();
+      this.tries = 0;
+      this._next();
+    }
+    _next(isRetry = false) {
+      if (!this.queue.length) return;
+      if (!isRetry) this.tries++;
+      if (this.tries > 3) {
+        this.gaveUp++;
+        this.queue = [];
+        return;
+      }
+      const corrupt = this.opts.corruptOnce && !this.corruptDone && this.queue.length === 2;
+      if (corrupt) this.corruptDone = true;
+      this._out(this._block(this.queue[0], corrupt));
+      clearTimeout(this.timer);
+      this.timer = setTimeout(() => this._next(), 2e3);
+    }
+    _command(t) {
+      const Z = "1";
+      let m;
+      if (/^G0 /.test(t)) return this._send(["G1 0000 000000000000000 32 96 6.740 A 2 2 DDC001"]);
+      if (t === "T0 *.0") return this._send([`t1 ${Z}.2.0 32 96 00 `, `Z6 ${Z}.2.0 32 96 00 `]);
+      if (t === "T0 2.*") return this._send([
+        `t1 ${Z}.2.0 32 96 00 `,
+        `t1 ${Z}.2.1 31 110 00 `,
+        "Z5 1.2.0 09.11.26 10:00",
+        `t1 ${Z}.2.701 30 124 00 `,
+        `t1 ${Z}.2.801 29 87 00 `,
+        `Z6 ${Z}.2.801 29 87 00 `
+      ]);
+      if (m = t.match(/^m0 2\.(\d+) \*$/)) return this._send([`m1 ${Z}.2.${m[1]} 69/1 03`, `m1 ${Z}.2.${m[1]} 117/1 03`, `Z6 000 m0 ${Z}.2.${m[1]} */*`]);
+      if ((m = t.match(/^p0 2\.(\d+) \*$/)) && this.opts.demo) {
+        const a = `${Z}.2.${m[1]}`;
+        return this._send([...(DEMO_P[m[1]] || []).map((l) => `p1 ${a} ${l}`), `Z6 000 p0 ${a} */*`]);
+      }
+      if ((m = t.match(/^D([024]) 2 {1,2}\*$/)) && this.opts.demo) {
+        const c = "D" + (+m[1] + 1);
+        return this._send([...(m[1] === "0" ? DEMO_D1 : []).map((l) => `${c} ${l}`), `Z6 000 D${m[1]} 32 *`]);
+      }
+      if (m = t.match(/^p0 2\.(\d+) \*$/)) {
+        const a = `${Z}.2.${m[1]}`;
+        if (this.opts.failDevice === a) return this._send([`Z6 110 p0 ${a} */*`]);
+        const L = [`p1 ${a} 899/1 6.740 0 0F 00 `, `p1 ${a} 5100/1 28.5 108 0F 00 WT Becken Zulüfter Soll`];
+        for (let k = 1; k <= this.opts.valuesPerDevice; k++) L.push(`p1 ${a} k${k}/1 0 0F 00 `);
+        L.push(`Z6 000 p0 ${a} */*`);
+        return this._send(L);
+      }
+      if (m = t.match(/^D([024]) 2 {1,2}\*$/)) {
+        const c = "D" + (+m[1] + 1);
+        return this._send([`${c} 32 1 20 00 24:59 00:00 07:00 0 81 0F 0000 Mo-BEGINN1`, `${c} 32 5100 1 0A 30.00 5.00 17.00 108 01 0F 0000 LÜFTUNG Soll`, `Z6 000 D${m[1]} 32 *`]);
+      }
+      return this._send([`Z2 048 ${t}`]);
+    }
+  };
+  var DEMO_P = {
+    "0": [
+      "899/1 6.740 0 0F 00 ",
+      "1/1 06:00 0 0F 00 ",
+      "2/1 22:00 0 0F 00 ",
+      "3/1 06:00 0 0F 00 ",
+      "4/1 22:00 0 0F 00 ",
+      "5/1 06:00 0 0F 00 ",
+      "6/1 22:00 0 0F 00 ",
+      "7/1 06:00 0 0F 00 ",
+      "8/1 22:00 0 0F 00 ",
+      "9/1 06:00 0 0F 00 ",
+      "10/1 20:00 0 0F 00 ",
+      "11/1 24:59 0 0F 00 ",
+      "12/1 24:59 0 0F 00 ",
+      "13/1 24:59 0 0F 00 ",
+      "14/1 24:59 0 0F 00 ",
+      "N/1 1 0F 00 Lüftung Halle",
+      "b1/1 8.4 108 0F 00 Außentemperatur",
+      "b2/1 ???? 0 0F 20 Raumtemperatur Halle",
+      "b3/1 21.0 108 0F 00 ",
+      "B1/1 0.5 108 0F 00 ",
+      "k1/1 0 0F 00 Störung Zuluftventilator",
+      "k2/1 0 0F 00 ",
+      "k3/1 1 0F 00 Freigabe Zuluftventilator",
+      "K3/1 002.000 M1/01 N --- 0F 00 ",
+      "M1/1 002.000 k1/01 I AND 002.000 T1/01 N --- 0F 00 Freigabe Anlage",
+      "T1/1 002.000 N/01 N E 00:00:30/00:00:00 0F 00 Einschaltverzögerung",
+      "y1/1 45.0 0 0F 00 Heizventil",
+      "Y1/1 002.001 5200/01 N --- 0F 00 ",
+      '2141/1 "01712521002" 0F 00',
+      "4600/1 2 0F 00 "
+    ],
+    "1": [
+      "5100/1 21.0 108 0F 00 Zuluft Soll",
+      "5115/1 1 0F 00 ",
+      "5200/1 45.0 0 0F 00 ",
+      "5201/1 002.000 b3/01 N --- 0F 00 "
+    ],
+    "701": ["b7/1 18.2 108 0F 00 Rücklauf Heizung", "k1/1 0 0F 00 Frostschutz"],
+    "801": ["b1/1 22.5 108 0F 00 Raum 1.01"]
+  };
+  var DAYS2 = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+  var DEMO_D1 = [
+    ...DAYS2.flatMap((d, i) => [`32 ${2 * i + 1} 20 00 24:59 00:00 07:00 0 81 0F 0000 ${d}-BEGINN1`, `32 ${2 * i + 2} 20 00 24:59 00:00 22:00 0 81 0F 0000 ${d}-ENDE1`]),
+    "32 N 10 00 1 0 0 0 01 0F 0000 Wochenprogramm",
+    "32 899 1 0A 9.999 0 0 0 41 0F 0000 Firmware",
+    "32 b1-b32 1 0A 150.0 -50.0 0.0 108 41 0F 0000 Fühler B%(1)",
+    "32 B1-B32 1 0A 10.0 -10.0 0.0 108 01 0F 0000 Korrektur B%(1)",
+    "32 k1-k32 10 00 1 0 0 0 41 0F 0000 Kontakt K%(1)",
+    "32 K1-K32 31 00 --- --- --- 0 01 0F 0000 Verknüpfung K%(1)",
+    "32 y1-y16 1 0A 100.0 0.0 0.0 0 41 0F 0000 Ausgang Y%(1)",
+    "32 Y1-Y16 31 00 --- --- --- 0 01 0F 0000 Verknüpfung Y%(1)",
+    "32 M1-M64 31 00 --- --- --- 0 01 0F 0000 Merker M%(1)",
+    "32 T1-T32 32 00 --- --- --- 0 01 0F 0000 Timer T%(1)",
+    "32 2141 4 00 --- --- --- 0 01 0F 0000 Rufnummer 1",
+    "32 4600 1 00 5 0 2 0 01 0F 0000 P90 Baudrate",
+    "31 5100 1 0A 30.00 5.00 17.00 108 01 0F 0000 Sollwert",
+    "31 5115 1 00 8 0 1 0 01 0F 0000 Auswahl Wochenprogramm",
+    "31 5200 1 0A 100.0 0.0 0.0 0 41 0F 0000 Stellgröße",
+    "31 5201 31 00 --- --- --- 0 01 0F 0000 Fühler Regelgröße",
+    "30 b1-b16 1 0A 150.0 -50.0 0.0 108 41 0F 0000 Fühler B%(1)",
+    "30 k1-k16 10 00 1 0 0 0 41 0F 0000 Kontakt K%(1)",
+    "29 b1-b8 1 0A 150.0 -50.0 0.0 108 41 0F 0000 Fühler B%(1)"
+  ];
+
+  // src/ui/views/ddc3000-sichern.js
+  var MAX_LOG = 400;
+  var S = {
+    ports: [],
+    portIdx: store.get("p90Port", 0),
+    baud: store.get("p90Baud", 9600),
+    defs: store.get("p90Defs", true),
+    demo: false,
+    running: false,
+    ac: null,
+    prog: null,
+    devices: [],
+    log: [],
+    result: null,
+    file: null,
+    err: "",
+    _root: null
+  };
+  var stamp = () => {
+    const d = /* @__PURE__ */ new Date(), p = (n) => String(n).padStart(2, "0");
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "_" + p(d.getHours()) + "-" + p(d.getMinutes());
+  };
+  var fileName = () => "DDC-Sicherung_" + stamp() + ".p90";
+  var tstr = () => (/* @__PURE__ */ new Date()).toLocaleTimeString("de-DE", { hour12: false });
+  function addLog(text, cls) {
+    S.log.push({ t: tstr(), text, cls });
+    if (S.log.length > MAX_LOG) S.log.splice(0, S.log.length - MAX_LOG);
+    const box = S._root && S._root.querySelector(".p90-log");
+    if (box) {
+      box.appendChild(logLine(S.log[S.log.length - 1]));
+      while (box.childNodes.length > MAX_LOG) box.firstChild.remove();
+      box.scrollTop = box.scrollHeight;
+    }
+  }
+  var logLine = (l) => h("div", { class: l.cls || "" }, h("span", { class: "muted" }, l.t + " "), l.text);
+  async function refreshPorts() {
+    S.ports = await knownPorts();
+  }
+  async function start() {
+    if (S.running) return;
+    let handle = null;
+    if (!S.demo && window.showSaveFilePicker) {
+      try {
+        handle = await window.showSaveFilePicker({ suggestedName: fileName(), startIn: "desktop", types: [{ description: "P90-Sicherung", accept: { "text/plain": [".p90"] } }] });
+      } catch (e) {
+        if (e.name === "AbortError") return;
+      }
+    }
+    S.running = true;
+    S.err = "";
+    S.result = null;
+    S.file = null;
+    S.devices = [];
+    S.log = [];
+    S.prog = { text: "Verbinde …", done: 0, total: 0 };
+    S.ac = new AbortController();
+    paint();
+    let transport = null, link = null;
+    try {
+      if (S.demo) transport = new SimDDC({ valuesPerDevice: 12, demo: true });
+      else {
+        const port = S.ports[S.portIdx];
+        if (!port) throw new Error("Kein COM-Port gewählt.");
+        transport = await openSerial(port, { baudRate: +S.baud || 9600 });
+      }
+      link = new P90Link(transport);
+      link.on("log", (lvl, t) => addLog(t, lvl === "error" ? "err" : lvl === "warn" ? "warn" : ""));
+      link.on("frame", (ev, dir) => {
+        if (ev.type === "block") addLog((dir === "rx" ? "DDC ← " : "PC → ") + (ev.ok ? "" : "[Prüfsumme falsch] ") + ev.text, dir === "rx" ? "rx" : "tx");
+      });
+      const r = await createBackup(link, { definitions: S.defs, signal: S.ac.signal, onProgress });
+      S.result = r;
+      S.file = { name: handle ? handle.name : fileName(), text: r.text };
+      if (r.devices.length || r.aborted) {
+        if (handle) {
+          try {
+            const w = await handle.createWritable();
+            await w.write(r.text);
+            await w.close();
+            S.file.saved = true;
+            toast("Sicherung gespeichert: " + handle.name, "ok", 6e3);
+          } catch (e) {
+            S.err = "Speichern fehlgeschlagen: " + e.message + " – bitte „Herunterladen“ benutzen.";
+          }
+        }
+      }
+    } catch (e) {
+      S.err = e.message || String(e);
+      addLog(S.err, "err");
+    } finally {
+      try {
+        if (link) await link.close();
+        else if (transport && transport.close) await transport.close();
+      } catch (e) {
+      }
+      S.running = false;
+      S.ac = null;
+      paint();
+    }
+  }
+  function onProgress(p) {
+    S.prog = { ...S.prog, ...p };
+    if (p.phase === "geraet" && p.device) {
+      let d = S.devices.find((x) => x.addr === p.device);
+      if (!d) {
+        d = { addr: p.device, name: (p.text.match(/: \S+ (.+?)(?: – |$)/) || [])[1] || "", st: "läuft", cls: "run" };
+        S.devices.push(d);
+      }
+      if (p.ok != null) {
+        d.st = p.text.split(" – ").pop();
+        d.cls = p.ok ? "ok" : "err";
+      } else d.st = p.count ? p.count + " Werte …" : "Menüs …";
+    }
+    paintProgress();
+  }
+  function stop() {
+    if (S.ac) {
+      S.ac.abort();
+      S.prog = { ...S.prog, text: "Abbruch – warte, bis die DDC aufhört zu senden (bis ca. 10 s) …" };
+      paintProgress();
+    }
+  }
+  function download2() {
+    if (!S.file) return;
+    const a = h("a", { href: URL.createObjectURL(new Blob([S.file.text], { type: "text/plain;charset=utf-8" })), download: S.file.name });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2e3);
+  }
+  function openInWerkbank() {
+    if (!S.file) return;
+    loadFiles([new File([S.file.text], S.file.name, { type: "text/plain" })]);
+  }
+  function paintProgress() {
+    const root = S._root;
+    if (!root || !document.body.contains(root)) return;
+    const pr = root.querySelector(".p90-prog");
+    if (pr) pr.replaceWith(progressBox());
+    const dl = root.querySelector(".p90-devs");
+    if (dl) dl.replaceWith(deviceList());
+  }
+  function progressBox() {
+    const p = S.prog;
+    if (!p) return h("div", { class: "p90-prog" });
+    const pct = p.total ? Math.round((p.done || 0) / p.total * 100) : 0;
+    return h(
+      "div",
+      { class: "p90-prog" },
+      h("div", { class: "row" }, S.running ? h("span", { class: "spin" }) : icon(S.err || S.result && S.result.aborted ? "alert" : "check"), h("span", null, p.text || "")),
+      p.total ? h("div", { class: "p90-bar", title: pct + " %" }, h("span", { style: { width: pct + "%" } })) : null
+    );
+  }
+  function deviceList() {
+    if (!S.devices.length) return h("div", { class: "p90-devs" });
+    return h("div", { class: "p90-devs grid-wrap", style: { maxHeight: "34vh" } }, h(
+      "table",
+      { class: "grid card-t" },
+      h("thead", null, h("tr", null, h("th", null, "Adresse"), h("th", null, "Gerät"), h("th", null, "Stand"))),
+      h("tbody", null, S.devices.map((d) => h(
+        "tr",
+        null,
+        h("td", { class: "mono" }, d.addr),
+        h("td", null, d.name),
+        h("td", null, h("span", { class: "pill " + (d.cls === "ok" ? "ok" : d.cls === "err" ? "err" : "inf") }, d.st))
+      )))
+    ));
+  }
+  function settingsCard() {
+    const card = h("div", { class: "card" }, h("h3", null, icon("cpu"), "Verbindung"));
+    if (!serialSupported()) card.appendChild(h(
+      "div",
+      { class: "infobar warn", style: { marginBottom: "10px" } },
+      h("span", { class: "i" }, icon("alert")),
+      h("div", null, "Dieser Browser kann nicht auf COM-Ports zugreifen. Bitte die Werkbank in ", h("b", null, "Microsoft Edge"), " oder ", h("b", null, "Google Chrome"), " öffnen. Der Demo-Modus geht trotzdem.")
+    ));
+    const portOpts = S.ports.map((p, i) => [String(i), portLabel2(p, i)]);
+    if (S.portIdx >= S.ports.length) S.portIdx = 0;
+    const dis = S.running;
+    const portSel = portOpts.length ? selectEl(portOpts, String(S.portIdx), (v) => {
+      S.portIdx = +v;
+      store.set("p90Port", S.portIdx);
+    }) : h("span", { class: "muted small" }, "noch kein Port freigegeben");
+    const add = btn("Port auswählen …", "plus", async () => {
+      try {
+        const p = await pickPort();
+        await refreshPorts();
+        S.portIdx = Math.max(0, S.ports.indexOf(p));
+        store.set("p90Port", S.portIdx);
+        paint();
+      } catch (e) {
+        if (e.name !== "NotFoundError") toast("Port: " + e.message, "err");
+      }
+    }, "", "COM-Port (USB-Seriell-Adapter) für die Werkbank freigeben");
+    if (!serialSupported() || dis) add.disabled = true;
+    if (dis && portSel.tagName === "SELECT") portSel.disabled = true;
+    const baud = selectEl([["9600", "9600"], ["4800", "4800"], ["19200", "19200"], ["2400", "2400"], ["1200", "1200"]], String(S.baud), (v) => {
+      S.baud = +v;
+      store.set("p90Baud", S.baud);
+    });
+    baud.disabled = dis;
+    const defs = chk("Definitionen mitsichern (Parameternamen und -arten; ca. 4 Minuten je Zentrale länger)", S.defs, (v) => {
+      S.defs = v;
+      store.set("p90Defs", v);
+    });
+    const demo = chk("Demo-Modus (nachgebaute DDC, ohne Hardware)", S.demo, (v) => {
+      S.demo = v;
+      paint();
+    });
+    for (const l of [defs, demo]) l.querySelector("input").disabled = dis;
+    card.appendChild(h(
+      "div",
+      { class: "fields" },
+      h("label", null, "COM-Port"),
+      h("div", { class: "row" }, portSel, add),
+      h("label", null, "Baudrate"),
+      h("div", { class: "row" }, baud, h("span", { class: "muted small" }, "DDC-Parameter 4600 „P90 Baudrate“, meist 9600")),
+      h("label", null, ""),
+      defs,
+      h("label", null, ""),
+      demo
+    ));
+    const go2 = btn(S.demo ? "Demo-Sicherung starten" : "Sicherung starten", "download", start, "accent");
+    go2.disabled = dis || !S.demo && (!serialSupported() || !S.ports.length);
+    const ab = btn("Abbrechen", "stop", stop);
+    ab.disabled = !dis;
+    card.appendChild(h(
+      "div",
+      { class: "row", style: { marginTop: "14px" } },
+      go2,
+      ab,
+      h("span", { class: "muted small" }, "Nur Lesebefehle. Anschluss DDC3200: Klemme 58 → Pin 2, 59 → Pin 3, 60 → Pin 5 (9-polig).")
+    ));
+    return card;
+  }
+  function resultCard() {
+    const card = h("div", { class: "card" }, h("h3", null, icon("list"), "Ablauf"));
+    card.appendChild(progressBox());
+    if (S.err) card.appendChild(h("div", { class: "infobar err", style: { margin: "10px 0" } }, h("span", { class: "i" }, icon("error")), h("div", null, S.err)));
+    if (S.file && !S.running) {
+      const r = S.result || { devices: [] };
+      card.appendChild(h(
+        "div",
+        { class: "row", style: { margin: "10px 0" } },
+        btn("In der Werkbank öffnen", "jump", openInWerkbank, "accent"),
+        btn(S.file.saved ? "Nochmals herunterladen" : "Herunterladen", "download", download2),
+        h("span", { class: "muted small" }, (S.file.saved ? "Gespeichert als „" + S.file.name + "“. " : "") + r.devices.length + " Geräte" + (r.failed ? ", " + r.failed + " mit Fehler" : "") + (r.aborted ? " – abgebrochen, Datei ist unvollständig" : ""))
+      ));
+    }
+    card.appendChild(deviceList());
+    const lg = h("div", { class: "p90-log mono small" }, S.log.map(logLine));
+    card.appendChild(h("details", { style: { marginTop: "10px" }, open: S.running || null }, h("summary", { class: "muted small" }, "Telegramme (letzte " + MAX_LOG + ")"), lg));
+    setTimeout(() => {
+      lg.scrollTop = lg.scrollHeight;
+    }, 0);
+    return card;
+  }
+  function paint() {
+    const root = S._root;
+    if (!root) return;
+    root.innerHTML = "";
+    root.appendChild(settingsCard());
+    if (S.prog || S.file) root.appendChild(h("div", { style: { height: "14px" } }));
+    if (S.prog || S.file) root.appendChild(resultCard());
+    else root.appendChild(h("div", { class: "card", style: { marginTop: "14px" } }, emptyState(
+      "cpu",
+      "Noch keine Sicherung gelesen",
+      "Adapter anstecken, „Port auswählen …“, dann „Sicherung starten“. Eine programmierte DDC3200 mit 30 Geräten braucht mit Definitionen etwa 13 Minuten. Die .p90-Datei öffnet die Werkbank wie jede andere Sicherung."
+    )));
+  }
+  VIEWS.add({
+    id: "ddc3000-sichern",
+    label: "DDC3000 sichern",
+    icon: "cpu",
+    group: 3,
+    order: 330,
+    render(root) {
+      root.appendChild(pageHead("DDC3000 sichern", "Datensicherung einer DDC3000 über RS232 (P90) – alle Zentralen am Bus, alle Geräte, Menüs und Werte. Rein lesend."));
+      const body = h("div", { class: "page-body" });
+      root.appendChild(body);
+      S._root = body;
+      paint();
+      if (serialSupported() && !S.running) refreshPorts().then(() => {
+        if (S._root === body) paint();
+      });
+    }
+  });
+
   // src/ui/main.js
   var api = {
-    version: "0.5.5",
+    version: "0.6.0",
     register: ALL,
     state: APP,
     curC,

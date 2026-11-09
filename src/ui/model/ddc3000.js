@@ -77,7 +77,13 @@ export function parseDDC3000(text, label, fileName) {
     } else if (cur) d3Fields(cur, line.trim());
   }
   if (!recs.length) throw new Error("Keine DDC3000-Parameter erkannt");
+  return buildDDC3000(recs, label, fileName);
+}
 
+/* Datensätze (wie in der .wwf: { kind: "Z"|"B"|"K"|"M"|"N"|"AX"|…, f: {P, W, GT, …}, sched })
+   → Zentrale. Wird auch für P90-Sicherungen (.p90) benutzt, siehe model/p90.js.
+   opt: { format, stamp, stampSrc, values: true = Istwerte der Klemmen übernehmen (f.W, f.ST) } */
+export function buildDDC3000(recs, label, fileName, opt = {}) {
   const C = newCentral("DDC3000", label, fileName);
   const M = C.meta;
   const kreise = new Map([[0, { nr: 0, typ: "Grundgerät", name: "", modules: [] }]]);
@@ -100,8 +106,8 @@ export function parseDDC3000(text, label, fileName) {
     }
   }
   M.name = label;
-  M.format = "DDC3000 · Parameterliste (.wwf)";
-  M.applRev = ""; M.stamp = ""; M.stampSrc = "";
+  M.format = opt.format || "DDC3000 · Parameterliste (.wwf)";
+  M.applRev = ""; M.stamp = opt.stamp || ""; M.stampSrc = opt.stampSrc || "";
   const typOf = n => (kreise.get(n) || {}).typ || "";
   const isSBM = n => /^SBM/i.test(typOf(n)), isFBM = n => /^FBM/i.test(typOf(n));
   const isRK = n => n > 0 && !isSBM(n) && !isFBM(n);
@@ -281,7 +287,7 @@ export function parseDDC3000(text, label, fileName) {
       uid: n.id, nodeId: n.id, cid: C.cid, module: String(n.kreis), moduleType: typOf(n.kreis) || M.stationType, addr: n.addr,
       klemme: n.kreis === 0 ? n.addr : n.kreis + "/" + n.addr, name: named ? n.name : (n.name || ""), paraText: "", kind, declaredKind: null,
       subType: { AE: "Fühler", AA: "Analogausgang", BE: "Kontakt (Eingang)", BA: "Kontakt (Ausgang)", frei: "" }[kind],
-      value: { stored: null, eff: null, invalid: false, deleted: false }, corr, invert: false, trend: false, funcs: [], alarms: [],
+      value: opt.values ? d3Value(n.d3.def) : { stored: null, eff: null, invalid: false, deleted: false }, corr, invert: false, trend: false, funcs: [], alarms: [],
       sources: ins, consumers: outs, bacnet: [], reserve: false, dfltName: !!n.d3.dflt,
       sensorType: sensorSel[n.id] || null, kennlinie: null
     };
@@ -309,6 +315,16 @@ export function parseDDC3000(text, label, fileName) {
     { group: "Station", k: "Kreise", v: String(kreise.size - 1) });
   C.d3kreise = kreise;
   return C;
+}
+
+/* Istwert einer Klemme aus der Sicherung (P90: Status 20 = ungültig, Wert "????") */
+function d3Value(p) {
+  const f = (p && p.f) || {};
+  const w = f.W != null ? String(f.W).trim() : "";
+  const invalid = /^2/.test(f.ST || "") || /^\?+$/.test(w);
+  const unit = f.E && !/keine/i.test(f.E) ? " " + f.E : "";
+  const stored = w && !invalid ? { type: "Text", text: w + unit } : null;
+  return { stored, eff: null, invalid, deleted: false };
 }
 
 function d3Formula(refs) {

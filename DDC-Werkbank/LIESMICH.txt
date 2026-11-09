@@ -1,4 +1,4 @@
-DDC-Werkbank – Version 0.5
+DDC-Werkbank – Version 0.6
 ==========================
 
 Aktualisieren
@@ -43,6 +43,21 @@ Reiter „K&P direkt“     wie das Service-Tool (Port 18090): nach Anmeldung mi
                         IP aus der Sicherung (änderbar). Eine, mehrere
                         (anhaken) oder alle gleichzeitig verbinden.
                         „automatisch alle … s“: Abfrage-Takt frei einstellbar.
+
+DDC3000 sichern (RS232)
+-----------------------
+Reiter „DDC3000 sichern“  liest eine DDC3000 über die serielle Schnittstelle
+                        (P90, wie das K&P-Programm): alle Zentralen am Bus,
+                        alle Geräte, Menüs und Werte, auf Wunsch mit
+                        Definitionen. Rein lesend. Ergebnis: .p90-Datei.
+                        Läuft im Browser (Edge oder Chrome), braucht keinen
+                        Dienst. „Port auswählen …“ einmal klicken und den
+                        USB-Seriell-Adapter freigeben.
+                        Anschluss DDC3200: 58 → Pin 2, 59 → Pin 3, 60 → Pin 5.
+                        Die .p90-Datei öffnet man wie jede Sicherung (Öffnen
+                        oder hineinziehen) – oder direkt mit „In der Werkbank
+                        öffnen“. Mit Definitionen sind Namen und Arten der
+                        Werte genauer.
 
 Ohne laufenden Dienst merkt sich der Browser alles; beim nächsten Start mit
 Dienst wird es in daten\ übernommen.
