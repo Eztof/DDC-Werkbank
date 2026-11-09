@@ -14,9 +14,9 @@ import { buildDDC3000 } from "./ddc3000.js";
    aus der Form des Werts abgeleitet.
    ========================================================================= */
 
-const UNITS = { "108": "°C" };     // Einheiten-Code der DDC → Text (nur gesicherte)
+const UNITS = { "13": "min", "108": "°C", "109": "K", "150": "%", "190": "kByte" };   // Einheiten-Code der DDC → Text (mit echten .wwf/.EZR abgeglichen)
 const unitText = c => UNITS[c] || "";
-const HEX2 = /^[0-9A-F]{2}$/;
+const HEX2 = /^[0-9A-F]{2}$/i;
 const REF_Z = /^(\d{3})\.(\d{3})$/;     // Quelle einer Verknüpfung: Zentrale.Gerät, z. B. 002.710
 
 /* "p1 1.2.1 5100/1 28.5 108 0F 00 WT Becken Soll" → Bestandteile */
@@ -35,7 +35,7 @@ export function parseP1(line) {
   }
   const t = rest.split(" ");
   let i = -1;
-  for (let k = 1; k < t.length - 1; k++) if (t[k] === "0F" && HEX2.test(t[k + 1])) { i = k; break; }
+  for (let k = 1; k < t.length - 1; k++) if (t[k].toUpperCase() === "0F" && HEX2.test(t[k + 1])) { i = k; break; }
   if (i < 0) for (let k = 1; k < t.length - 1; k++) if (HEX2.test(t[k]) && HEX2.test(t[k + 1])) { i = k; break; }
   if (i < 0) { r.val = rest.trim(); return r; }
   let v = t.slice(0, i).filter(x => x !== "");
@@ -121,7 +121,7 @@ function recordsOf(z, devices, def) {
   const progs = new Map();   // Wochenprogramm-Nr → { BEG1: [ "", Mo … So ], … }
   for (const d of devices) {
     const g = +d.addr.split(".")[2];
-    if (g !== 0) recs.push({ kind: "K", f: { NR: String(g), TYP: devName(d.group, d.type), GT: "" }, sched: {} });
+    if (g !== 0) recs.push({ kind: "K", f: { NR: String(g), TYP: d.group ? devName(d.group, d.type) : "", GT: d.text || "" }, sched: {} });
     for (const l of d.menus) {
       const m = l.match(/^m1 \S+ (\S+)(?: (\S+))?/);
       if (m) recs.push({ kind: "M", f: { NR: m[1], AKTIV: "1" }, sched: {} });
@@ -153,8 +153,8 @@ function recordsOf(z, devices, def) {
       if (sm && g === 0) {
         if (!progs.has(r.inst)) progs.set(r.inst, {});
         const key = (/^B/i.test(sm[2]) ? "BEG" : "END") + sm[3];
-        const P = progs.get(r.inst); if (!P[key]) P[key] = ["", "--:--", "--:--", "--:--", "--:--", "--:--", "--:--", "--:--"];
-        P[key][DAYS.findIndex(x => x.toLowerCase() === sm[1].toLowerCase()) + 1] = timeOk(r.val);
+        const P = progs.get(r.inst); if (!P[key]) P[key] = ["--:--", "--:--", "--:--", "--:--", "--:--", "--:--", "--:--"];
+        P[key][DAYS.findIndex(x => x.toLowerCase() === sm[1].toLowerCase())] = timeOk(r.val);
         continue;
       }
       recs.push({ kind, f, sched: {}, kreis: g });
@@ -187,7 +187,8 @@ export function parseP90(text, label, fileName) {
   const def = defIndex(B.definitions.D1);
   const byZ = new Map();
   for (const d of B.devices) {
-    const z = +d.addr.split(".")[1];
+    const [a, zz] = d.addr.split(".").map(Number);
+    const z = zz || a;        // Adresse a.z.g; bei kleinen Anlagen (DDC3035 …) ist z = 0, die Verknüpfungen nennen dann a
     if (!byZ.has(z)) byZ.set(z, []);
     byZ.get(z).push(d);
   }
@@ -195,7 +196,7 @@ export function parseP90(text, label, fileName) {
   const out = [];
   for (const [z, devices] of byZ) {
     const C = buildDDC3000(ordered(z, devices, def), label, fileName, {
-      format: "DDC3000 · P90-Sicherung (.p90)" + (B.definitions.D1.length ? "" : " ohne Definitionen"),
+      format: (B.plain ? "DDC3000 · Sicherung des K&P-Programms (" + ((fileName || "").match(/\.\w+$/) || [".PRO"])[0].toUpperCase() + ")" : "DDC3000 · P90-Sicherung (.p90)") + (B.definitions.D1.length ? "" : " ohne Definitionen"),
       stamp, stampSrc: stamp ? "Sicherung erstellt" : "", values: true
     });
     const failed = devices.filter(d => !d.ok).map(d => d.addr);
@@ -213,9 +214,10 @@ export function parseP90(text, label, fileName) {
 
 /* ---------- Als Dateiformat anmelden ---------- */
 FORMATS.add({
-  id: "ddc3000-p90", order: 11, icon: "list", label: "DDC3000 (P90)",
-  desc: "*.p90 – Datensicherung der DDC3000 über RS232 (Reiter „DDC3000 sichern“), alle Zentralen am Bus.",
-  exts: ["p90"],
-  sniff: (name, head) => /^\s*# P90-Sicherung/.test(head) || (/\.p90$/i.test(name) && /^\[Gerät \S+ /m.test(head)),
+  id: "ddc3000-p90", order: 11, icon: "list", label: "DDC3000 (P90/EZR)",
+  desc: "*.p90 – Datensicherung der DDC3000 über RS232 (Reiter „DDC3000 sichern“), alle Zentralen am Bus; *.ezr/*.pro – Sicherung aus dem K&P-Programm (gleicher Inhalt).",
+  exts: ["p90", "ezr", "pro"],
+  sniff: (name, head) => /^\s*# P90-Sicherung/.test(head) || (/\.p90$/i.test(name) && /^\[Gerät \S+ /m.test(head)) ||
+    /^\s*(?:t1|m1|p1) \d+\.\d+\.\d+ \S+/.test(head) && (head.match(/^(?:t1|m1|p1) \d+\.\d+\.\d+ /gm) || []).length >= 3,
   parse: (text, f) => parseP90(text, f.label, f.name)
 });

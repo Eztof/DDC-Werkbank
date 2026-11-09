@@ -58,6 +58,8 @@ Reiter „DDC3000 sichern“  liest eine DDC3000 über die serielle Schnittstell
                         oder hineinziehen) – oder direkt mit „In der Werkbank
                         öffnen“. Mit Definitionen sind Namen und Arten der
                         Werte genauer.
+                        .EZR/.PRO-Dateien aus dem K&P-Programm haben denselben
+                        Inhalt und lassen sich genauso öffnen.
 
 Ohne laufenden Dienst merkt sich der Browser alles; beim nächsten Start mit
 Dienst wird es in daten\ übernommen.

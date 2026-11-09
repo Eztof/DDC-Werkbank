@@ -1,6 +1,6 @@
 # DDC-Werkbank
 
-Werkzeug für Sicherungen von Kieback&Peter-Zentralen (DDC4000/BMR `.d4pml`/`datasave.xml`, DDC3000 `.wwf` und `.p90`) und Wartungsdokus (WTGML). Oberfläche im Browser, optional mit lokalem Dienst (BACnet lesen, Merkliste).
+Werkzeug für Sicherungen von Kieback&Peter-Zentralen (DDC4000/BMR `.d4pml`/`datasave.xml`, DDC3000 `.wwf`, `.p90`, `.ezr`/`.pro`) und Wartungsdokus (WTGML). Oberfläche im Browser, optional mit lokalem Dienst (BACnet lesen, Merkliste).
 
 ## Für die Benutzung
 

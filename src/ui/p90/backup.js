@@ -61,7 +61,7 @@ export async function createBackup(link, options = {}) {
       const seen = new Set(devices.map(d => d.addr));
       for (const t of [...dres.lines, dres.end || ""]) {
         const m = t.match(/^(?:t1|Z6) (\d+\.\d+\.\d+) (\d+) (\d+)/);
-        if (m && !seen.has(m[1])) { seen.add(m[1]); devices.push({ addr: m[1], group: m[2], type: m[3] }); }
+        if (m && !seen.has(m[1])) { seen.add(m[1]); devices.push({ addr: m[1], group: m[2], type: m[3], t1: /^t1 /.test(t) ? t : "" }); }
       }
     }
     prog("geraete", `${devices.length} Geräte gefunden`, { total: devices.length });
@@ -88,7 +88,7 @@ export async function createBackup(link, options = {}) {
       const ok = mres.status === "ok" && pres.status === "ok" && !isError(mres.end || "") && !isError(pres.end || "");
       if (!ok) failed++;
       d.name = name; d.menus = mres.lines.length; d.values = pres.lines.length; d.ok = ok;
-      out.push(`[Gerät ${d.addr} ${name} ${d.group} ${d.type}]`, ...mres.lines, ...pres.lines,
+      out.push(`[Gerät ${d.addr} ${name} ${d.group} ${d.type}]`, ...(d.t1 ? [d.t1] : []), ...mres.lines, ...pres.lines,
                `# Ende m0: ${mres.end || mres.status} | Ende p0: ${pres.end || pres.status}`, "");
       prog("geraet", `Gerät ${n}/${devices.length}: ${d.addr} ${name} – ${d.menus} Menüs, ${d.values} Werte`, { device: d.addr, done: n, total: devices.length, ok });
     }
@@ -128,22 +128,48 @@ export async function createBackup(link, options = {}) {
  */
 export function parseBackup(text) {
   // Ältere Dateien aus dem HTML-Tool enthalten die CP850-Bytes als Zeichen U+0080–U+00FF.
+  // Ältere Dateien (HTML-Tool, .EZR/.PRO des K&P-Programms) enthalten die CP850-Bytes roh – je nach
+  // Einlesen als Zeichen U+0080–U+00FF oder als Windows-1252-Zeichen (€, „ …). Beides → Byte → CP850.
   const old = !/Zeichensatz: UTF-8/.test(text.slice(0, 2000));
-  const fix = s => old ? s.replace(/[\x80-\xff]+/g, x => decode(Array.from(x, ch => ch.charCodeAt(0)))) : s;
+  const byte = ch => CP1252_REV.get(ch) ?? ch.charCodeAt(0);
+  const fix = s => old ? s.replace(/[^\x00-\x7f]+/g, x => decode(Array.from(x, byte))) : s;
   const res = { header: {}, devices: [], definitions: { D1: [], D3: [], D5: [] }, aborted: false };
   let dev = null, def = null;
+  /* Datei ohne [Gerät …]-Abschnitte (.EZR/.PRO, reine Antwortzeilen): Geräte aus den Adressen bilden */
+  const plain = !/^\[Gerät /m.test(text);
+  const byAddr = new Map();
+  const plainDev = addr => {
+    if (!byAddr.has(addr)) { const d = { addr, name: "", group: "", type: "", text: "", menus: [], values: [], ok: true }; byAddr.set(addr, d); res.devices.push(d); }
+    return byAddr.get(addr);
+  };
   for (const raw of text.split(/\r?\n/)) {
     const l = raw.replace(/\r$/, "");
     let m;
     if ((m = l.match(/^# (Erstellt|Kennung|Geräte): (.*)$/))) { res.header[m[1]] = m[2]; continue; }
     if (/^# ABGEBROCHEN/.test(l)) { res.aborted = true; continue; }
-    if ((m = l.match(/^\[Gerät (\S+) (.+) (\d+) (\d+)\]$/))) { dev = { addr: m[1], name: fix(m[2]), group: m[3], type: m[4], menus: [], values: [], ok: true }; res.devices.push(dev); def = null; continue; }
+    if ((m = l.match(/^\[Gerät (\S+) (.+) (\d+) (\d+)\]$/))) { dev = { addr: m[1], name: fix(m[2]), group: m[3], type: m[4], text: "", menus: [], values: [], ok: true }; res.devices.push(dev); def = null; continue; }
     if ((m = l.match(/^\[Definitionen \S+ (D[024]) /))) { def = { D0: "D1", D2: "D3", D4: "D5" }[m[1]]; dev = null; continue; }
     if (dev && (m = l.match(/^# Ende m0: (.*) \| Ende p0: (.*)$/))) { dev.ok = [m[1], m[2]].every(e => /^Z6 000 /.test(e)); continue; }
     if (!l || l.startsWith("#")) continue;
+    if (l.startsWith("t1 ") && (m = l.match(/^t1 (\d+\.\d+\.\d+) (\d+) (\d+) \S+ ?(.*)$/))) {
+      const d = plain ? plainDev(m[1]) : (dev && dev.addr === m[1] ? dev : null);
+      if (d) { d.group = d.group || m[2]; d.type = d.type || m[3]; d.text = fix(m[4]).trim(); }
+      continue;
+    }
+    if (plain && (m = l.match(/^[mp]1 (\d+\.\d+\.\d+) /))) dev = plainDev(m[1]);
     if (dev && l.startsWith("m1 ")) dev.menus.push(fix(l));
     else if (dev && l.startsWith("p1 ")) dev.values.push(fix(l));
     else if (def && l.startsWith(def + " ")) res.definitions[def].push(fix(l));
   }
+  res.plain = plain;
+  for (const d of res.devices) if (!d.name) d.name = d.group ? devName(d.group, d.type) : "";
   return res;
 }
+
+/* Windows-1252-Zeichen → Byte (für roh eingelesene CP850-Dateien) */
+const CP1252_REV = (() => {
+  const m = new Map();
+  try { const dec = new TextDecoder("windows-1252"); for (let b = 0x80; b < 0x100; b++) { const ch = dec.decode(Uint8Array.of(b)); if (ch.charCodeAt(0) !== b) m.set(ch, b); } }
+  catch (e) { /* ohne Decoder: nur U+0080–U+00FF */ }
+  return m;
+})();

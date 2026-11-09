@@ -2388,7 +2388,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       const days = DAYS3.map((d, di) => {
         const entries = [];
         for (let i = 1; i <= 4; i++) {
-          const b = (sc.sched["BEG" + i] || [])[di + 1], e = (sc.sched["END" + i] || [])[di + 1];
+          const b = (sc.sched["BEG" + i] || [])[di], e = (sc.sched["END" + i] || [])[di];
           if (b && b !== "--:--") {
             entries.push({ time: b, value: "1" });
             if (e && e !== "--:--") entries.push({ time: e, value: "0" });
@@ -2702,7 +2702,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           const m = t.match(/^(?:t1|Z6) (\d+\.\d+\.\d+) (\d+) (\d+)/);
           if (m && !seen.has(m[1])) {
             seen.add(m[1]);
-            devices.push({ addr: m[1], group: m[2], type: m[3] });
+            devices.push({ addr: m[1], group: m[2], type: m[3], t1: /^t1 /.test(t) ? t : "" });
           }
         }
       }
@@ -2735,6 +2735,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         d.ok = ok;
         out.push(
           `[Gerät ${d.addr} ${name} ${d.group} ${d.type}]`,
+          ...d.t1 ? [d.t1] : [],
           ...mres.lines,
           ...pres.lines,
           `# Ende m0: ${mres.end || mres.status} | Ende p0: ${pres.end || pres.status}`,
@@ -2773,9 +2774,20 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   }
   function parseBackup(text) {
     const old = !/Zeichensatz: UTF-8/.test(text.slice(0, 2e3));
-    const fix = (s2) => old ? s2.replace(/[\x80-\xff]+/g, (x) => decode(Array.from(x, (ch) => ch.charCodeAt(0)))) : s2;
+    const byte = (ch) => CP1252_REV.get(ch) ?? ch.charCodeAt(0);
+    const fix = (s2) => old ? s2.replace(/[^\x00-\x7f]+/g, (x) => decode(Array.from(x, byte))) : s2;
     const res = { header: {}, devices: [], definitions: { D1: [], D3: [], D5: [] }, aborted: false };
     let dev = null, def = null;
+    const plain = !/^\[Gerät /m.test(text);
+    const byAddr = /* @__PURE__ */ new Map();
+    const plainDev = (addr) => {
+      if (!byAddr.has(addr)) {
+        const d = { addr, name: "", group: "", type: "", text: "", menus: [], values: [], ok: true };
+        byAddr.set(addr, d);
+        res.devices.push(d);
+      }
+      return byAddr.get(addr);
+    };
     for (const raw of text.split(/\r?\n/)) {
       const l = raw.replace(/\r$/, "");
       let m;
@@ -2788,7 +2800,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         continue;
       }
       if (m = l.match(/^\[Gerät (\S+) (.+) (\d+) (\d+)\]$/)) {
-        dev = { addr: m[1], name: fix(m[2]), group: m[3], type: m[4], menus: [], values: [], ok: true };
+        dev = { addr: m[1], name: fix(m[2]), group: m[3], type: m[4], text: "", menus: [], values: [], ok: true };
         res.devices.push(dev);
         def = null;
         continue;
@@ -2803,17 +2815,41 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         continue;
       }
       if (!l || l.startsWith("#")) continue;
+      if (l.startsWith("t1 ") && (m = l.match(/^t1 (\d+\.\d+\.\d+) (\d+) (\d+) \S+ ?(.*)$/))) {
+        const d = plain ? plainDev(m[1]) : dev && dev.addr === m[1] ? dev : null;
+        if (d) {
+          d.group = d.group || m[2];
+          d.type = d.type || m[3];
+          d.text = fix(m[4]).trim();
+        }
+        continue;
+      }
+      if (plain && (m = l.match(/^[mp]1 (\d+\.\d+\.\d+) /))) dev = plainDev(m[1]);
       if (dev && l.startsWith("m1 ")) dev.menus.push(fix(l));
       else if (dev && l.startsWith("p1 ")) dev.values.push(fix(l));
       else if (def && l.startsWith(def + " ")) res.definitions[def].push(fix(l));
     }
+    res.plain = plain;
+    for (const d of res.devices) if (!d.name) d.name = d.group ? devName(d.group, d.type) : "";
     return res;
   }
+  var CP1252_REV = (() => {
+    const m = /* @__PURE__ */ new Map();
+    try {
+      const dec = new TextDecoder("windows-1252");
+      for (let b = 128; b < 256; b++) {
+        const ch = dec.decode(Uint8Array.of(b));
+        if (ch.charCodeAt(0) !== b) m.set(ch, b);
+      }
+    } catch (e) {
+    }
+    return m;
+  })();
 
   // src/ui/model/p90.js
-  var UNITS2 = { "108": "°C" };
+  var UNITS2 = { "13": "min", "108": "°C", "109": "K", "150": "%", "190": "kByte" };
   var unitText = (c) => UNITS2[c] || "";
-  var HEX2 = /^[0-9A-F]{2}$/;
+  var HEX2 = /^[0-9A-F]{2}$/i;
   var REF_Z = /^(\d{3})\.(\d{3})$/;
   function parseP1(line) {
     const m = line.match(/^p1 (\d+)\.(\d+)\.(\d+) ([^\s/]*)\/(\d+) ?(.*)$/);
@@ -2835,7 +2871,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     }
     const t = rest.split(" ");
     let i = -1;
-    for (let k = 1; k < t.length - 1; k++) if (t[k] === "0F" && HEX2.test(t[k + 1])) {
+    for (let k = 1; k < t.length - 1; k++) if (t[k].toUpperCase() === "0F" && HEX2.test(t[k + 1])) {
       i = k;
       break;
     }
@@ -2942,7 +2978,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const progs = /* @__PURE__ */ new Map();
     for (const d of devices) {
       const g = +d.addr.split(".")[2];
-      if (g !== 0) recs.push({ kind: "K", f: { NR: String(g), TYP: devName(d.group, d.type), GT: "" }, sched: {} });
+      if (g !== 0) recs.push({ kind: "K", f: { NR: String(g), TYP: d.group ? devName(d.group, d.type) : "", GT: d.text || "" }, sched: {} });
       for (const l of d.menus) {
         const m = l.match(/^m1 \S+ (\S+)(?: (\S+))?/);
         if (m) recs.push({ kind: "M", f: { NR: m[1], AKTIV: "1" }, sched: {} });
@@ -2982,8 +3018,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           if (!progs.has(r.inst)) progs.set(r.inst, {});
           const key = (/^B/i.test(sm[2]) ? "BEG" : "END") + sm[3];
           const P = progs.get(r.inst);
-          if (!P[key]) P[key] = ["", "--:--", "--:--", "--:--", "--:--", "--:--", "--:--", "--:--"];
-          P[key][DAYS.findIndex((x) => x.toLowerCase() === sm[1].toLowerCase()) + 1] = timeOk(r.val);
+          if (!P[key]) P[key] = ["--:--", "--:--", "--:--", "--:--", "--:--", "--:--", "--:--"];
+          P[key][DAYS.findIndex((x) => x.toLowerCase() === sm[1].toLowerCase())] = timeOk(r.val);
           continue;
         }
         recs.push({ kind, f, sched: {}, kreis: g });
@@ -3016,7 +3052,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const def = defIndex(B.definitions.D1);
     const byZ = /* @__PURE__ */ new Map();
     for (const d of B.devices) {
-      const z = +d.addr.split(".")[1];
+      const [a, zz] = d.addr.split(".").map(Number);
+      const z = zz || a;
       if (!byZ.has(z)) byZ.set(z, []);
       byZ.get(z).push(d);
     }
@@ -3024,7 +3061,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const out = [];
     for (const [z, devices] of byZ) {
       const C = buildDDC3000(ordered(z, devices, def), label, fileName2, {
-        format: "DDC3000 · P90-Sicherung (.p90)" + (B.definitions.D1.length ? "" : " ohne Definitionen"),
+        format: (B.plain ? "DDC3000 · Sicherung des K&P-Programms (" + ((fileName2 || "").match(/\.\w+$/) || [".PRO"])[0].toUpperCase() + ")" : "DDC3000 · P90-Sicherung (.p90)") + (B.definitions.D1.length ? "" : " ohne Definitionen"),
         stamp: stamp2,
         stampSrc: stamp2 ? "Sicherung erstellt" : "",
         values: true
@@ -3047,10 +3084,10 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     id: "ddc3000-p90",
     order: 11,
     icon: "list",
-    label: "DDC3000 (P90)",
-    desc: "*.p90 – Datensicherung der DDC3000 über RS232 (Reiter „DDC3000 sichern“), alle Zentralen am Bus.",
-    exts: ["p90"],
-    sniff: (name, head) => /^\s*# P90-Sicherung/.test(head) || /\.p90$/i.test(name) && /^\[Gerät \S+ /m.test(head),
+    label: "DDC3000 (P90/EZR)",
+    desc: "*.p90 – Datensicherung der DDC3000 über RS232 (Reiter „DDC3000 sichern“), alle Zentralen am Bus; *.ezr/*.pro – Sicherung aus dem K&P-Programm (gleicher Inhalt).",
+    exts: ["p90", "ezr", "pro"],
+    sniff: (name, head) => /^\s*# P90-Sicherung/.test(head) || /\.p90$/i.test(name) && /^\[Gerät \S+ /m.test(head) || /^\s*(?:t1|m1|p1) \d+\.\d+\.\d+ \S+/.test(head) && (head.match(/^(?:t1|m1|p1) \d+\.\d+\.\d+ /gm) || []).length >= 3,
     parse: (text, f) => parseP90(text, f.label, f.name)
   });
 
@@ -9880,7 +9917,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
       h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
-      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.6.0")
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.6.1")
     ));
   }
   function renderTitle() {
@@ -12678,7 +12715,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
 
   // src/ui/main.js
   var api = {
-    version: "0.6.0",
+    version: "0.6.1",
     register: ALL,
     state: APP,
     curC,

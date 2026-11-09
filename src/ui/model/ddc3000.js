@@ -231,7 +231,7 @@ export function buildDDC3000(recs, label, fileName, opt = {}) {
     const days = DAYS.map((d, di) => {
       const entries = [];
       for (let i = 1; i <= 4; i++) {
-        const b = (sc.sched["BEG" + i] || [])[di + 1], e = (sc.sched["END" + i] || [])[di + 1];
+        const b = (sc.sched["BEG" + i] || [])[di], e = (sc.sched["END" + i] || [])[di];   // BEG1=Mo =Di … =So
         if (b && b !== "--:--") { entries.push({ time: b, value: "1" }); if (e && e !== "--:--") entries.push({ time: e, value: "0" }); }
       }
       entries.sort((x, y) => x.time.localeCompare(y.time));

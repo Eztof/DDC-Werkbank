@@ -155,3 +155,36 @@ test("Ohne Definitionen: Art wird aus dem Wert geschätzt; mehrere Zentralen am 
   assert.ok(L[1].system.some(x => x.k === "Geräte mit Fehler" && x.v === "1.2.0"));
   assert.match(L[0].meta.format, /ohne Definitionen/);
 });
+
+test(".EZR/.PRO (reine Antwortzeilen des K&P-Programms, CP850 roh) wird gelesen", async () => {
+  /* Bytes wie in der Datei: CP850, als Windows-1252 eingelesen (so macht es die Werkbank bei Nicht-UTF-8) */
+  const raw = [
+    "t1 1.0.0 32 93 00 ", "p1 1.0.0 899/1 6.200 0 0F 00 ", "p1 1.0.0 2039/1 754 13 0F 00 ", "m1 1.0.0 69/1 03",
+    "p1 1.0.0 2030/1 00030000 0f 00 akt. Treiber f\u0081r P90BDD ", "p1 1.0.0 1301/1 \"\" 0F 00 16.02.15  11:10 UTC Startup",
+    "t1 1.0.1 16 74 40 Raum A002", "t1 1.0.121 16 74 00 BR DT Regierungspr\u0084sident",
+    "p1 1.0.1 4401/1 001.000 M465/01 0F 00 ", "p1 1.0.1 6450/1 ???? 108 0F 20 Raum A002 Temp. Raum", "p1 1.0.1 8510/1 1.5 109 0F 00 ",
+    "p1 1.0.121 6450/1 21.3 108 0F 00 "
+  ].join("\r\n") + "\r\n";
+  const text = new TextDecoder("windows-1252").decode(Uint8Array.from(raw, c => c.charCodeAt(0)));
+  const C = parseP90(text, "SICHER", "SICHER.EZR");
+  assert.equal(C.meta.centralAddr, "1", "Adresse 1.0.x → Zentrale 1 (Verknüpfungen nennen 001.000)");
+  assert.equal(C.meta.stationType, "DDC3035");
+  assert.match(C.meta.format, /\.EZR/);
+  assert.deepEqual(C.modules.map(m => [m.addr, m.type, m.name]), [["0", "DDC3035", "Grundgerät"], ["1", "EZR30", "Raum A002"], ["121", "EZR30", "BR DT Regierungspräsident"]]);
+  assert.ok(C.edges.some(e => e.from === "0:m465" && e.to === "1:RK" && e.toPara === "4401"), "Quelle ohne N/I");
+  const rk = C.nodes.get("1:RK");
+  assert.equal(rk.paras.find(p => p.addr === "8510").values[0].text, "1.5 K");
+  assert.ok(C.system.some(x => x.v === "754 min"));
+  assert.ok(C.system.some(x => x.k === "P1301" && /Startup/.test(x.v)));
+  assert.ok(C.system.some(x => /Treiber für P90BDD/.test(x.k)), "Umlaut aus CP850, Attribut klein geschrieben (0f)");
+});
+
+test(".wwf: Wochenprogramm BEG1=Mo =Di … =So (Montag nicht verschoben)", async () => {
+  const { parseDDC3000 } = await import("../src/ui/model/ddc3000.js");
+  const W = ["Z      NR=1    ; TYP=DDC3000    ; K=Heizzentrale", "B      NR=1    ; TYP=DDC3200    ; K=",
+    "N      NR=1    ; K=", "     !     MO     DI     MI     DO     FR     SA     SO  ",
+    "     BEG1=05:00 =06:00 =06:00 =06:00 =06:00 =--:-- =--:--", "     END1=16:00 =16:00 =16:00 =16:00 =15:00 =--:-- =--:--",
+    "DM      P=N/1       ; K=     !Kl. Süd/Ost Zeitprogramm", "       GT=Kl. Süd/Ost Zeitprogramm"].join("\n");
+  const s = parseDDC3000(W, "x", "x.wwf").schedules[0];
+  assert.deepEqual(s.days.map(d => d.entries.map(e => e.time).join("-")), ["05:00-16:00", "06:00-16:00", "06:00-16:00", "06:00-16:00", "06:00-15:00", "", ""]);
+});
