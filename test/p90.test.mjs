@@ -211,3 +211,43 @@ test("Vorlagen der Schnellparametrierung (makro.sp) ergänzen Art, Einheit und N
   assert.deepEqual(rk.paras.find(p => p.addr === "3829").texts, ["Synchronisation Zusatz"]);
   M.clearMakro();
 });
+
+test(".p90 → .PRO (wie SPClientDDC: t1/m1/p1, CP850)", async () => {
+  const { toPro } = await import("../src/ui/p90/backup.js");
+  const link = new P90Link(new SimDDC());
+  const r = await createBackup(link, { definitions: true });
+  await link.close();
+  const bytes = toPro(r.text);
+  const t = cp850.decode(bytes);
+  const lines = t.split("\r\n");
+  assert.equal(lines[0], "t1 1.2.0 32 96 00 ");
+  assert.ok(lines.includes("t1 1.2.1 31 110 00 "));
+  assert.ok(lines.includes("p1 1.2.1 5100/1 28.5 108 0F 00 WT Becken Zulüfter Soll"));
+  assert.ok(!/^(#|\[|D1 )/m.test(t), "keine Kopfzeilen/Definitionen");
+  assert.ok(bytes.includes(0x81), "ü als CP850-Byte 0x81");
+  /* und wieder einlesbar wie eine .EZR */
+  const back = parseBackup(new TextDecoder("windows-1252").decode(bytes));
+  assert.equal(back.devices.length, 4);
+  assert.equal(back.devices[1].values.length, 22);
+});
+
+test(".p90 → .wwf für SPEnterprise: Aufbau wie das Original, wieder eingelesen dasselbe Modell", async () => {
+  const { toWwf } = await import("../src/ui/model/p90.js");
+  const { parseDDC3000 } = await import("../src/ui/model/ddc3000.js");
+  const link = new P90Link(new SimDDC({ demo: true }));
+  const r = await createBackup(link, { definitions: true });
+  await link.close();
+  const L = toWwf(r.text, "Demo Halle");
+  assert.equal(L.length, 1);
+  const w = L[0].rtf;
+  assert.match(w, /^\{\\rtf1\\ansi\\ansicpg1252\\deff0\{\\fonttbl\{\\f0\\fmodern\\fprq1\\fcharset0 Courier New;\}\}\r\n/);
+  assert.ok(w.includes("Z      NR=2    ; TYP=DDC3000    ; K=Demo Halle\\par\r\n"));
+  assert.ok(w.includes("AI      P=b1        ; K=     !Au\\'dfentemperatur\\par\r\n        E=\\'b0C   ; Z=     ; SMIN=     ; SMAX=\\par\r\n"));
+  assert.ok(w.includes("       V2=2.0 T1/1Nand   ; T2=\\par"));
+  assert.ok(w.includes("       TZ=E 0:00:30      ; T2=\\par"));
+  assert.ok(w.includes("DM      P=N         ; K=     !L\\'fcftung Halle\\par"));
+  assert.ok(w.endsWith("}\r\n\0"));
+  assert.ok(!/[^\x00-\x7f]/.test(w), "nur ASCII, Umlaute als \\'xx");
+  const sig = C => ({ pins: C.pins.map(p => p.klemme + ":" + p.kind + ":" + p.name).sort(), edges: C.edges.map(e => e.from + ">" + e.to + "." + e.toPara + (e.inv ? "!" : "")).sort(), sched: C.schedules.map(s => JSON.stringify(s.days)) });
+  assert.deepEqual(sig(parseDDC3000(w, "x", "x.wwf")), sig(parseP90(r.text, "x", "x.p90")));
+});

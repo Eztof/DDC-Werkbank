@@ -1,4 +1,4 @@
-DDC-Werkbank – Version 0.6
+DDC-Werkbank – Version 0.7
 ==========================
 
 Aktualisieren
@@ -65,6 +65,9 @@ Reiter „DDC3000 sichern“  liest eine DDC3000 über die serielle Schnittstell
                         Werkbank ziehen. Die Vorlagen der Schnellparametrierung
                         liefern dann Namen und Arten der Parameter. Sie bleiben
                         im Browser gespeichert.
+                        Für SPEnterprise: „Als .wwf für SPEnterprise“ nach dem
+                        Auslesen, oder unten „→ .wwf …“ für eine vorhandene
+                        .p90/.EZR/.PRO. Je Zentrale eine .wwf.
 
 Ohne laufenden Dienst merkt sich der Browser alles; beim nächsten Start mit
 Dienst wird es in daten\ übernommen.

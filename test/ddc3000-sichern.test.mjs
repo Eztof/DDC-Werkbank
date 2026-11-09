@@ -32,6 +32,12 @@ test("DDC3000 sichern (Demo) → öffnen → alle Ansichten", async () => {
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "p90-")), dl.suggestedFilename());
     await dl.saveAs(file);
     assert.match(fs.readFileSync(file, "utf8"), /^# P90-Sicherung/);
+    /* .wwf für SPEnterprise */
+    const [dw] = await Promise.all([page.waitForEvent("download"), page.click("button:has-text('Als .wwf für SPEnterprise')")]);
+    assert.match(dw.suggestedFilename(), /\.wwf$/);
+    const wf = path.join(path.dirname(file), dw.suggestedFilename());
+    await dw.saveAs(wf);
+    assert.match(fs.readFileSync(wf, "latin1"), /^\{\\rtf1[\s\S]*Z      NR=2    ; TYP=DDC3000/);
     await page.click("button:has-text('In der Werkbank öffnen')");
     await page.waitForFunction(() => /^2: /.test((document.querySelector("#tbStation option:checked") || {}).textContent || ""));
     const n = (await page.$$(".nav-item")).length;

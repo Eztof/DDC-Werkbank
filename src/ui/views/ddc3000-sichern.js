@@ -2,10 +2,11 @@ import { VIEWS } from "../core/ext.js";
 import { h, store } from "../core/util.js";
 import { btn, chk, emptyState, icon, loadFiles, pageHead, selectEl, toast } from "../shell/shell.js";
 import { P90Link } from "../p90/link.js";
-import { createBackup } from "../p90/backup.js";
+import { createBackup, toPro } from "../p90/backup.js";
 import { knownPorts, openSerial, pickPort, portLabel, serialSupported } from "../p90/serial.js";
 import { SimDDC } from "../p90/sim.js";
 import { clearMakro, makroCount } from "../model/d3makro.js";
+import { toWwf } from "../model/p90.js";
 
 /* =========================================================================
    DDC3000 sichern – Datensicherung einer Kieback&Peter DDC3000 über RS232
@@ -89,6 +90,35 @@ function onProgress(p) {
 }
 function stop() { if (S.ac) { S.ac.abort(); S.prog = { ...S.prog, text: "Abbruch – warte, bis die DDC aufhört zu senden (bis ca. 10 s) …" }; paintProgress(); } }
 
+function saveBlob(name, data) {
+  const a = h("a", { href: URL.createObjectURL(new Blob([data], { type: "application/octet-stream" })), download: name });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+/* .PRO wie vom K&P-Programm – zum Eintragen in die Schnellparametrierung (SPEnterprise) */
+function downloadPro(text, name) {
+  try { saveBlob(String(name || fileName()).replace(/\.[^.]+$/, "") + ".PRO", toPro(text)); }
+  catch (e) { toast("Umwandeln: " + e.message, "err"); }
+}
+/* .wwf für SPEnterprise – je Zentrale eine Datei */
+function downloadWwf(text, name) {
+  try {
+    const base = String(name || fileName()).replace(/\.[^.]+$/, "");
+    const L = toWwf(text, base.replace(/^DDC-Sicherung_/, "DDC-Sicherung "));
+    for (const w of L) saveBlob(base + (L.length > 1 ? "_Z" + w.z : "") + ".wwf", w.rtf);
+    toast(L.length + " .wwf-Datei(en) erstellt – in SPEnterprise öffnen.", "ok", 6000);
+  } catch (e) { toast("Umwandeln: " + e.message, "err"); }
+}
+function convertFile(kind) {
+  const inp = h("input", { type: "file", accept: ".p90,.ezr,.pro" });
+  inp.addEventListener("change", async () => {
+    const f = inp.files[0]; if (!f) return;
+    const u8 = new Uint8Array(await f.arrayBuffer());
+    let t; try { t = new TextDecoder("utf-8", { fatal: true }).decode(u8); } catch (e) { t = new TextDecoder("windows-1252").decode(u8); }
+    if (kind === "wwf") downloadWwf(t, f.name); else downloadPro(t, f.name);
+  });
+  inp.click();
+}
 function download() {
   if (!S.file) return;
   const a = h("a", { href: URL.createObjectURL(new Blob([S.file.text], { type: "text/plain;charset=utf-8" })), download: S.file.name });
@@ -159,6 +189,8 @@ function settingsCard() {
     mk ? "Vorlagen der Schnellparametrierung: " + mk + " geladen – ergänzen Namen und Arten bei Sicherungen ohne Definitionen."
        : "Tipp: Ordner „makro.sp“ aus PS4000 (system\\makro.sp, auch als ZIP) einmal in die Werkbank ziehen – dann haben auch Sicherungen ohne Definitionen Namen und Arten.",
     mk ? btn("Vorlagen entfernen", "trash", () => { clearMakro(); paint(); }, "sm") : null));
+  card.appendChild(h("div", { class: "row muted small", style: { marginTop: "6px" } },
+    "Vorhandene Sicherung (.p90/.EZR/.PRO) für SPEnterprise umwandeln:", btn("→ .wwf …", "swap", () => convertFile("wwf"), "sm"), btn("→ .PRO …", "swap", () => convertFile("pro"), "sm")));
   return card;
 }
 
@@ -171,6 +203,8 @@ function resultCard() {
     card.appendChild(h("div", { class: "row", style: { margin: "10px 0" } },
       btn("In der Werkbank öffnen", "jump", openInWerkbank, "accent"),
       btn(S.file.saved ? "Nochmals herunterladen" : "Herunterladen", "download", download),
+      btn("Als .wwf für SPEnterprise", "download", () => downloadWwf(S.file.text, S.file.name), "", "Arbeitsdatei der Schnellparametrierung – in SPEnterprise öffnen"),
+      btn(".PRO", "download", () => downloadPro(S.file.text, S.file.name), "", "Datei wie vom K&P-Programm (SPClientDDC)"),
       h("span", { class: "muted small" }, (S.file.saved ? "Gespeichert als „" + S.file.name + "“. " : "") + r.devices.length + " Geräte" + (r.failed ? ", " + r.failed + " mit Fehler" : "") + (r.aborted ? " – abgebrochen, Datei ist unvollständig" : ""))));
   }
   card.appendChild(deviceList());

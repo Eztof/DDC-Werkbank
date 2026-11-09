@@ -186,17 +186,23 @@ function ordered(z, devices, def) {
   return out;
 }
 
+/* Geräte je Zentrale. Adresse a.z.g; bei kleinen Anlagen (DDC3035 …) ist z = 0, die Verknüpfungen nennen dann a */
+function byZentrale(B) {
+  const byZ = new Map();
+  for (const d of B.devices) {
+    const [a, zz] = d.addr.split(".").map(Number);
+    const z = zz || a;
+    if (!byZ.has(z)) byZ.set(z, []);
+    byZ.get(z).push(d);
+  }
+  return byZ;
+}
+
 export function parseP90(text, label, fileName) {
   const B = parseBackup(text);
   if (!B.devices.length) throw new Error(B.aborted ? "Sicherung wurde abgebrochen, bevor ein Gerät gelesen war" : "Keine Geräte in der P90-Sicherung");
   const def = defIndex(B.definitions.D1);
-  const byZ = new Map();
-  for (const d of B.devices) {
-    const [a, zz] = d.addr.split(".").map(Number);
-    const z = zz || a;        // Adresse a.z.g; bei kleinen Anlagen (DDC3035 …) ist z = 0, die Verknüpfungen nennen dann a
-    if (!byZ.has(z)) byZ.set(z, []);
-    byZ.get(z).push(d);
-  }
+  const byZ = byZentrale(B);
   const stamp = (B.header.Erstellt || "").replace(/,/, "");
   const out = [];
   for (const [z, devices] of byZ) {
@@ -215,6 +221,82 @@ export function parseP90(text, label, fileName) {
     out.push(C);
   }
   return out.length === 1 ? out[0] : out;
+}
+
+/* =========================================================================
+   Export als .wwf (Arbeitsdatei der Schnellparametrierung / SPEnterprise).
+   Aufbau wie eine echte .wwf: RTF (Courier New), je Zeile ein Token-Datensatz,
+   Z/B, Menüs (M), Parameter, Wochenprogramme (N), je Kreis K + Menüs + Parameter.
+   K=!Text ist der angezeigte Text (Klartext, sonst Standardtext), GT= der Klartext.
+   Je Zentrale am Bus eine Datei.  -> [{ z, name, rtf }]
+   ========================================================================= */
+const CP1252_ENC = (() => {
+  const m = new Map();
+  try { const dec = new TextDecoder("windows-1252"); for (let b = 0x80; b < 0x100; b++) m.set(dec.decode(Uint8Array.of(b)), b); } catch (e) { /* Latin-1 */ }
+  return m;
+})();
+function rtfEsc(s) {
+  let o = "";
+  for (const ch of String(s ?? "")) {
+    if (ch === "\\" || ch === "{" || ch === "}") o += "\\" + ch;
+    else if (ch.charCodeAt(0) < 0x80) o += ch;
+    else { const b = CP1252_ENC.get(ch) ?? (ch.charCodeAt(0) < 0x100 ? ch.charCodeAt(0) : 0x3f); o += "\\'" + b.toString(16).padStart(2, "0"); }
+  }
+  return o;
+}
+const pad = (s, n) => String(s ?? "").padEnd(n);
+const wP = f => { const [b, i] = String(f.P).split("/"); return (+i || 1) > 1 ? b + "/" + (+i) : b; };
+const wTZ = tz => String(tz || "").replace(/^([EA]) 0?(\d+):/, "$1 $2:");
+const RK_TYP = { "LÜFTUNG": "RK-Lüftung", "HEIZUNG": "RK-Heizung", "FESTWERT": "RK-Festwert" };
+
+function wwfLines(recs, name) {
+  const L = [];
+  const head = (kind, f) => pad(kind, 8) + "P=" + pad(wP(f), 10) + "; K=     !" + (f.GT || f.K || "");
+  const kindOf = r => (r.kind === "DS" && /^[NJ]\//.test(r.f.P)) ? "DM" : r.kind;   // Status Wochen-/Jahresprogramm: in der .wwf DM
+  const refs = (f, keys) => keys.map((k, i) => "       " + k + "=" + pad(f[k] || "---", 15) + "; T" + (i + 1) + "=");
+  for (const r of recs) {
+    const f = r.f;
+    switch (kindOf(r)) {
+      case "Z": L.push("Z      NR=" + pad(f.NR, 5) + "; TYP=DDC3000    ; K=" + name); break;
+      case "B": L.push("B      NR=" + pad(recs[0].f.NR, 5) + "; TYP=" + pad(f.TYP, 11) + "; K=", "       GT=" + name); break;
+      case "K": L.push("K      NR=" + pad(f.NR, 5) + "; TYP=" + (RK_TYP[f.TYP] || f.TYP || ""), "       RK=", "      ANL=", "       GT=" + (f.GT || "")); break;
+      case "M": L.push("M      NR=" + pad(f.NR, 5) + "; AKTIV=1    ; K=" + f.NR); break;
+      case "N": {
+        L.push("N      NR=" + pad(f.NR, 5) + "; K=", "     !     MO     DI     MI     DO     FR     SA     SO  ", "     !------------------------------------------------------------");
+        for (let i = 1; i <= 4; i++) for (const k of ["BEG", "END"]) {
+          const a = r.sched[k + i] || Array(7).fill("--:--");
+          L.push("     " + k + i + "=" + a.map(x => pad(x, 6)).join("=").replace(/\s+$/, ""));
+        }
+        break;
+      }
+      case "AX": L.push(head("AX", f), "        W=" + pad(f.W, 5) + "; E=" + pad(f.E || "keine Einh", 5) + "; Z=", "       UG=" + pad(f.UG, 5) + "; OG=" + (f.OG || ""), "       GT=" + (f.GT || "")); break;
+      case "AI": L.push(head("AI", f), "        E=" + pad(f.E || "keine Einh", 5) + "; Z=     ; SMIN=     ; SMAX=", "       GT=" + (f.GT || "")); break;
+      case "DS": L.push(head("DS", f), "        W=" + pad(f.W, 5) + "; Z=", "       TM=  ,=              ", "       GT=" + (f.GT || "")); break;
+      case "DM": L.push(head("DM", f), "       TM=  ,=                ,=              ", "      INV=0    ; Z=", "       GT=" + (f.GT || "")); break;
+      case "TX": L.push(pad("TX", 8) + "P=" + wP(f), "        W=" + (f.W || ""), "       GT=" + (f.GT || "")); break;
+      case "V": L.push(head("V", f), ...refs(f, ["V1", "V2", "V3", "V4"]), "       TV=", "       GT=" + (f.GT || "")); break;
+      case "T": L.push(head("T", f), "       TV=" + pad(f.TV || "---", 15) + "; T1=", "       TZ=" + pad(wTZ(f.TZ), 15) + "; T2=", "       GT=" + (f.GT || "")); break;
+      case "L": L.push(head("L", f), "       LD=" + pad(f.LD || "---", 15) + "; T1=", "       LB=" + pad(f.LB || "---", 15) + "; T2=", "        F=" + (f.F || ""), "       GT=" + (f.GT || "")); break;
+    }
+  }
+  return L;
+}
+
+export function toWwf(text, name) {
+  const B = parseBackup(text);
+  if (!B.devices.length) throw new Error("Keine Geräte in der Sicherung");
+  const def = defIndex(B.definitions.D1);
+  const out = [];
+  for (const [z, devices] of byZentrale(B)) {
+    const nm = name || "Zentrale " + z;
+    const lines = wwfLines(ordered(z, devices, def), nm);
+    const rtf = "{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0\\fmodern\\fprq1\\fcharset0 Courier New;}}\r\n" +
+      "{\\colortbl ;\\red0\\green0\\blue0;\\red255\\green255\\blue255;}\r\n" +
+      "\\viewkind4\\uc1\\pard\\cf1\\highlight2\\lang1031\\protect\\f0\\fs24\\par\r\n" +
+      lines.map(l => rtfEsc(l) + "\\par\r\n").join("") + "\\par\r\n}\r\n\0";   // wie das Original: NUL am Ende
+    out.push({ z, name: nm, rtf });
+  }
+  return out;
 }
 
 /* ---------- Als Dateiformat anmelden ---------- */

@@ -1,4 +1,4 @@
-import { decode } from "./cp850.js";
+import { decode, encode } from "./cp850.js";
 import { DEVTYPES } from "./devtypes.js";
 
 /* =========================================================================
@@ -153,7 +153,7 @@ export function parseBackup(text) {
     if (!l || l.startsWith("#")) continue;
     if (l.startsWith("t1 ") && (m = l.match(/^t1 (\d+\.\d+\.\d+) (\d+) (\d+) \S+ ?(.*)$/))) {
       const d = plain ? plainDev(m[1]) : (dev && dev.addr === m[1] ? dev : null);
-      if (d) { d.group = d.group || m[2]; d.type = d.type || m[3]; d.text = fix(m[4]).trim(); }
+      if (d) { d.group = d.group || m[2]; d.type = d.type || m[3]; d.text = fix(m[4]).trim(); d.t1 = fix(l); }
       continue;
     }
     if (plain && (m = l.match(/^[mp]1 (\d+\.\d+\.\d+) /))) dev = plainDev(m[1]);
@@ -178,3 +178,18 @@ const CP1252_REV = (() => {
   catch (e) { /* ohne Decoder: nur U+0080–U+00FF */ }
   return m;
 })();
+
+/**
+ * Sicherung (.p90/.EZR/.PRO-Text) → .PRO-Datei wie sie das K&P-Programm (SPClientDDC) schreibt:
+ * je Gerät die t1-Zeile, dann m1- und p1-Zeilen, CP850, CRLF. Die Schnellparametrierung kann
+ * solche Dateien in eine .wwf „eintragen“. -> Uint8Array
+ */
+export function toPro(text) {
+  const B = parseBackup(text);
+  const L = [];
+  for (const d of B.devices) {
+    L.push(d.t1 || `t1 ${d.addr} ${d.group || 0} ${d.type || 0} 00 ${d.text || ""}`.replace(/ $/, " "));
+    L.push(...d.menus, ...d.values);
+  }
+  return encode(L.join("\r\n") + "\r\n");
+}
