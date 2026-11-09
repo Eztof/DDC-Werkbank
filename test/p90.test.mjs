@@ -188,3 +188,26 @@ test(".wwf: Wochenprogramm BEG1=Mo =Di … =So (Montag nicht verschoben)", async
   const s = parseDDC3000(W, "x", "x.wwf").schedules[0];
   assert.deepEqual(s.days.map(d => d.entries.map(e => e.time).join("-")), ["05:00-16:00", "06:00-16:00", "06:00-16:00", "06:00-16:00", "06:00-15:00", "", ""]);
 });
+
+test("Vorlagen der Schnellparametrierung (makro.sp) ergänzen Art, Einheit und Namen ohne Definitionen", async () => {
+  globalThis.localStorage = globalThis.localStorage || { _m: {}, getItem(k) { return this._m[k] ?? null; }, setItem(k, v) { this._m[k] = v; } };
+  const M = await import("../src/ui/model/d3makro.js");
+  /* selbst geschriebene Beispiel-Vorlage im Aufbau der Originale (die echten Dateien gehören K&P und liegen nicht im Repo) */
+  const mak = ["#def _ANL Anlage", "#def _RK Regelkreis", "#def _X Zusatz", "K    NR=   ;  TYP=EZR30",
+    "AX     P=8230                          ; K=_ANL _RK Temp. Soll Komfort", "       W=20      ; Z=",
+    "AI     P=6450                          ; K=_ANL _RK Temp. Raum", "       E=°C      ; Z=   ; SMIN=     ; SMAX=",
+    "DS     P=3829                          ; K=! Synchronisation _X", "       W=0       ; Z="].join("\r\n");
+  const tab = M.parseMakro(mak);
+  assert.deepEqual(tab["8230"], ["AX", "", "Temp. Soll Komfort"]);
+  assert.deepEqual(tab["6450"], ["AI", "°C", "Temp. Raum"]);
+  assert.deepEqual(tab["3829"], ["DS", "", "Synchronisation Zusatz"]);
+  M.clearMakro();
+  M.makroTable().files["DDC3000/EZR30"] = tab;
+  assert.equal(M.makroDef("EZR31", "6450").name, "Temp. Raum");
+  const text = ["t1 1.0.0 32 93 00 ", "t1 1.0.1 16 75 00 Raum 1", "p1 1.0.1 8230/1 21.0 108 0F 00 ", "p1 1.0.1 3829/1 0 0F 00 ", ""].join("\r\n");
+  const C = parseP90(text, "EZR", "x.EZR");
+  const rk = C.nodes.get("1:RK");
+  assert.deepEqual(rk.paras.find(p => p.addr === "8230").texts, ["Temp. Soll Komfort"]);
+  assert.deepEqual(rk.paras.find(p => p.addr === "3829").texts, ["Synchronisation Zusatz"]);
+  M.clearMakro();
+});

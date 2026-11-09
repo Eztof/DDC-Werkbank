@@ -60,9 +60,9 @@ export function decodeBytes(u8) {
 }
 
 /* Was ist das für eine Datei? Die Formate tragen sich in FORMATS ein (core/ext.js). */
-export function sniffFormat(name, text) {
+export function sniffFormat(name, text, path) {
   const head = text.slice(0, 4000);
-  for (const F of FORMATS.list()) if (F.sniff && safely("Format " + F.id, () => F.sniff(name, head, text), false)) return F;
+  for (const F of FORMATS.list()) if (F.sniff && safely("Format " + F.id, () => F.sniff(name, head, text, path || name), false)) return F;
   return null;
 }
 const SKIP_ZIP = /^(pidata|security|lonconf|trend|graphic)/i;
@@ -87,7 +87,7 @@ export async function collectInputs(files) {
   const found = [];   // {fmt, kind, label, name, path, text}
   found.skipped = [];  // Texte für die Meldung „übersprungen“
   const consider = (name, path, text) => {
-    const fmt = sniffFormat(name, text);
+    const fmt = sniffFormat(name, text, path);
     if (fmt) found.push({ fmt, kind: fmt.id, label: fmt.open ? name : labelOf(path), name, path, text });
   };
   for (const f of files) {
@@ -98,6 +98,10 @@ export async function collectInputs(files) {
         if (SKIP_ZIP.test(f.name)) continue;
         const zip = await readZip(await f.arrayBuffer());
         for (const [zname, data] of Object.entries(zip)) {
+          /* Vorlagen der Schnellparametrierung (makro.sp, Dateien teils ohne Endung; ZIPs aus
+             Windows-PowerShell 5 trennen Ordner mit „\“) – sonst wie bisher */
+          const zn = zname.replace(/\\/g, "/");
+          if (/(^|\/)makro\.sp\//i.test(zn)) { const b = zn.split("/").pop(); if (!/\./.test(b) || /\.mak$/i.test(b)) consider(b, zn, decodeBytes(data)); continue; }
           const base = zname.split("/").pop();
           if (!wantExt().test(base)) continue;
           consider(base, f.name.replace(/\.zip$/i, "") + "/" + zname, decodeBytes(data));

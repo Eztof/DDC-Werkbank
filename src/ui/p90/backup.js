@@ -166,6 +166,11 @@ export function parseBackup(text) {
   return res;
 }
 
+/* Text, der aus roh gelesenen CP850-Bytes entstand (als Windows-1252 oder Latin-1), richtig wandeln */
+export function fixCp850(s) {
+  return s.replace(/[^\x00-\x7f]+/g, x => decode(Array.from(x, ch => CP1252_REV.get(ch) ?? ch.charCodeAt(0))));
+}
+
 /* Windows-1252-Zeichen → Byte (für roh eingelesene CP850-Dateien) */
 const CP1252_REV = (() => {
   const m = new Map();

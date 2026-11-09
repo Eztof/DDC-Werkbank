@@ -60,6 +60,11 @@ Reiter „DDC3000 sichern“  liest eine DDC3000 über die serielle Schnittstell
                         Werte genauer.
                         .EZR/.PRO-Dateien aus dem K&P-Programm haben denselben
                         Inhalt und lassen sich genauso öffnen.
+                        Sicherungen ohne Definitionen: den Ordner makro.sp aus
+                        PS4000 (system\makro.sp, gern als ZIP) einmal in die
+                        Werkbank ziehen. Die Vorlagen der Schnellparametrierung
+                        liefern dann Namen und Arten der Parameter. Sie bleiben
+                        im Browser gespeichert.
 
 Ohne laufenden Dienst merkt sich der Browser alles; beim nächsten Start mit
 Dienst wird es in daten\ übernommen.

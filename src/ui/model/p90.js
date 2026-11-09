@@ -1,6 +1,7 @@
 import { FORMATS } from "../core/ext.js";
 import { parseBackup, devName } from "../p90/backup.js";
 import { buildDDC3000 } from "./ddc3000.js";
+import { makroDef } from "./d3makro.js";
 
 /* =========================================================================
    DDC3000 – P90-Sicherung (.p90, erstellt im Reiter „DDC3000 sichern“ oder
@@ -130,14 +131,18 @@ function recordsOf(z, devices, def) {
       const r = parseP1(l);
       if (!r) continue;
       const D = def(d.group, r.base);
-      const kind = (D && kindFromDef(D)) || kindGuess(r);
+      /* ohne Definitionen: Vorlagen der Schnellparametrierung (falls in die Werkbank geladen) */
+      const MK = !D && d.group ? makroDef(devName(d.group, d.type), r.base) : null;
+      const pinLike = /^[bykBYK]\d+$/.test(r.base);
+      const kind = (D && kindFromDef(D)) || (MK && !(MK.kind === "V" && !REF_Z.test(r.tok[0] || "")) && MK.kind) || kindGuess(r);
       const f = { P: r.base + "/" + r.inst, W: r.val, ST: r.st };
       if (r.gt) f.GT = r.gt;
       if (D && D.name) {
         const n = D.range && D.lo != null ? (parseInt(r.base.replace(/^[A-Za-z]*/, ""), 10) - D.lo + 1) : r.inst;
         f.K = D.name.replace(/%\((\d+)\)/, "%(" + n + ")");
       }
-      const u = unitText(r.unit || (D && D.unit) || "");
+      if (MK && MK.name && !pinLike && !f.K) f.K = MK.name;
+      const u = unitText(r.unit || (D && D.unit) || "") || (MK && MK.unit && !/keine/i.test(MK.unit) ? MK.unit : "");
       if (u) f.E = u;
       if (kind === "AX" && D) { f.UG = D.min; f.OG = D.max; }
       if (kind === "V") refsOf(r.tok).slice(0, 4).forEach((x, i) => { f["V" + (i + 1)] = x; });

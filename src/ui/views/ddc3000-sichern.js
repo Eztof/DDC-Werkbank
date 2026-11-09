@@ -5,6 +5,7 @@ import { P90Link } from "../p90/link.js";
 import { createBackup } from "../p90/backup.js";
 import { knownPorts, openSerial, pickPort, portLabel, serialSupported } from "../p90/serial.js";
 import { SimDDC } from "../p90/sim.js";
+import { clearMakro, makroCount } from "../model/d3makro.js";
 
 /* =========================================================================
    DDC3000 sichern – Datensicherung einer Kieback&Peter DDC3000 über RS232
@@ -153,6 +154,11 @@ function settingsCard() {
   ab.disabled = !dis;
   card.appendChild(h("div", { class: "row", style: { marginTop: "14px" } }, go, ab,
     h("span", { class: "muted small" }, "Nur Lesebefehle. Anschluss DDC3200: Klemme 58 → Pin 2, 59 → Pin 3, 60 → Pin 5 (9-polig).")));
+  const mk = makroCount();
+  card.appendChild(h("div", { class: "row muted small", style: { marginTop: "10px" } },
+    mk ? "Vorlagen der Schnellparametrierung: " + mk + " geladen – ergänzen Namen und Arten bei Sicherungen ohne Definitionen."
+       : "Tipp: Ordner „makro.sp“ aus PS4000 (system\\makro.sp, auch als ZIP) einmal in die Werkbank ziehen – dann haben auch Sicherungen ohne Definitionen Namen und Arten.",
+    mk ? btn("Vorlagen entfernen", "trash", () => { clearMakro(); paint(); }, "sm") : null));
   return card;
 }
 

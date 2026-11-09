@@ -9,6 +9,7 @@ import "./model/model.js";
 import "./model/d4pml.js";
 import "./model/ddc3000.js";
 import "./model/p90.js";
+import "./model/d3makro.js";
 import "./model/findings.js";
 import "./model/pipeline.js";
 import "./shell/shell.js";
