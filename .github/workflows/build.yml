@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   bauen:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # Playwright 1.56 kennt ubuntu-26.04 noch nicht
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
