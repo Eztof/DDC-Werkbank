@@ -7325,7 +7325,13 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       else {
         const s0 = String(s2), e = m.index + m[1].length;
         const code = /\d/.test(s0[e] || "") || s0[m.index - 1] === "_" || s0[e] === "_";
-        out.push({ t: deUml(m[1]), i: m.index, e: m.index + m[0].length, ab: !!m[2], code });
+        let t = deUml(m[1]), fam = false;
+        for (const [re, w] of FAMILY) if (re.test(t)) {
+          t = w;
+          fam = true;
+          break;
+        }
+        out.push({ t, i: m.index, e: m.index + m[0].length, ab: !!m[2] && !fam, code, fam });
       }
     }
     return out;
@@ -7341,7 +7347,10 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     let i = 0;
     while (i < tk.length && pure(tk[i])) i++;
     let j = i < tk.length && sig(tk[i]) ? i + 1 : i;
-    while (j < tk.length && !sig(tk[j])) j++;
+    while (j < tk.length && !sig(tk[j])) {
+      j++;
+      if (tk[j - 1].fam) break;
+    }
     const toks = tk.slice(i, j);
     if (!validPart(toks)) return null;
     return { name: String(name), toks };
@@ -7540,6 +7549,16 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       const i = arr.indexOf(p);
       if (i >= 0) arr.splice(i, 1);
     };
+    const vocab = /* @__PURE__ */ new Map(), seen = /* @__PURE__ */ new Map();
+    for (const [P, ks] of plantKeys) {
+      const v = /* @__PURE__ */ new Set();
+      for (const M of ks) for (const w of M.k) v.add(w);
+      vocab.set(P, { v, ks });
+      for (const w of v) if (meaningful(w)) seen.set(w, (seen.get(w) || 0) + 1);
+    }
+    const numClash = (K, ks, skip) => K.k.some((w, i) => i !== skip && /^\d+$/.test(K.k[i + 1] || "") && meaningful(w) && ks.some((M) => M.k.some((x, j) => x === w && /^\d+$/.test(M.k[j + 1] || "") && M.k[j + 1] !== K.k[i + 1])) && !ks.some((M) => M.k.some((x, j) => x === w && M.k[j + 1] === K.k[i + 1])));
+    const headHit = (w, v) => w === v || Math.min(w.length, v.length) >= 5 && (w.startsWith(v) || v.startsWith(w)) || Math.min(w.length, v.length) >= 6 && (w.endsWith(v) || v.endsWith(w));
+    const distinct = (w) => meaningful(w) && (seen.get(w) || 0) < 2;
     for (const [key, pins] of [...byPlant]) for (const p of [...pins]) {
       if (p.how !== "Name" || !keyOf2.get(p)) continue;
       const P = bestPlant(keyOf2.get(p), plantKeys);
@@ -7557,7 +7576,70 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         put(p, P, "Name", null);
       }
     }
+    const general = /* @__PURE__ */ new Set();
+    const compound = (w, v) => Math.min(v.length, w.length) >= 3 && Math.abs(v.length - w.length) >= 3 && (v.startsWith(w) || w.startsWith(v));
+    const firstHit = (K) => {
+      if (K.toks.some((x) => x.code)) return null;
+      const i = K.k.findIndex(distinct);
+      if (i < 0) return null;
+      const w = K.k[i];
+      const hits = [...vocab].filter(([, x]) => [...x.v].some((v) => distinct(v) && headHit(w, v)));
+      return hits.length === 1 ? { i, w, P: hits[0][0], x: hits[0][1] } : null;
+    };
+    const cand = /* @__PURE__ */ new Map();
+    for (const p of rest) {
+      const K = keyOf2.get(p);
+      if (K) cand.set(p, firstHit(K));
+    }
+    const tailKey = (A, B) => B.k.length < A.k.length && B.k.every((w, j) => w === A.k[A.k.length - B.k.length + j]) && B.k.some(meaningful);
+    for (const p of [...rest]) {
+      const K = keyOf2.get(p), c = cand.get(p);
+      if (!c) continue;
+      const { i, w, P, x } = c;
+      const rival = rest.some((q) => {
+        if (q === p) return false;
+        const Q = keyOf2.get(q);
+        if (!Q) return false;
+        const cq = cand.get(q);
+        if (cq && cq.P === P) return false;
+        return tailKey(K, Q) || Q.k.some((v) => meaningful(v) && (headHit(w, v) || compound(w, v)));
+      });
+      if (rival) continue;
+      if (numClash(K, x.ks)) {
+        const n = K.k[i + 1];
+        if (!/^\d+$/.test(n || "") || numClash(K, x.ks, i)) continue;
+        if (!K.k.slice(0, i).every((y) => !meaningful(y) || !distinct(y))) continue;
+        const dk = canon(objKey(disp.get(P.key) || P.name));
+        if (!dk || !dk.k.some((y, j) => headHit(y, w) && /^\d+$/.test(dk.k[j + 1] || ""))) continue;
+        if (rest.filter((q) => {
+          const k = keyOf2.get(q) && keyOf2.get(q).k;
+          return k && k.some((y, j) => y === w && k[j + 1] === n);
+        }).length > 2) continue;
+        general.add(P.key + "\0" + w);
+      }
+      take(rest, p);
+      put(p, P, "Name", null);
+    }
     for (const [key, pins] of [...byPlant]) if (!pins.length) byPlant.delete(key);
+    for (const gk of general) {
+      const [key, w] = gk.split("\0");
+      const pins = byPlant.get(key);
+      if (!pins) continue;
+      const txt = /* @__PURE__ */ new Map(), cnt = /* @__PURE__ */ new Map();
+      for (const p of pins) {
+        const K = keyOf2.get(p);
+        if (!K) continue;
+        for (const x of K.toks) if (!x.num && x.t.startsWith(w)) {
+          const c = K.k[K.toks.indexOf(x)];
+          cnt.set(c, (cnt.get(c) || 0) + 1);
+          if (!x.ab && !txt.has(c)) txt.set(c, K.name.slice(x.i, x.e));
+        }
+      }
+      let best = null;
+      for (const [c, n] of cnt) if (c !== w && txt.has(c) && (!best || n > cnt.get(best))) best = c;
+      const word = best ? txt.get(best) : txt.get(w) || w;
+      disp.set(key, word.charAt(0).toUpperCase() + word.slice(1));
+    }
     const list = [];
     const order = [...plants.keys()];
     const real = order.filter((k) => byPlant.has(k));
@@ -7566,15 +7648,6 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       byPlant.get(real[0]).sort((a, b) => natCmp(a.klemme, b.klemme));
     }
     const clusters = rest.length ? keyClusters(rest.map((p) => ({ p, K: keyOf2.get(p) })), W.opt.grpMax || 12, canon) : [];
-    const vocab = /* @__PURE__ */ new Map(), seen = /* @__PURE__ */ new Map();
-    for (const [P, ks] of plantKeys) {
-      const v = /* @__PURE__ */ new Set();
-      for (const M of ks) for (const w of M.k) v.add(w);
-      vocab.set(P, { v, ks });
-      for (const w of v) if (meaningful(w)) seen.set(w, (seen.get(w) || 0) + 1);
-    }
-    const numClash = (K, ks) => K.k.some((w, i) => /^\d+$/.test(K.k[i + 1] || "") && meaningful(w) && ks.some((M) => M.k.some((x, j) => x === w && /^\d+$/.test(M.k[j + 1] || "") && M.k[j + 1] !== K.k[i + 1])) && !ks.some((M) => M.k.some((x, j) => x === w && M.k[j + 1] === K.k[i + 1])));
-    const headHit = (w, v) => w === v || Math.min(w.length, v.length) >= 5 && (w.startsWith(v) || v.startsWith(w)) || Math.min(w.length, v.length) >= 6 && (w.endsWith(v) || v.endsWith(w));
     for (let i = clusters.length - 1; i >= 0; i--) {
       const c = clusters[i];
       if (!c.K) continue;
@@ -7587,6 +7660,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     }
     const sameKey = (A, B) => A.k.length === B.k.length && A.k.every((w, i) => w === B.k[i]);
     const allgLeft = [];
+    const allgKey = order.find((k) => /^allgemein$/i.test(plants.get(k).name));
     for (const p of allg) {
       const K = keyOf2.get(p);
       if (K) {
@@ -7601,11 +7675,16 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           put(p, hitP[0][0], "Name", null);
           continue;
         }
+        const loc = allgKey ? [] : clusters.filter((c) => c.K && !c.K.k.some(meaningful) && c.K.k.length < K.k.length && c.K.k.every((w, i) => w === K.k[i]));
+        if (loc.length === 1) {
+          loc[0].pins.push(p);
+          p.how = "";
+          continue;
+        }
       }
       if (p.how === "geteilt") p.how = "Programm";
       allgLeft.push(p);
     }
-    const allgKey = order.find((k) => /^allgemein$/i.test(plants.get(k).name));
     if (allgLeft.length) {
       if (allgKey) {
         (byPlant.get(allgKey) || byPlant.set(allgKey, []).get(allgKey)).push(...allgLeft);
@@ -7636,6 +7715,26 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       const m = merged.find((x) => norm(x.name) === norm(g.name));
       if (m) m.pins.push(...g.pins);
       else merged.push(g);
+    }
+    if (d3) {
+      const modOf = (p) => (/^(\d+)\//.exec(p.klemme) || [])[1];
+      const gOf = /* @__PURE__ */ new Map();
+      merged.forEach((g) => g.pins.forEach((p) => gOf.set(p, g)));
+      const spare = (g) => /^(allgemein|weitere datenpunkte)$/i.test(g.name);
+      for (const g of [...merged]) {
+        if (g.pins.length !== 1 || spare(g)) continue;
+        const p = g.pins[0], m = modOf(p);
+        if (!m) continue;
+        const others = W.pins.filter((q) => q !== p && q.include && modOf(q) === m);
+        const hosts = new Set(others.map((q) => gOf.get(q)));
+        if (others.length < 2 || hosts.size !== 1) continue;
+        const h2 = [...hosts][0];
+        if (!h2 || spare(h2)) continue;
+        h2.pins.push(p);
+        h2.pins.sort((a, b) => natCmp(a.klemme, b.klemme));
+        gOf.set(p, h2);
+        merged.splice(merged.indexOf(g), 1);
+      }
     }
     applyGroups(W, merged);
   }
@@ -7691,6 +7790,19 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       }
       add(flat(node), depth, false);
     })(root, 0);
+    for (let i = out.length - 1; i >= 0; i--) {
+      const g = out[i];
+      if (!g.pooled || !g.depth || g.xs.length < 2 || g.xs.length > 4) continue;
+      if (g.xs[0].K.k.slice(0, g.depth).some(meaningful)) continue;
+      const by = /* @__PURE__ */ new Map();
+      for (const x of g.xs) {
+        const k = x.K.k.join(" ");
+        if (!by.has(k)) by.set(k, []);
+        by.get(k).push(x);
+      }
+      if (by.size < 2) continue;
+      out.splice(i, 1, ...[...by.values()].map((xs) => ({ xs, depth: xs[0].K.k.length, pooled: false })));
+    }
     const res = [];
     for (const g of out) {
       let L = g.depth;
@@ -7712,7 +7824,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       }
       let name = "", bn = 0;
       cnt.forEach((n, t) => {
-        if (n > bn) {
+        if (n > bn || n === bn && t.length < name.length) {
           bn = n;
           name = t;
         }
@@ -7727,8 +7839,18 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       if (!g.K) continue;
       let hosts = res.filter((h2) => h2 !== g && h2.K && h2.pins.length >= g.pins.length && (tailOf(g.K, h2.K) || tailOf(h2.K, g.K)));
       if (hosts.length !== 1 && g.pins.length <= 2) hosts = res.filter((h2) => h2 !== g && h2.K && headOf(g.K, h2.K));
+      if (hosts.length !== 1 && g.pins.length === 1) {
+        const w = g.K.k.find(meaningful);
+        const rel = (v) => v && w && v !== w && Math.min(v.length, w.length) >= 3 && Math.abs(v.length - w.length) >= 3 && (v.startsWith(w) || w.startsWith(v));
+        if (w) hosts = res.filter((h2) => h2 !== g && h2.K && h2.pins.length >= 2 && rel(h2.K.k.find(meaningful)));
+      }
       if (hosts.length === 1) {
-        hosts[0].pins.push(...g.pins);
+        const h2 = hosts[0];
+        if (h2.pins.length === g.pins.length && g.K.k.length < h2.K.k.length && tailOf(h2.K, g.K)) {
+          h2.name = g.name;
+          h2.K = g.K;
+        }
+        h2.pins.push(...g.pins);
         res.splice(i, 1);
       }
     }
@@ -7740,7 +7862,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const canon = canonizer(items.map((x) => x.K).filter(Boolean));
     return keyClusters(items, maxSize, canon).map((g) => ({ name: g.name, pins: g.pins }));
   }
-  var GENERIC_WORDS, pfx, SIG, SIG_START, SIG_END, meaningful, keyText, ALLG_RE, GENERIC_PLANT;
+  var GENERIC_WORDS, pfx, SIG, SIG_START, SIG_END, meaningful, FAMILY, keyText, ALLG_RE, GENERIC_PLANT;
   var init_anlagen = __esm({
     "src/ui/wartung/anlagen.js"() {
       init_util();
@@ -7753,8 +7875,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       SIG_START = ["temp", "betrieb", "stoer", "freig", "anford", "sollw", "istw", "quitt", "entrieg", "rueckmeld", "stell"];
       SIG_END = ["pumpe", "ventil", "fuehler", "kontakt", "taster", "schalter", "waechter", "melder", "meldung", "signal", "impuls", "druck", "temperatur", "anf", "stoerung", "betrieb"];
       meaningful = (t) => t.length >= 3 && /^[a-z]/.test(t) && !GENERIC_WORDS.has(t) && !isSig(t);
+      FAMILY = [[/^fern(w|ltg|leit|pump|heiz)/, "fernwaerme"]];
       keyText = (K, L) => K.name.slice(K.toks[0].i, K.toks[(L || K.toks.length) - 1].e).replace(/\s+/g, " ").trim();
-      ALLG_RE = /ssm|sammelst|entriegel|quittier|phasen|ueberspann|steuersicherung|not ?aus|brandschutz|brandmeld|netzausfall|aussentemp|aussenfuehler|koppelrelais/;
+      ALLG_RE = /ssm|sammelst|entriegel|quittier|phasen|ueberspann|steuersicherung|steuerspann|schaltschr|not ?aus|brandschutz|brandmeld|netzausfall|aussentemp|aussenfuehler|koppelrelais/;
       GENERIC_PLANT = /^(festwert|heizung|lueftung|kaelte|kreis|regelkreis|rk|anlage|allgemein|sonstiges?|frei|reserve)$/;
     }
   });
@@ -9572,7 +9695,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
       h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
-      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.8.0")
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.8.1")
     ));
   }
   function renderTitle() {
@@ -13959,7 +14082,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   init_persist();
   init_wtgml();
   var api = {
-    version: "0.8.0",
+    version: "0.8.1",
     register: ALL,
     state: APP,
     curC,

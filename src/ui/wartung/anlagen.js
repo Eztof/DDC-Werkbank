@@ -170,6 +170,8 @@ function isSig(t) {
   return false;
 }
 const meaningful = t => t.length >= 3 && /^[a-z]/.test(t) && !GENERIC_WORDS.has(t) && !isSig(t);
+/* Wortfamilien, die dieselbe Anlage meinen ("Fernw.", "Fernpumpe BT-D", "Fernltg." → Fernwärme) */
+const FAMILY = [[/^fern(w|ltg|leit|pump|heiz)/, "fernwaerme"]];
 function nameTokens(s) {
   const out = [];
   for (const m of String(s || "").matchAll(/([A-Za-zÄÖÜäöüß]+)(\.)?|(\d+)/g)) {
@@ -178,7 +180,9 @@ function nameTokens(s) {
       /* Teil eines Kennzeichens ("ZU52", "_ZA_") ist nie ein Signalwort */
       const s0 = String(s), e = m.index + m[1].length;
       const code = /\d/.test(s0[e] || "") || s0[m.index - 1] === "_" || s0[e] === "_";
-      out.push({ t: deUml(m[1]), i: m.index, e: m.index + m[0].length, ab: !!m[2], code });
+      let t = deUml(m[1]), fam = false;
+      for (const [re, w] of FAMILY) if (re.test(t)) { t = w; fam = true; break; }
+      out.push({ t, i: m.index, e: m.index + m[0].length, ab: !!m[2] && !fam, code, fam });
     }
   }
   return out;
@@ -194,7 +198,8 @@ export function objKey(name) {
   const pure = x => !x.code && (SIG.has(x.t) || SIG_START.some(s => x.t.length > s.length && x.t.startsWith(s)));
   const sig = x => !x.code && isSig(x.t);
   let i = 0; while (i < tk.length && pure(tk[i])) i++;
-  let j = i < tk.length && sig(tk[i]) ? i + 1 : i; while (j < tk.length && !sig(tk[j])) j++;
+  let j = i < tk.length && sig(tk[i]) ? i + 1 : i;
+  while (j < tk.length && !sig(tk[j])) { j++; if (tk[j - 1].fam) break; }   /* "Fernpumpe BT-D" = Fernwärme */
   const toks = tk.slice(i, j);
   if (!validPart(toks)) return null;
   return { name: String(name), toks };
@@ -290,7 +295,7 @@ function bestPlant(K, plantKeys) {
   return tied[0].t > 0 && tied[0].t > tied[1].t ? tied[0].P : null;
 }
 
-const ALLG_RE = /ssm|sammelst|entriegel|quittier|phasen|ueberspann|steuersicherung|not ?aus|brandschutz|brandmeld|netzausfall|aussentemp|aussenfuehler|koppelrelais/;
+const ALLG_RE = /ssm|sammelst|entriegel|quittier|phasen|ueberspann|steuersicherung|steuerspann|schaltschr|not ?aus|brandschutz|brandmeld|netzausfall|aussentemp|aussenfuehler|koppelrelais/;
 const GENERIC_PLANT = /^(festwert|heizung|lueftung|kaelte|kreis|regelkreis|rk|anlage|allgemein|sonstiges?|frei|reserve)$/;
 /* Gruppen nach Anlagen bilden */
 export function regroupPlants(W, C, splitAt) {
@@ -366,6 +371,19 @@ export function regroupPlants(W, C, splitAt) {
     plantKeys.set(P, ks);
   }
   const take = (arr, p) => { const i = arr.indexOf(p); if (i >= 0) arr.splice(i, 1); };
+  /* Wortschatz je Anlage; Wörter in mehreren Anlagen (Ortsangaben wie "Altbau") unterscheiden nicht */
+  const vocab = new Map(), seen = new Map();
+  for (const [P, ks] of plantKeys) {
+    const v = new Set(); for (const M of ks) for (const w of M.k) v.add(w);
+    vocab.set(P, { v, ks });
+    for (const w of v) if (meaningful(w)) seen.set(w, (seen.get(w) || 0) + 1);
+  }
+  const numClash = (K, ks, skip) => K.k.some((w, i) => i !== skip && /^\d+$/.test(K.k[i + 1] || "") && meaningful(w) &&
+    ks.some(M => M.k.some((x, j) => x === w && /^\d+$/.test(M.k[j + 1] || "") && M.k[j + 1] !== K.k[i + 1])) &&
+    !ks.some(M => M.k.some((x, j) => x === w && M.k[j + 1] === K.k[i + 1])));
+  const headHit = (w, v) => w === v || (Math.min(w.length, v.length) >= 5 && (w.startsWith(v) || v.startsWith(w))) ||
+    (Math.min(w.length, v.length) >= 6 && (w.endsWith(v) || v.endsWith(w)));
+  const distinct = w => meaningful(w) && (seen.get(w) || 0) < 2;
   /* nur über den Namen zugeordnete Klemmen: gibt es eine eindeutig passendere Anlage? */
   for (const [key, pins] of [...byPlant]) for (const p of [...pins]) {
     if (p.how !== "Name" || !keyOf.get(p)) continue;
@@ -378,7 +396,61 @@ export function regroupPlants(W, C, splitAt) {
     const P = bestPlant(K, plantKeys);
     if (P) { take(rest, p); put(p, P, "Name", null); }
   }
+  /* Rest: das erste unterscheidende Wort zeigt eindeutig auf eine Anlage
+     ("BR DT Brennwertkessel Umgehung" → Kessel, "BR DT Kesselanl. BHKW Leistungsanf." → Kessel, nicht BHKW) */
+  const general = new Set();
+  const compound = (w, v) => Math.min(v.length, w.length) >= 3 && Math.abs(v.length - w.length) >= 3 && (v.startsWith(w) || w.startsWith(v));
+  const firstHit = K => {
+    if (K.toks.some(x => x.code)) return null;   /* Kennzeichen (ICB_46_…) laufen über bestPlant */
+    const i = K.k.findIndex(distinct); if (i < 0) return null;
+    const w = K.k[i];
+    const hits = [...vocab].filter(([, x]) => [...x.v].some(v => distinct(v) && headHit(w, v)));
+    return hits.length === 1 ? { i, w, P: hits[0][0], x: hits[0][1] } : null;
+  };
+  const cand = new Map(); for (const p of rest) { const K = keyOf.get(p); if (K) cand.set(p, firstHit(K)); }
+  const tailKey = (A, B) => B.k.length < A.k.length && B.k.every((w, j) => w === A.k[A.k.length - B.k.length + j]) && B.k.some(meaningful);
+  for (const p of [...rest]) {
+    const K = keyOf.get(p), c = cand.get(p); if (!c) continue;
+    const { i, w, P, x } = c;
+    /* andere freie Klemmen sprechen für ein eigenes Objekt: "Öl Leckanlage" neben "Öltank 1/2",
+       "Kesselanl. Fernpumpe BT.D" neben "Fernpumpe BT-D" */
+    const rival = rest.some(q => {
+      if (q === p) return false;
+      const Q = keyOf.get(q); if (!Q) return false;
+      const cq = cand.get(q); if (cq && cq.P === P) return false;
+      return tailKey(K, Q) || Q.k.some(v => meaningful(v) && (headHit(w, v) || compound(w, v)));
+    });
+    if (rival) continue;
+    if (numClash(K, x.ks)) {
+      /* "Kessel 2 Doppelpumpe" bei nur einer Kessel-Anlage: dazu, wenn es nur Einzelstücke sind; Anlage heißt dann allgemein */
+      const n = K.k[i + 1];
+      if (!/^\d+$/.test(n || "") || numClash(K, x.ks, i)) continue;
+      if (!K.k.slice(0, i).every(y => !meaningful(y) || !distinct(y))) continue;
+      const dk = canon(objKey(disp.get(P.key) || P.name));
+      if (!dk || !dk.k.some((y, j) => headHit(y, w) && /^\d+$/.test(dk.k[j + 1] || ""))) continue;
+      if (rest.filter(q => { const k = keyOf.get(q) && keyOf.get(q).k; return k && k.some((y, j) => y === w && k[j + 1] === n); }).length > 2) continue;
+      general.add(P.key + "\u0000" + w);
+    }
+    take(rest, p); put(p, P, "Name", null);
+  }
   for (const [key, pins] of [...byPlant]) if (!pins.length) byPlant.delete(key);
+  /* Anlagenname ohne Nummer, wenn andere Nummern dazukamen: "Kessel 1" → "Kesselanlage" bzw. "Kessel" */
+  for (const gk of general) {
+    const [key, w] = gk.split("\u0000");
+    const pins = byPlant.get(key); if (!pins) continue;
+    const txt = new Map(), cnt = new Map();
+    for (const p of pins) {
+      const K = keyOf.get(p); if (!K) continue;
+      for (const x of K.toks) if (!x.num && x.t.startsWith(w)) {
+        const c = K.k[K.toks.indexOf(x)];
+        cnt.set(c, (cnt.get(c) || 0) + 1);
+        if (!x.ab && !txt.has(c)) txt.set(c, K.name.slice(x.i, x.e));
+      }
+    }
+    let best = null; for (const [c, n] of cnt) if (c !== w && txt.has(c) && (!best || n > cnt.get(best))) best = c;
+    const word = best ? txt.get(best) : (txt.get(w) || w);
+    disp.set(key, word.charAt(0).toUpperCase() + word.slice(1));
+  }
   const list = [];
   const order = [...plants.keys()];
   const real = order.filter(k => byPlant.has(k));
@@ -386,18 +458,6 @@ export function regroupPlants(W, C, splitAt) {
   if (real.length === 1) { byPlant.get(real[0]).push(...rest.splice(0), ...allg.splice(0)); byPlant.get(real[0]).sort((a, b) => natCmp(a.klemme, b.klemme)); }
   /* Rest nach Namen bündeln */
   const clusters = rest.length ? keyClusters(rest.map(p => ({ p, K: keyOf.get(p) })), W.opt.grpMax || 12, canon) : [];
-  /* ganze Namensgruppe passt eindeutig zu einer Anlage ("Altbau Kesselanlage" → Kessel 1, "BHKW" → BR DT BHKW) */
-  const vocab = new Map(), seen = new Map();
-  for (const [P, ks] of plantKeys) {
-    const v = new Set(); for (const M of ks) for (const w of M.k) v.add(w);
-    vocab.set(P, { v, ks });
-    for (const w of v) if (meaningful(w)) seen.set(w, (seen.get(w) || 0) + 1);
-  }
-  const numClash = (K, ks) => K.k.some((w, i) => /^\d+$/.test(K.k[i + 1] || "") && meaningful(w) &&
-    ks.some(M => M.k.some((x, j) => x === w && /^\d+$/.test(M.k[j + 1] || "") && M.k[j + 1] !== K.k[i + 1])) &&
-    !ks.some(M => M.k.some((x, j) => x === w && M.k[j + 1] === K.k[i + 1])));
-  const headHit = (w, v) => w === v || (Math.min(w.length, v.length) >= 5 && (w.startsWith(v) || v.startsWith(w))) ||
-    (Math.min(w.length, v.length) >= 6 && (w.endsWith(v) || v.endsWith(w)));
   for (let i = clusters.length - 1; i >= 0; i--) {
     const c = clusters[i]; if (!c.K) continue;
     const core = c.K.k.filter(w => meaningful(w) && (seen.get(w) || 0) < 2);
@@ -410,6 +470,7 @@ export function regroupPlants(W, C, splitAt) {
   /* Sammelmeldungen u. Ä.: zu einer Gruppe mit einer Klemme gleichen Schlüssels, sonst Allgemein */
   const sameKey = (A, B) => A.k.length === B.k.length && A.k.every((w, i) => w === B.k[i]);
   const allgLeft = [];
+  const allgKey = order.find(k => /^allgemein$/i.test(plants.get(k).name));
   for (const p of allg) {
     const K = keyOf.get(p);
     if (K) {
@@ -417,11 +478,13 @@ export function regroupPlants(W, C, splitAt) {
       if (hitC.length === 1) { hitC[0].pins.push(p); p.how = ""; continue; }
       const hitP = [...plantKeys].filter(([, ks]) => ks.some(M => sameKey(M, K)));
       if (hitP.length === 1 && !hitC.length) { put(p, hitP[0][0], "Name", null); continue; }
+      /* ohne eigene Allgemein-Anlage: zur Ortsgruppe ("BT C Brandmeldeanlage" → "BT") */
+      const loc = allgKey ? [] : clusters.filter(c => c.K && !c.K.k.some(meaningful) && c.K.k.length < K.k.length && c.K.k.every((w, i) => w === K.k[i]));
+      if (loc.length === 1) { loc[0].pins.push(p); p.how = ""; continue; }
     }
     if (p.how === "geteilt") p.how = "Programm";
     allgLeft.push(p);
   }
-  const allgKey = order.find(k => /^allgemein$/i.test(plants.get(k).name));
   if (allgLeft.length) { if (allgKey) { (byPlant.get(allgKey) || byPlant.set(allgKey, []).get(allgKey)).push(...allgLeft); byPlant.get(allgKey).sort((a, b) => natCmp(a.klemme, b.klemme)); } else list.push({ name: "Allgemein", pins: allgLeft }); }
   for (const key of order) {
     const pins = byPlant.get(key); if (!pins || !pins.length) continue;
@@ -440,6 +503,22 @@ export function regroupPlants(W, C, splitAt) {
   /* gleiche Namen zusammenlegen */
   const merged = [];
   for (const g of list) { const m = merged.find(x => norm(x.name) === norm(g.name)); if (m) m.pins.push(...g.pins); else merged.push(g); }
+  /* DDC3000: einzelne Klemme auf einem Modul, dessen übrige Klemmen alle in einer Gruppe stehen ("Tagestank" auf dem Öltank-Modul) */
+  if (d3) {
+    const modOf = p => (/^(\d+)\//.exec(p.klemme) || [])[1];
+    const gOf = new Map(); merged.forEach(g => g.pins.forEach(p => gOf.set(p, g)));
+    const spare = g => /^(allgemein|weitere datenpunkte)$/i.test(g.name);
+    for (const g of [...merged]) {
+      if (g.pins.length !== 1 || spare(g)) continue;
+      const p = g.pins[0], m = modOf(p); if (!m) continue;
+      const others = W.pins.filter(q => q !== p && q.include && modOf(q) === m);
+      const hosts = new Set(others.map(q => gOf.get(q)));
+      if (others.length < 2 || hosts.size !== 1) continue;
+      const h = [...hosts][0]; if (!h || spare(h)) continue;
+      h.pins.push(p); h.pins.sort((a, b) => natCmp(a.klemme, b.klemme)); gOf.set(p, h);
+      merged.splice(merged.indexOf(g), 1);
+    }
+  }
   applyGroups(W, merged);
 }
 
@@ -478,6 +557,16 @@ function keyClusters(items, maxSize, canon) {
     }
     add(flat(node), depth, false);
   })(root, 0);
+  /* Einzelstücke unter einer reinen Ortsangabe ("BT.C": Benzinabscheider, Pumpensumpf) sind verschiedene Objekte */
+  for (let i = out.length - 1; i >= 0; i--) {
+    const g = out[i];
+    if (!g.pooled || !g.depth || g.xs.length < 2 || g.xs.length > 4) continue;
+    if (g.xs[0].K.k.slice(0, g.depth).some(meaningful)) continue;
+    const by = new Map();
+    for (const x of g.xs) { const k = x.K.k.join(" "); if (!by.has(k)) by.set(k, []); by.get(k).push(x); }
+    if (by.size < 2) continue;
+    out.splice(i, 1, ...[...by.values()].map(xs => ({ xs, depth: xs[0].K.k.length, pooled: false })));
+  }
   /* Name: gemeinsamer Anfang der Schlüssel, im häufigsten Originaltext */
   const res = [];
   for (const g of out) {
@@ -495,7 +584,7 @@ function keyClusters(items, maxSize, canon) {
       const t = keyText(x.K, L); cnt.set(t, (cnt.get(t) || 0) + 1);
       if (!K0) K0 = x.K;
     }
-    let name = "", bn = 0; cnt.forEach((n, t) => { if (n > bn) { bn = n; name = t; } });
+    let name = "", bn = 0; cnt.forEach((n, t) => { if (n > bn || (n === bn && t.length < name.length)) { bn = n; name = t; } });
     const K = K0 ? { k: K0.k.slice(0, L), toks: K0.toks.slice(0, L), name: K0.name } : null;
     res.push({ name: name || "Weitere Datenpunkte", K, pins: g.xs.map(x => x.p) });
   }
@@ -507,7 +596,18 @@ function keyClusters(items, maxSize, canon) {
     let hosts = res.filter(h => h !== g && h.K && h.pins.length >= g.pins.length && (tailOf(g.K, h.K) || tailOf(h.K, g.K)));
     /* Kleinstgruppe zum übergeordneten Objekt ("BR DT E-Zähler" → "BR DT") */
     if (hosts.length !== 1 && g.pins.length <= 2) hosts = res.filter(h => h !== g && h.K && headOf(g.K, h.K));
-    if (hosts.length === 1) { hosts[0].pins.push(...g.pins); res.splice(i, 1); }
+    /* Einzelstück, dessen Wort Anfang eines Wortes einer anderen Gruppe ist ("Öl Leckanlage" → "Öltank") */
+    if (hosts.length !== 1 && g.pins.length === 1) {
+      const w = g.K.k.find(meaningful);
+      const rel = v => v && w && v !== w && Math.min(v.length, w.length) >= 3 && Math.abs(v.length - w.length) >= 3 && (v.startsWith(w) || w.startsWith(v));
+      if (w) hosts = res.filter(h => h !== g && h.K && h.pins.length >= 2 && rel(h.K.k.find(meaningful)));
+    }
+    if (hosts.length === 1) {
+      const h = hosts[0];
+      /* gleich groß: das allgemeinere Objekt gibt den Namen ("Fernw." statt "BT.C Kesselanl. Fernpumpe") */
+      if (h.pins.length === g.pins.length && g.K.k.length < h.K.k.length && tailOf(h.K, g.K)) { h.name = g.name; h.K = g.K; }
+      h.pins.push(...g.pins); res.splice(i, 1);
+    }
   }
   if (unnamed.length) res.push({ name: "Weitere Datenpunkte", K: null, pins: unnamed });
   return res;

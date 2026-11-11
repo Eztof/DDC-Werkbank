@@ -42,6 +42,25 @@ test("Gruppierung nach Bezeichnung: Ortsvorsatz, Abkürzung, Tippfehler, Signalw
     "p1 1.5.0 k4/1 0 0F 00 Notstromaggregat Störung",
     "p1 1.5.0 k5/1 0 0F 00 DT Notstromaggr. Betrieb",
     "p1 1.5.0 k6/1 0 0F 00 KONTAKT 6",
+    "p1 1.5.0 y8/1 60.0 108 0F 00 Anf.Soll Fernw.",
+    "p1 1.5.0 k7/1 0 0F 00 Anf.Fernpumpe BT-D",
+    "p1 1.5.0 k8/1 0 0F 00 Altbau Schaltschr Ausfall Steuerspannung Störung",
+    ...Array.from({ length: 10 }, (_, i) => `p1 1.5.0 b${20 + i}/1 20.0 108 0F 00 BT.C Kantine RLT Temp. ${i + 1}`),
+    ...Array.from({ length: 4 }, (_, i) => `p1 1.5.0 b${30 + i}/1 20.0 108 0F 00 BT.C Küche RLT Temp. ${i + 1}`),
+    "",
+    "[Gerät 1.5.810 FBM14 29 83]",
+    "p1 1.5.810 b1/1 44.2 150 0F 00 Öltank 1",
+    "p1 1.5.810 b2/1 47.8 150 0F 00 Öltank 2",
+    "p1 1.5.810 b3/1 42.1 150 0F 00 Tagestank Notstrom",
+    "",
+    "[Gerät 1.5.811 FBM14 29 83]",
+    "p1 1.5.811 k1/1 0 0F 01 Öl Leckanlage Störung",
+    "",
+    "[Gerät 1.5.812 FBM14 29 83]",
+    "p1 1.5.812 k1/1 0 0F 00 BT.C Kesselanl. Fernpumpe BT.D Störung",
+    "p1 1.5.812 k2/1 0 0F 00 BT.C Kesselanl. Fernpumpe BT.D Betrieb",
+    "p1 1.5.812 k3/1 0 0F 00 BT.C Pumpensumpf    Ölmelder",
+    "p1 1.5.812 k4/1 0 0F 00 BT.C Benzinabscheider",
     ""
   ].join("\r\n"));
   const { browser, page, errors } = await open([f]);
@@ -57,6 +76,12 @@ test("Gruppierung nach Bezeichnung: Ortsvorsatz, Abkürzung, Tippfehler, Signalw
     assert.deepEqual(groups["Küche WWB"], ["b5", "b6", "k2"], "Tippfehler „Kücke“");
     assert.deepEqual(groups["Notstromaggregat"], ["k3", "k4", "k5"], "„DT Notstromaggr.“ = Notstromaggregat");
     assert.deepEqual(groups["Weitere Datenpunkte"], ["k6"]);
+    assert.deepEqual(groups["Fernw."], ["812/k1", "812/k2", "k7", "y8"], "Fernw., Fernpumpe BT-D und Kesselanl. Fernpumpe BT.D = Fernwärme");
+    assert.deepEqual(groups["BT.C Benzinabscheider"], ["812/k4"], "Einzelstücke unter reiner Ortsangabe nicht zusammenwerfen");
+    assert.deepEqual(groups["BT.C Pumpensumpf"], ["812/k3"]);
+    assert.deepEqual(groups["BT.C Kantine RLT"].length, 10);
+    assert.deepEqual(groups["Öltank"], ["810/b1", "810/b2", "810/b3", "811/k1"], "Tagestank auf dem Öltank-Modul, „Öl Leckanlage“");
+    assert.deepEqual(groups["Allgemein"], ["k8"], "Schaltschrank-Störung");
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();
