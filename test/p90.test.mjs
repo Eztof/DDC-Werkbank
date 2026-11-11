@@ -251,3 +251,44 @@ test(".p90 → .wwf für SPEnterprise: Aufbau wie das Original, wieder eingelese
   const sig = C => ({ pins: C.pins.map(p => p.klemme + ":" + p.kind + ":" + p.name).sort(), edges: C.edges.map(e => e.from + ">" + e.to + "." + e.toPara + (e.inv ? "!" : "")).sort(), sched: C.schedules.map(s => JSON.stringify(s.days)) });
   assert.deepEqual(sig(parseDDC3000(w, "x", "x.wwf")), sig(parseP90(r.text, "x", "x.p90")));
 });
+
+test(".wwf für SPEnterprise: nichts, woran das Übersetzen hängen bleibt", async () => {
+  const { toWwf } = await import("../src/ui/model/p90.js");
+  const text = [
+    "# P90-Sicherung (Kieback&Peter DDC3000)", "# Zeichensatz: UTF-8 (Klartexte der DDC aus CP850 umgewandelt)", "",
+    "[Gerät 1.3.0 DDC3200 32 96]",
+    "m1 1.3.0 69/1 03", "m1 1.3.0 117/1 03", "m1 1.3.0 116/1 03",
+    "p1 1.3.0 b1/1 12.5 108 0F 00 Außen_Fühler",
+    "p1 1.3.0 1207/1 1 0 0F 00 Task Betriebszustand",
+    "p1 1.3.0 2030/1 0 0 0F 00 ",
+    "p1 1.3.0 Y2/1 000.000 0000/00 N --- 0F 00 ",
+    "p1 1.3.0 Y3/1 001.000 b1/01 N --- 0F 00 ",
+    "p1 1.3.0 1014/1 06:00-14:00 --- --- --- 0F 00 ",
+    "p1 1.3.0 1015/1 06:00-14:00 15:00-18:00 --- --- 0F 00 ",
+    "p1 1.3.0 501/1 PAN 0000 31.12-01.01 0F 00 ",
+    "p1 1.3.0 502/1 --- 0F 00 ",
+    "",
+    "[Gerät 1.3.1 EZR30 16 1]",
+    "m1 1.3.1 74/1 03",
+    "p1 1.3.1 1014/1 07:00-16:00 --- --- --- 0F 00 ",
+    ""
+  ].join("\r\n");
+  const w = toWwf(text, "DDC-Sicherung 2026-11-10_08-52")[0].rtf.replace(/\\par\r\n/g, "\n");
+  assert.ok(!w.includes("_"), "kein Unterstrich (Platzhalter in SPEnterprise)");
+  assert.match(w, /^Z {6}NR=3 {4}; TYP=DDC3000 {4}; K=DDC-Sicherung 2026-11-10 08-52$/m);
+  assert.match(w, /!Au\\'dfen F\\'fchler/);
+  assert.doesNotMatch(w, /P=(1207|2030)\b/, "Systemparameter, die SPEnterprise ablehnt");
+  assert.doesNotMatch(w, /000\.000|0\.0 0\/0/, "leere Verknüpfung nicht als Quelle");
+  assert.match(w, /V1=1\.0 b1\/1N/);
+  assert.doesNotMatch(w, /P=(1014|1015|501|502)\b/, "Nutzzeiten/Jahresprogramm nicht als Parameter");
+  /* Wochenprogramm direkt hinter seinem Menü 117/x, Jahresprogramm hinter 116/x */
+  const iM117 = w.indexOf("M      NR=117/1"), iN = w.indexOf("N      NR=1"), iM116 = w.indexOf("M      NR=116/1"), iJ = w.indexOf("J      NR=1");
+  assert.ok(iM117 >= 0 && iM117 < iN && iN < iM116 && iM116 < iJ, "Reihenfolge M117 → N → M116 → J");
+  assert.match(w, /BEG1=06:00 =06:00 =--:--/);
+  assert.match(w, /BEG2=--:-- =15:00 =--:--/);
+  assert.match(w, /JDP01=31\.12  =01\.01      =A        =N        =0000/);
+  /* Raumregler: eigenes Wochenprogramm hinter Menü 74/x */
+  const iK = w.indexOf("K      NR=1"), iM74 = w.indexOf("M      NR=74/1"), iN2 = w.indexOf("N      NR=1", iK);
+  assert.ok(iK > 0 && iK < iM74 && iM74 < iN2);
+  assert.match(w.slice(iN2), /BEG1=07:00 =--:--/);
+});

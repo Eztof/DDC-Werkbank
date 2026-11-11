@@ -35,6 +35,20 @@ const STATION_JOBS = [
   ["false", "true", "Verifizierung der Datensicherung"]
 ];
 const STATION_PROPS = [["BUS Systemadresse", "Text"], ["letzter Batteriewechsel", "Datum"], ["Softwareversion", "Text"], ["nächster Batteriewechsel", "Datum"], ["Netzwerkparameter", "Text"]];
+/* Module (SBM, FBM, Raumregler …): Prüfungen wie bei Hardware üblich */
+const MODULE_JOBS = [
+  ["false", "false", "Anschlussverbindungen auf elektrische/mechanische Funktion prüfen, ggf. nachziehen"],
+  ["false", "false", "Auf fach- und funktionsgerechte Installation und Umgebungsbedingungen prüfen"],
+  ["false", "false", "Auf Verschmutzung, Beschädigung, Korrosion und Befestigung prüfen"],
+  ["false", "false", "Funktionselemente (z.B. Bedien- und Anzeigeeinrichtungen) prüfen"],
+  ["false", "true", "Signale abgleichen"]
+];
+const ROOM_JOBS = [
+  ["false", "false", "Anschlussverbindungen auf elektrische/mechanische Funktion prüfen, ggf. nachziehen"],
+  ["false", "false", "Auf Verschmutzung, Beschädigung, Korrosion und Befestigung prüfen"],
+  ["false", "false", "Funktionselemente (z.B. Bedien- und Anzeigeeinrichtungen) prüfen"],
+  ["true", "true", "Regelkreis/Modulfunktion/Optimierungsfunktion gemäß Einstellparameter unter Berücksichtigung aller Zusatzfunktionen prüfen"]
+];
 const PRODUKT_DOC = { DDC4200: "2.60-10.200-01-DE-DDC4200.pdf", DDC4200E: "2.60-10-210-01-DE-DDC4200e-2017-04-13.pdf" };
 let GID = 1;
 export const newGid = () => "g" + (GID++);
@@ -144,7 +158,7 @@ export function wdModel(C) {
   const W = {
     cid: C.cid, pins, groups: [], prefix, use: true,
     stationType: (m.stationType || (C.format === "DDC3000" ? "DDC3000" : "DDC")).toUpperCase(), centralAddr: m.centralAddr, bacnetDevId: m.bacnetDevId, applRev: m.applRev, build: m.build,
-    isp: { bez: m.name, station: true, facName: "ISP " + m.name, artBez: "Automationsstation mit Bedienfunktion", produktDoc: PRODUKT_DOC[(m.stationType || "").toUpperCase()] || PRODUKT_DOC[m.stationType] || "", fillProps: true },
+    isp: { bez: m.name, station: true, facName: "ISP " + m.name, artBez: "Automationsstation mit Bedienfunktion", produktDoc: PRODUKT_DOC[(m.stationType || "").toUpperCase()] || PRODUKT_DOC[m.stationType] || "", fillProps: true, modules: true },
     opt: { info: "klemme", sortKind: false, klartext: "zentrale", grpMax: 12, mode: "anlage", splitAt: 0 }
   };
   W.C = C;
@@ -186,6 +200,34 @@ function stationArtikel(W, sortId, ind) {
   STATION_JOBS.forEach(([rm, team, d]) => { x += jobBlock(I1, rm, team, d); });
   return x + I + "</Artikel>\n";
 }
+/* Hardware-Module einer Station aus der Sicherung: DDC3000 = SBM 7xx, FBM/FBK/FBR 8xx, EZR an DDC3035;
+   DDC4000 = alles außer Station (000), internen E/A und BACnet-Partnern. Regelkreise (HEIZUNG, FESTWERT …) sind Software. */
+const HW_D3 = /^(SBM|FBM|FBK|FBR|FBS|FBA|EZR|ERR|RBW|RPW|ASM|BMA|BMD)/i;
+export function hwModules(C) {
+  const d3 = C.format === "DDC3000", out = [];
+  for (const m of C.modules || []) {
+    const t = String(m.type || "").trim();
+    if (!t) continue;
+    if (d3 ? (m.addr === "0" || !HW_D3.test(t)) : (/^0+$/.test(m.addr) || /^(BACnet|IO_)/i.test(t))) continue;
+    const cat = /^(SBM|BMA|BMD|ASM)/i.test(t) ? "Schaltschrankmodul" : /^(FBM|FBK|FBA|FBS)/i.test(t) ? "Feldbusmodul"
+      : /^(EZR|ERR)/i.test(t) ? "Einzelraumregler" : /^(FBR|RBW|RPW)/i.test(t) ? "Raumbediengerät" : "Modul";
+    /* „FBM24 SS Kantine“ → „SS Kantine“; nur der Typ als Name → leer */
+    const name = String(m.name || "").replace(/\s+/g, " ").trim().replace(new RegExp("^" + t.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&") + "(?:\\s+|$)", "i"), "");
+    out.push({ addr: String(m.addr), type: t, cat, name, fw: m.fw || "", active: m.active !== false });
+  }
+  return out;
+}
+export function moduleAddr(W, m) { return "Zentrale " + (W.centralAddr || "?") + " · " + (/^(EZR|ERR)/i.test(m.type) ? "EZR " : "Modul ") + m.addr; }
+export function moduleArtikel(W, m, sortId, ind) {
+  const I = ind, I1 = I + "    ", I2 = I1 + "    ";
+  let x = I + '<Artikel active="true" sortId="' + sortId + '">\n' + wtag(I1, "nummer", m.type) + I1 + "<installationClass>\n";
+  x += wtag(I2, "description", "6.1 Anlagen-Automationseinrichtungen (AAE)") + wtag(I2, "shortkey", "54");
+  x += propBlock(I2, "BUS Systemadresse", W.isp.fillProps ? moduleAddr(W, m) : "", "Text");
+  if (m.fw) x += propBlock(I2, "Softwareversion", W.isp.fillProps ? m.fw : "", "Text");
+  x += I1 + "</installationClass>\n" + wtag(I1, "artBezeichnung", m.cat) + (m.name ? wtag(I1, "artKlartext", m.name) : "") + wtag(I1, "artLbnr", m.type) + wtag(I1, "standort", W.isp.bez);
+  (/Raum/.test(m.cat) || m.cat === "Einzelraumregler" ? ROOM_JOBS : MODULE_JOBS).forEach(([rm, team, d]) => { x += jobBlock(I1, rm, team, d); });
+  return x + I + "</Artikel>\n";
+}
 export function dpArtikel(W, p, sortId, ind) {
   const I = ind, I1 = I + "    ", I2 = I1 + "    ";
   const k = KIND_INFO[p.kind] && p.kind !== "frei" ? { nummer: KIND_INFO[p.kind].nummer, bez: KIND_INFO[p.kind].name, lbnr: KIND_INFO[p.kind].lbnr } : { nummer: "#" + p.kind, bez: p.kind, lbnr: true };
@@ -205,7 +247,14 @@ export function ispXml(W, sortId, ind) {
   const I = ind, I1 = I + "    ", I2 = I1 + "    ";
   let x = I + '<Isp sortId="' + sortId + '">\n' + wtag(I1, "ispBezeichnung", W.isp.bez);
   let fac = 1;
-  if (W.isp.station) x += I1 + '<facility sortId="' + (fac++) + '">\n' + wtag(I2, "facBezeichnung", W.isp.facName) + stationArtikel(W, 1, I2) + I1 + "</facility>\n";
+  const mods = W.isp.modules && W.C ? hwModules(W.C) : [];
+  if (W.isp.station || mods.length) {
+    x += I1 + '<facility sortId="' + (fac++) + '">\n' + wtag(I2, "facBezeichnung", W.isp.facName);
+    let n = 1;
+    if (W.isp.station) x += stationArtikel(W, n++, I2);
+    for (const m of mods) x += moduleArtikel(W, m, n++, I2);
+    x += I1 + "</facility>\n";
+  }
   W.groups.forEach(g => {
     const pins = pinsOfGroup(W, g.gid);
     if (!pins.length) return;

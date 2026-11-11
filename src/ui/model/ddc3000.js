@@ -88,15 +88,18 @@ export function buildDDC3000(recs, label, fileName, opt = {}) {
   const M = C.meta;
   const kreise = new Map([[0, { nr: 0, typ: "Grundgerät", name: "", modules: [] }]]);
   const params = [], scheds = [];
-  let kreis = 0;
+  let kreis = 0, weekCtx = null;   // echte .wwf: N steht direkt hinter „M 117/x“ (+ Status N/x) und ist fortlaufend nummeriert → x zählt
   for (const r of recs) {
     const f = r.f;
+    const wm = r.kind === "M" && String(f.NR || "").match(/^(?:117|67|74)\/(\d+)$/);
+    if (wm) weekCtx = +wm[1];
+    else if (r.kind !== "N" && !(f.P && /^N(\/|$)/.test(f.P))) weekCtx = null;
     switch (r.kind) {
       case "Z": M.centralAddr = (f.NR || "").trim(); M.series = f.TYP || "DDC3000"; M.stationName = (f.GT || f.NAME || f.TXT || "").trim(); break;
       case "B": M.stationType = f.TYP || f.GT || ""; break;
       case "K": kreis = parseInt(f.NR, 10) || 0; kreise.set(kreis, { nr: kreis, typ: f.TYP || "", name: f.GT || "", rk: f.RK || "", anl: f.ANL || "", modules: [] }); break;
       case "M": (kreise.get(kreis) || kreise.get(0)).modules.push({ nr: f.NR, aktiv: f.AKTIV }); break;
-      case "N": scheds.push({ kreis, nr: parseInt(f.NR, 10) || 1, sched: r.sched }); break;
+      case "N": scheds.push({ kreis, nr: weekCtx || parseInt(f.NR, 10) || 1, sched: r.sched }); weekCtx = null; break;
       default:
         if (f.P != null) {
           const [base, inst] = f.P.split("/");

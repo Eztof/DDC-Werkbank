@@ -103,7 +103,34 @@ export function lkPins(C) {
 const lkCentralKey = C => [C.meta.name, C.meta.centralAddr, C.meta.stationType].join("|");
 
 /* ---------- Doku: Einträge einer ISP ---------- */
-function lkInfoKlemme(a) { const p = artProp(a, "Info"); const m = p && wtxt(p, "value").match(/Klemme\s+([^\s·]+)/); return m ? m[1] : ""; }
+function lkInfoKlemme(a) { const p = artProp(a, "Info"); const m = p && wtxt(p, "value").match(/Klemme:?\s+([^\s·]+)/); return m ? m[1] : ""; }
+/* Info-Feld eines Datenpunkts: „[Typ: … · ]Klemme …[ · eigener Text]“.
+   Ohne Typ bleibt es genau wie bisher („Klemme 001/P.01“) – ältere Dokus passen unverändert. */
+export function infoParse(v) {
+  let s = String(v || "").trim(), typ = "";
+  const t = s.match(/^Typ:\s*([^·]*?)\s*(?:·\s*|$)/);
+  if (t) { typ = t[1].trim(); s = s.slice(t[0].length).trim(); }
+  return /^Klemme:?\s/.test(s) ? { typ, klemme: s, rest: "" } : { typ, klemme: "", rest: s };
+}
+export function infoCompose(typ, klemme, rest) { return [typ ? "Typ: " + typ : "", klemme, rest].filter(Boolean).join(" · "); }
+function infoProp(a) {
+  let pr = artProp(a, "Info");
+  if (pr) return pr;
+  const doc = a.ownerDocument;
+  let ic = wkid(a, "installationClass");
+  if (!ic) { ic = wplace(a, doc.createElementNS(WTG_NS, "installationClass")); wset(ic, "description", "N/V"); wset(ic, "shortkey", "NV"); }
+  pr = doc.createElementNS(WTG_NS, "articleProperties"); ic.appendChild(pr);
+  wset(pr, "description", "Info"); wset(pr, "length", "0"); wset(pr, "type", "Text"); wset(pr, "checked", "true");
+  return pr;
+}
+export function infoTyp(a) { const p = artProp(a, "Info"); return p ? infoParse(wtxt(p, "value")).typ : ""; }
+export function setInfoTyp(a, typ) {
+  typ = String(typ || "").replace(/·/g, "-").trim();
+  const old = artProp(a, "Info");
+  if (!typ && !old) return;
+  const pr = old || infoProp(a), P = infoParse(wtxt(pr, "value"));
+  wset(pr, "value", infoCompose(typ, P.klemme, P.rest) || null);
+}
 /* Klemme ohne Signalweg im Programm? (Eingang nicht verwendet / Ausgang nicht angesteuert) */
 const LK_NOLINK = "Nicht verknüpft";
 /* Geht die Klemme außerhalb des Programms weiter? BACnet-Objekt direkt am Pin, Trend, Meldung */
@@ -360,20 +387,16 @@ function lkInfoText(C, p, mode) {
   return "Klemme " + p.klemme;
 }
 function lkWriteInfo(a, C, p, mode) {
-  const doc = a.ownerDocument;
-  let ic = wkid(a, "installationClass");
-  if (!ic) { ic = wplace(a, doc.createElementNS(WTG_NS, "installationClass")); wset(ic, "description", "N/V"); wset(ic, "shortkey", "NV"); }
-  let pr = artProp(a, "Info");
-  if (!pr) {
-    pr = doc.createElementNS(WTG_NS, "articleProperties"); ic.appendChild(pr);
-    wset(pr, "description", "Info"); wset(pr, "length", "0"); wset(pr, "type", "Text"); wset(pr, "checked", "true");
-  }
-  const old = wtxt(pr, "value").trim();
-  let v = lkInfoText(C, p, mode);
-  if (old && !/^Klemme\s/.test(old)) v += " · " + old;   // eigenen Text des Kollegen behalten
-  wset(pr, "value", v);
+  const pr = infoProp(a);
+  /* Typ und eigenen Text des Kollegen behalten, nur die Klemme neu */
+  const P = infoParse(wtxt(pr, "value"));
+  wset(pr, "value", infoCompose(P.typ, lkInfoText(C, p, mode), P.rest));
 }
-function lkClearInfo(a) { const pr = artProp(a, "Info"); if (pr && /^Klemme\s/.test(wtxt(pr, "value").trim())) wset(pr, "value", null); }
+function lkClearInfo(a) {
+  const pr = artProp(a, "Info"); if (!pr) return;
+  const P = infoParse(wtxt(pr, "value"));
+  if (P.klemme) wset(pr, "value", infoCompose(P.typ, "", P.rest) || null);
+}
 function lkInfoMode() { return pref("lkInfoMode", "klemme"); }
 
 /* Eine Entscheidung zu einem Eintrag ändern */

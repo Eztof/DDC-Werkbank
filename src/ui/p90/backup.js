@@ -133,8 +133,8 @@ export function parseBackup(text) {
   const old = !/Zeichensatz: UTF-8/.test(text.slice(0, 2000));
   const byte = ch => CP1252_REV.get(ch) ?? ch.charCodeAt(0);
   const fix = s => old ? s.replace(/[^\x00-\x7f]+/g, x => decode(Array.from(x, byte))) : s;
-  const res = { header: {}, devices: [], definitions: { D1: [], D3: [], D5: [] }, aborted: false };
-  let dev = null, def = null;
+  const res = { header: {}, devices: [], definitions: { D1: [], D3: [], D5: [] }, defsBy: {}, aborted: false };
+  let dev = null, def = null, defAt = null;
   /* Datei ohne [Gerät …]-Abschnitte (.EZR/.PRO, reine Antwortzeilen): Geräte aus den Adressen bilden */
   const plain = !/^\[Gerät /m.test(text);
   const byAddr = new Map();
@@ -148,7 +148,11 @@ export function parseBackup(text) {
     if ((m = l.match(/^# (Erstellt|Kennung|Geräte): (.*)$/))) { res.header[m[1]] = m[2]; continue; }
     if (/^# ABGEBROCHEN/.test(l)) { res.aborted = true; continue; }
     if ((m = l.match(/^\[Gerät (\S+) (.+) (\d+) (\d+)\]$/))) { dev = { addr: m[1], name: fix(m[2]), group: m[3], type: m[4], text: "", menus: [], values: [], ok: true }; res.devices.push(dev); def = null; continue; }
-    if ((m = l.match(/^\[Definitionen \S+ (D[024]) /))) { def = { D0: "D1", D2: "D3", D4: "D5" }[m[1]]; dev = null; continue; }
+    if ((m = l.match(/^\[Definitionen (\S+) (D[024]) /))) {
+      def = { D0: "D1", D2: "D3", D4: "D5" }[m[2]]; dev = null;
+      defAt = res.defsBy[m[1]] ||= { D1: [], D3: [], D5: [] };      // Definitionen je Zentrale (DDC3200 und DDC3035 unterscheiden sich)
+      continue;
+    }
     if (dev && (m = l.match(/^# Ende m0: (.*) \| Ende p0: (.*)$/))) { dev.ok = [m[1], m[2]].every(e => /^Z6 000 /.test(e)); continue; }
     if (!l || l.startsWith("#")) continue;
     if (l.startsWith("t1 ") && (m = l.match(/^t1 (\d+\.\d+\.\d+) (\d+) (\d+) \S+ ?(.*)$/))) {
@@ -159,7 +163,7 @@ export function parseBackup(text) {
     if (plain && (m = l.match(/^[mp]1 (\d+\.\d+\.\d+) /))) dev = plainDev(m[1]);
     if (dev && l.startsWith("m1 ")) dev.menus.push(fix(l));
     else if (dev && l.startsWith("p1 ")) dev.values.push(fix(l));
-    else if (def && l.startsWith(def + " ")) res.definitions[def].push(fix(l));
+    else if (def && l.startsWith(def + " ")) { const x = fix(l); res.definitions[def].push(x); if (defAt) defAt[def].push(x); }
   }
   res.plain = plain;
   for (const d of res.devices) if (!d.name) d.name = d.group ? devName(d.group, d.type) : "";

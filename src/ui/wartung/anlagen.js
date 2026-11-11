@@ -1,7 +1,7 @@
 import { natCmp, norm } from "../core/util.js";
 import { edgesIn, edgesOut, pinOf } from "../model/model.js";
 import { groupIsSystem } from "../views/program.js";
-import { applyGroups, autoGroup, dominantPrefix } from "./generator.js";
+import { applyGroups } from "./generator.js";
 
 /* =========================================================================
    Anlagen-Zuordnung für die Wartungsdoku
@@ -150,60 +150,371 @@ export function assignPlant(C, pin) {
   return { plant: win.P, group: win.P.groups.get(gk), how };
 }
 
+
+/* =========================================================================
+   Objekt-Schlüssel: der Teil eines Klemmennamens, der Anlage/Bauteil benennt.
+   "Altbau Hzg. BT.C KG.+ DG. Temp. Rücklauf" → altbau hzg bt c kg dg
+   Abgeschnitten wird am ersten Signalwort (Temp., Betrieb, Störung, Ventil …).
+   ========================================================================= */
+const SIG = new Set(("temp temperatur fuehler ventil pumpe betrieb betr stoerung stoer ansteuern anst ansteuerung anforderung anf freigabe freig " +
+  "meldung meld sollwert soll istwert ist wert kontakt taster schalter ein aus auf zu stufe alarm signal stellsignal stellgroesse regelgroesse " +
+  "druck impuls impulse vorlauf ruecklauf vl rl vorl rueckl sek prim primaer sekundaer min max ueberw ueberwachung sm bm sb ssm hand auto " +
+  "quittierung quittieren entriegeln reset rm warnung wassermangel stb stw not oben unten aktuell gesamt fern rueckmeldung").split(" "));
+const SIG_START = ["temp", "betrieb", "stoer", "freig", "anford", "sollw", "istw", "quitt", "entrieg", "rueckmeld", "stell"];
+const SIG_END = ["pumpe", "ventil", "fuehler", "kontakt", "taster", "schalter", "waechter", "melder", "meldung", "signal", "impuls", "druck", "temperatur", "anf", "stoerung", "betrieb"];
+function isSig(t) {
+  if (SIG.has(t)) return true;
+  if (!/^[a-z]/.test(t)) return false;
+  for (const s of SIG_START) if (t.length > s.length && t.startsWith(s)) return true;
+  for (const s of SIG_END) if (t.length >= s.length + 3 && t.endsWith(s)) return true;
+  return false;
+}
+const meaningful = t => t.length >= 3 && /^[a-z]/.test(t) && !GENERIC_WORDS.has(t) && !isSig(t);
+function nameTokens(s) {
+  const out = [];
+  for (const m of String(s || "").matchAll(/([A-Za-zÄÖÜäöüß]+)(\.)?|(\d+)/g)) {
+    if (m[3]) out.push({ t: String(parseInt(m[3], 10)), i: m.index, e: m.index + m[0].length, num: true });
+    else {
+      /* Teil eines Kennzeichens ("ZU52", "_ZA_") ist nie ein Signalwort */
+      const s0 = String(s), e = m.index + m[1].length;
+      const code = /\d/.test(s0[e] || "") || s0[m.index - 1] === "_" || s0[e] === "_";
+      out.push({ t: deUml(m[1]), i: m.index, e: m.index + m[0].length, ab: !!m[2], code });
+    }
+  }
+  return out;
+}
+/* trägt ein Schlüsselteil genug Bedeutung? (ein sprechendes Wort oder mind. 2 Teile mit Buchstaben) */
+function validPart(toks) {
+  if (!toks.length || !toks.some(x => !x.num && x.t.length >= 2)) return false;
+  return toks.length >= 2 || meaningful(toks[0].t);
+}
+export function objKey(name) {
+  const tk = nameTokens(name);
+  /* führende reine Signalwörter überspringen ("Anf.Soll Fernw."), ein Gerätewort vorne bleibt ("Anf.Fernpumpe BT-D") */
+  const pure = x => !x.code && (SIG.has(x.t) || SIG_START.some(s => x.t.length > s.length && x.t.startsWith(s)));
+  const sig = x => !x.code && isSig(x.t);
+  let i = 0; while (i < tk.length && pure(tk[i])) i++;
+  let j = i < tk.length && sig(tk[i]) ? i + 1 : i; while (j < tk.length && !sig(tk[j])) j++;
+  const toks = tk.slice(i, j);
+  if (!validPart(toks)) return null;
+  return { name: String(name), toks };
+}
+const keyText = (K, L) => K.name.slice(K.toks[0].i, K.toks[(L || K.toks.length) - 1].e).replace(/\s+/g, " ").trim();
+/* nicht mitten in einem Kürzel abschneiden ("…_ZA_55_SEN|02" → "…_ZA_55") */
+function cleanLen(K, L) {
+  while (L > 1 && /[A-Za-z0-9ÄÖÜäöüß]/.test(K.name[K.toks[L - 1].e] || "")) L--;
+  return L;
+}
+function editDist1(a, b) {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0; while (i < a.length && a[i] === b[i]) i++;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
+  return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
+}
+/* Schreibvarianten vereinheitlichen: Abkürzungen ("Kesselanl." → kesselanlage), Tippfehler ("Kücke" → kueche) */
+function canonizer(keys) {
+  const cnt = new Map();
+  for (const K of keys) for (const x of K.toks) if (!x.num) cnt.set(x.t, (cnt.get(x.t) || 0) + 1);
+  const words = [...cnt.keys()];
+  const abbr = new Map(), typo = new Map();
+  for (const w of words) {
+    if (w.length >= 4) {
+      let best = null;
+      for (const u of words) if (u.length > w.length && u.startsWith(w) && (!best || cnt.get(u) > cnt.get(best))) best = u;
+      if (best) abbr.set(w, best);
+    }
+    if (w.length >= 5) {
+      let best = null;
+      for (const u of words) if (u !== w && u.length >= 5 && cnt.get(u) > cnt.get(w) && editDist1(u, w) && (!best || cnt.get(u) > cnt.get(best))) best = u;
+      if (best) typo.set(w, best);
+    }
+  }
+  return K => {
+    if (!K) return null;
+    if (!K.k) K.k = K.toks.map(x => x.num ? x.t : (x.ab && abbr.get(x.t)) || typo.get(x.t) || x.t);
+    return K;
+  };
+}
+/* Verwandtschaft zweier Schlüssel: einer ist Anfang (oder Ende) des anderen */
+function keyRel(A, B) {
+  const a = A.k, b = B.k, n = Math.min(a.length, b.length);
+  if (!n) return 0;
+  let p = 0; while (p < n && a[p] === b[p]) p++;
+  const short = a.length <= b.length ? A : B;
+  if (p === n) return validPart(short.toks) ? n : 0;
+  let s = 0; while (s < n && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
+  if (s === n && short.k.some(meaningful)) return n - 0.5;
+  return 0;
+}
+/* Wortteil-Treffer, auch in zusammengesetzten Wörtern ("Gaskessel" ~ "Kessel") */
+function wordHit(w, v) {
+  if (w === v) return true;
+  if (w.length < 5 || v.length < 5) return false;
+  return w.endsWith(v) || v.endsWith(w) || w.startsWith(v) || v.startsWith(w);
+}
+/* gemeinsamer Anfang bei Kennzeichen ("ICB_51_D451_RLT_ZAA57_BSK04" ~ "ICB_51_D451_RLT_ZAA57_VEH01"):
+   mind. 3 Teile und mind. die Hälfte des Schlüssels */
+function lcpRel(A, B) {
+  const a = A.k, b = B.k, n = Math.min(a.length, b.length);
+  let p = 0; while (p < n && a[p] === b[p]) p++;
+  if (p < 3 || p < a.length / 2 || !validPart(A.toks.slice(0, p))) return 0;
+  return p - 0.25;
+}
+/* eindeutig beste Anlage für einen Schlüssel; bei Gleichstand entscheidet das Ende des Namens
+   ("…_MEL03 Raum Z.3.01" → Besprechungsraum Z.3.01, nicht Z.3.02) */
+function bestPlant(K, plantKeys) {
+  const sc = [];
+  for (const [P, keys] of plantKeys) {
+    let s = 0;
+    for (const M of keys) { const r = Math.max(keyRel(K, M), lcpRel(K, M)); if (r > s) s = r; }
+    if (s > 0) sc.push({ P, keys, s });
+  }
+  if (!sc.length) return null;
+  const top = Math.max(...sc.map(x => x.s));
+  const tied = sc.filter(x => x.s === top);
+  if (tied.length === 1) return tied[0].P;
+  if (top % 1 !== 0.75) return null;                 /* nur bei Kennzeichen-Treffern nachschärfen */
+  const tail = new Set(K.k.slice(Math.floor(top)).filter(meaningful));
+  for (const x of tied) {
+    let suf = 0, hit = 0;
+    for (const M of x.keys) {
+      let q = 0; while (q < K.k.length && q < M.k.length && K.k[K.k.length - 1 - q] === M.k[M.k.length - 1 - q]) q++;
+      if (q > suf && K.k.slice(K.k.length - q).some(w => /^[a-z]/.test(w))) suf = q;
+    }
+    const v = new Set(x.keys.flatMap(M => M.k));
+    for (const w of tail) if (v.has(w)) hit++;
+    x.t = 2 * suf + hit;
+  }
+  tied.sort((a, b) => b.t - a.t);
+  return tied[0].t > 0 && tied[0].t > tied[1].t ? tied[0].P : null;
+}
+
 const ALLG_RE = /ssm|sammelst|entriegel|quittier|phasen|ueberspann|steuersicherung|not ?aus|brandschutz|brandmeld|netzausfall|aussentemp|aussenfuehler|koppelrelais/;
+const GENERIC_PLANT = /^(festwert|heizung|lueftung|kaelte|kreis|regelkreis|rk|anlage|allgemein|sonstiges?|frei|reserve)$/;
 /* Gruppen nach Anlagen bilden */
 export function regroupPlants(W, C, splitAt) {
   const plants = plantsOf(C);
+  const d3 = C.format === "DDC3000";
   const byPlant = new Map();
   const rest = [], allg = [];
+  const keyOf = new Map();
   for (const p of W.pins) {
     p.plant = p.plantName = p.pgroup = p.pgroupName = null; p.how = "";
     if (!p.include) continue;
+    keyOf.set(p, objKey(p.name));
+  }
+  const canon = canonizer([...keyOf.values(), ...[...plants.values()].map(P => objKey(P.name))].filter(Boolean));
+  for (const K of keyOf.values()) canon(K);
+  const put = (p, P, how, G) => {
+    p.plant = P.key; p.plantName = P.name; p.pgroup = G ? G.key : null; p.pgroupName = G ? G.name : ""; p.how = how;
+    if (!byPlant.has(P.key)) byPlant.set(P.key, []);
+    byPlant.get(P.key).push(p);
+  };
+  for (const p of W.pins) {
+    if (!p.include) continue;
     const cp = pinOf(C, p.uid);
     const a = cp ? assignPlant(C, cp) : { plant: null };
-    if (a.shared || (a.plant && a.plant.collector && C.format === "DDC3000") || (!a.plant && ALLG_RE.test(deUml(p.name)))) { allg.push(p); continue; }
-    if (!a.plant || (a.plant.generic && C.format === "DDC3000") || a.plant.collector && a.how !== "Programm") { rest.push(p); continue; }
-    p.plant = a.plant.key; p.plantName = a.plant.name; p.pgroup = a.group ? a.group.key : null; p.pgroupName = a.group ? a.group.name : ""; p.how = a.how;
-    if (!byPlant.has(a.plant.key)) byPlant.set(a.plant.key, []);
-    byPlant.get(a.plant.key).push(p);
+    const allgName = ALLG_RE.test(deUml(p.name));
+    /* von mehreren Anlagen gleich stark genutzt: Allgemein (DDC3000 ohne typischen Allgemein-Namen: nach Namen einordnen) */
+    if (a.shared) { if (d3 && !allgName) rest.push(p); else { p.how = "geteilt"; allg.push(p); } continue; }
+    /* DDC3000-Sammelmodule (SBM/FBM) sind keine Anlage: über den Namen einordnen */
+    if (a.plant && a.plant.collector && (d3 || a.how !== "Programm")) { (allgName ? allg : rest).push(p); continue; }
+    if (!a.plant || (a.plant.generic && d3)) { (allgName ? allg : rest).push(p); continue; }
+    put(p, a.plant, a.how, a.group);
   }
+  /* DDC3000-Regelkreise: Name passt nicht zu den Klemmen ("FESTWERT", "Kreis Z1", "Fernwärme Sollwert" mit Kessel-Klemmen)
+     → nach den Klemmen benennen oder auflösen */
+  const disp = new Map();
+  for (const P of plants.values()) {
+    const PK = canon(objKey(P.name));
+    if (PK) { const t0 = nameTokens(P.name); const i = t0.findIndex(x => !isSig(x.t)); disp.set(P.key, i > 0 ? P.name.slice(t0[i].i).trim() : P.name); }
+    if (!d3 || P.generic || !byPlant.has(P.key)) continue;
+    const pins = byPlant.get(P.key), named = pins.filter(p => keyOf.get(p));
+    if (!named.length) continue;
+    const nt = PK ? PK.k.filter(meaningful) : [];
+    const generic = !PK || (!nt.length && GENERIC_PLANT.test(PK.k[0])) || (nt.length === 1 && GENERIC_PLANT.test(nt[0]));
+    if (!generic) {
+      if (!nt.length) continue;                       /* "Raum A002": nichts zu prüfen */
+      const fit = named.filter(p => keyOf.get(p).k.some(w => nt.some(v => wordHit(w, v)))).length;
+      if (fit / named.length >= 0.34) continue;
+    }
+    /* längster Schlüsselanfang, den ≥ 60 % der benannten Klemmen teilen */
+    let dom = null;
+    const need = Math.max(1, Math.ceil(named.length * 0.6));
+    for (const p of named) {
+      const K = keyOf.get(p);
+      for (let L = K.k.length; L >= 1; L--) {
+        if (dom && L <= dom.L) break;
+        const pre = K.k.slice(0, L);
+        if (!validPart(K.toks.slice(0, L)) || !pre.some(meaningful)) continue;
+        const n = named.filter(q => { const k = keyOf.get(q).k; return k.length >= L && pre.every((w, i) => k[i] === w); }).length;
+        if (n >= need) { dom = { L, K }; break; }
+      }
+    }
+    if (dom) { disp.set(P.key, keyText(dom.K, cleanLen(dom.K, dom.L))); continue; }
+    byPlant.delete(P.key);
+    for (const p of pins) { p.plant = p.plantName = p.pgroup = p.pgroupName = null; p.how = ""; rest.push(p); }
+  }
+  /* Schlüssel je Anlage: Anlagenname + per Programm zugeordnete Klemmen */
+  const plantKeys = new Map();
+  for (const [key, pins] of byPlant) {
+    const P = plants.get(key), ks = [];
+    const PK = canon(objKey(disp.get(key) || P.name));
+    if (PK && !(PK.k.length === 1 && GENERIC_PLANT.test(PK.k[0]))) ks.push(PK);
+    for (const p of pins) if (p.how === "Programm" && keyOf.get(p)) ks.push(keyOf.get(p));
+    plantKeys.set(P, ks);
+  }
+  const take = (arr, p) => { const i = arr.indexOf(p); if (i >= 0) arr.splice(i, 1); };
+  /* nur über den Namen zugeordnete Klemmen: gibt es eine eindeutig passendere Anlage? */
+  for (const [key, pins] of [...byPlant]) for (const p of [...pins]) {
+    if (p.how !== "Name" || !keyOf.get(p)) continue;
+    const P = bestPlant(keyOf.get(p), plantKeys);
+    if (P && P.key !== key) { take(pins, p); put(p, P, "Name", null); }
+  }
+  /* Rest: gleiche Bezeichnung wie Klemmen einer Anlage ("… Temp. Rücklauf" zu "… Temp. Vorlauf") */
+  for (const p of [...rest]) {
+    const K = keyOf.get(p); if (!K) continue;
+    const P = bestPlant(K, plantKeys);
+    if (P) { take(rest, p); put(p, P, "Name", null); }
+  }
+  for (const [key, pins] of [...byPlant]) if (!pins.length) byPlant.delete(key);
   const list = [];
   const order = [...plants.keys()];
   const real = order.filter(k => byPlant.has(k));
   /* Station mit nur einer Anlage: alles dorthin */
   if (real.length === 1) { byPlant.get(real[0]).push(...rest.splice(0), ...allg.splice(0)); byPlant.get(real[0]).sort((a, b) => natCmp(a.klemme, b.klemme)); }
+  /* Rest nach Namen bündeln */
+  const clusters = rest.length ? keyClusters(rest.map(p => ({ p, K: keyOf.get(p) })), W.opt.grpMax || 12, canon) : [];
+  /* ganze Namensgruppe passt eindeutig zu einer Anlage ("Altbau Kesselanlage" → Kessel 1, "BHKW" → BR DT BHKW) */
+  const vocab = new Map(), seen = new Map();
+  for (const [P, ks] of plantKeys) {
+    const v = new Set(); for (const M of ks) for (const w of M.k) v.add(w);
+    vocab.set(P, { v, ks });
+    for (const w of v) if (meaningful(w)) seen.set(w, (seen.get(w) || 0) + 1);
+  }
+  const numClash = (K, ks) => K.k.some((w, i) => /^\d+$/.test(K.k[i + 1] || "") && meaningful(w) &&
+    ks.some(M => M.k.some((x, j) => x === w && /^\d+$/.test(M.k[j + 1] || "") && M.k[j + 1] !== K.k[i + 1])) &&
+    !ks.some(M => M.k.some((x, j) => x === w && M.k[j + 1] === K.k[i + 1])));
+  const headHit = (w, v) => w === v || (Math.min(w.length, v.length) >= 5 && (w.startsWith(v) || v.startsWith(w))) ||
+    (Math.min(w.length, v.length) >= 6 && (w.endsWith(v) || v.endsWith(w)));
+  for (let i = clusters.length - 1; i >= 0; i--) {
+    const c = clusters[i]; if (!c.K) continue;
+    const core = c.K.k.filter(w => meaningful(w) && (seen.get(w) || 0) < 2);
+    if (!core.length) continue;
+    const hits = [...vocab].filter(([, x]) => core.every(w => [...x.v].some(v => meaningful(v) && headHit(w, v))) && !numClash(c.K, x.ks));
+    if (hits.length !== 1) continue;
+    for (const p of c.pins) put(p, hits[0][0], "Name", null);
+    clusters.splice(i, 1);
+  }
+  /* Sammelmeldungen u. Ä.: zu einer Gruppe mit einer Klemme gleichen Schlüssels, sonst Allgemein */
+  const sameKey = (A, B) => A.k.length === B.k.length && A.k.every((w, i) => w === B.k[i]);
+  const allgLeft = [];
+  for (const p of allg) {
+    const K = keyOf.get(p);
+    if (K) {
+      const hitC = clusters.filter(c => c.pins.some(q => keyOf.get(q) && sameKey(keyOf.get(q), K)));
+      if (hitC.length === 1) { hitC[0].pins.push(p); p.how = ""; continue; }
+      const hitP = [...plantKeys].filter(([, ks]) => ks.some(M => sameKey(M, K)));
+      if (hitP.length === 1 && !hitC.length) { put(p, hitP[0][0], "Name", null); continue; }
+    }
+    if (p.how === "geteilt") p.how = "Programm";
+    allgLeft.push(p);
+  }
   const allgKey = order.find(k => /^allgemein$/i.test(plants.get(k).name));
-  if (allg.length) { if (allgKey) { (byPlant.get(allgKey) || byPlant.set(allgKey, []).get(allgKey)).push(...allg); byPlant.get(allgKey).sort((a, b) => natCmp(a.klemme, b.klemme)); } else list.push({ name: "Allgemein", pins: allg }); }
+  if (allgLeft.length) { if (allgKey) { (byPlant.get(allgKey) || byPlant.set(allgKey, []).get(allgKey)).push(...allgLeft); byPlant.get(allgKey).sort((a, b) => natCmp(a.klemme, b.klemme)); } else list.push({ name: "Allgemein", pins: allgLeft }); }
   for (const key of order) {
     const pins = byPlant.get(key); if (!pins || !pins.length) continue;
-    const P = plants.get(key);
+    const P = plants.get(key), pname = disp.get(key) || P.name;
+    for (const p of pins) p.plantName = pname;
     if (splitAt && pins.length > splitAt && P.groups.size > 1) {
       const sub = new Map();
       for (const p of pins) { const k = p.pgroup || "-"; if (!sub.has(k)) sub.set(k, []); sub.get(k).push(p); }
       for (const [gk, sp] of [...sub].sort((a, b) => natCmp(a[0], b[0]))) {
         const gn = (P.groups.get(gk) || {}).name;
-        list.push({ name: gn && norm(gn) !== norm(P.name) ? P.name + " – " + gn : P.name, pins: sp });
+        list.push({ name: gn && norm(gn) !== norm(pname) ? pname + " – " + gn : pname, pins: sp });
       }
-    } else list.push({ name: P.name, pins });
+    } else list.push({ name: pname, pins: pins.sort((a, b) => natCmp(a.klemme, b.klemme)) });
   }
-  /* Rest: über die bedeutungstragenden Wörter des Namens */
-  if (rest.length) {
-    for (const g of nameGroups(rest, W.opt.grpMax || 12)) list.push(g);
-  }
+  for (const c of clusters) list.push({ name: c.name, pins: c.pins.sort((a, b) => natCmp(a.klemme, b.klemme)) });
   /* gleiche Namen zusammenlegen */
   const merged = [];
-  for (const g of list) { const m = merged.find(x => x.name === g.name); if (m) m.pins.push(...g.pins); else merged.push(g); }
+  for (const g of list) { const m = merged.find(x => norm(x.name) === norm(g.name)); if (m) m.pins.push(...g.pins); else merged.push(g); }
   applyGroups(W, merged);
 }
-/* Namensbasiert, aber ohne Allerweltswörter vorne ("Vorlauf", "Zuluft" …) */
-export function nameGroups(pins, maxSize) {
-  const keyed = pins.map(p => {
-    const words = String(p.name || "").split(/\s+/).filter(Boolean);
-    const sig = words.filter(w => { const f = nameFeatures(w); return f.alpha.size > 0; });
-    return { p, key: sig.join(" ") };
-  });
-  const fake = keyed.map(k => ({ name: k.key, _p: k.p }));
-  const groups = autoGroup(fake, maxSize, dominantPrefix(fake.filter(x => x.name).map(x => x.name)));
-  return groups.map(g => ({ name: !g.name || g.name === "Ohne Bezeichnung" || !nameFeatures(g.name).alpha.size ? "Weitere Datenpunkte" : g.name, pins: g.pins.map(x => x._p) }));
-}
 
+/* Klemmen nach ihrem Objekt-Schlüssel bündeln: Präfixbaum über die Schlüssel.
+   Ein Knoten wird nur geteilt, wenn er zu groß ist und mind. zwei echte Untergruppen hat;
+   ein Unterknoten mit ≥ 75 % der Klemmen ist ein eigenes Objekt ("Altbau" → "Altbau Kesselanlage"). */
+function keyClusters(items, maxSize, canon) {
+  const named = items.filter(x => x.K), unnamed = items.filter(x => !x.K).map(x => x.p);
+  const root = { ch: new Map(), items: [], count: 0 };
+  for (const x of named) {
+    canon(x.K);
+    let n = root; n.count++;
+    for (const w of x.K.k) { if (!n.ch.has(w)) n.ch.set(w, { ch: new Map(), items: [], count: 0 }); n = n.ch.get(w); n.count++; }
+    n.items.push(x);
+  }
+  const flat = n => { const a = [...n.items]; n.ch.forEach(c => a.push(...flat(c))); return a; };
+  const out = [];
+  const add = (xs, depth, pooled) => { if (xs.length) out.push({ xs, depth, pooled }); };
+  (function walk(node, depth) {
+    if (!node.count) return;
+    const kids = [...node.ch.values()];
+    if (!kids.length) { add(flat(node), depth, false); return; }
+    if (kids.length === 1 && !node.items.length) { walk(kids[0], depth + 1); return; }
+    const split = depth === 0 || (node.count > maxSize && kids.filter(c => c.count >= 3).length >= 2);
+    if (split) {
+      const here = [...node.items];
+      for (const c of kids) { if (c.count === 1 && depth > 0) here.push(...flat(c)); else walk(c, depth + 1); }
+      add(here, depth, true);
+      return;
+    }
+    const dom = kids.find(c => c.count >= 2 && c.count >= 0.75 * node.count);
+    if (dom) {
+      walk(dom, depth + 1);
+      add([...node.items, ...kids.filter(c => c !== dom).flatMap(flat)], depth, true);
+      return;
+    }
+    add(flat(node), depth, false);
+  })(root, 0);
+  /* Name: gemeinsamer Anfang der Schlüssel, im häufigsten Originaltext */
+  const res = [];
+  for (const g of out) {
+    let L = g.depth;
+    if (!g.pooled || !L || g.xs.length === 1) {
+      const ks = g.xs.map(x => x.K.k), n = Math.min(...ks.map(k => k.length));
+      let l = 0; while (l < n && ks.every(k => k[l] === ks[0][l])) l++;
+      L = Math.max(L, l);
+    }
+    if (!L) L = 1;
+    L = Math.min(...g.xs.filter(x => x.K.k.length >= L).map(x => cleanLen(x.K, L)));
+    const cnt = new Map(); let K0 = null;
+    for (const x of g.xs) {
+      if (x.K.k.length < L) continue;
+      const t = keyText(x.K, L); cnt.set(t, (cnt.get(t) || 0) + 1);
+      if (!K0) K0 = x.K;
+    }
+    let name = "", bn = 0; cnt.forEach((n, t) => { if (n > bn) { bn = n; name = t; } });
+    const K = K0 ? { k: K0.k.slice(0, L), toks: K0.toks.slice(0, L), name: K0.name } : null;
+    res.push({ name: name || "Weitere Datenpunkte", K, pins: g.xs.map(x => x.p) });
+  }
+  const tailOf = (a, b) => b.k.length < a.k.length && b.k.every((w, i) => w === a.k[a.k.length - b.k.length + i]) && b.k.some(meaningful);
+  const headOf = (a, b) => b.k.length < a.k.length && b.k.every((w, i) => w === a.k[i]) && validPart(b.toks);
+  for (let pass = 0; pass < 2; pass++) for (let i = res.length - 1; i >= 0; i--) {
+    const g = res[i]; if (!g.K) continue;
+    /* gleiches Objekt mit/ohne Ortsvorsatz ("DT Notstromaggregat" ~ "Notstromaggregat", "BHKW" ~ "BR DT BHKW") */
+    let hosts = res.filter(h => h !== g && h.K && h.pins.length >= g.pins.length && (tailOf(g.K, h.K) || tailOf(h.K, g.K)));
+    /* Kleinstgruppe zum übergeordneten Objekt ("BR DT E-Zähler" → "BR DT") */
+    if (hosts.length !== 1 && g.pins.length <= 2) hosts = res.filter(h => h !== g && h.K && headOf(g.K, h.K));
+    if (hosts.length === 1) { hosts[0].pins.push(...g.pins); res.splice(i, 1); }
+  }
+  if (unnamed.length) res.push({ name: "Weitere Datenpunkte", K: null, pins: unnamed });
+  return res;
+}
+/* Namensbasiert (Modus „nach Name“) */
+export function nameGroups(pins, maxSize) {
+  const items = pins.map(p => ({ p, K: objKey(p.name) }));
+  const canon = canonizer(items.map(x => x.K).filter(Boolean));
+  return keyClusters(items, maxSize, canon).map(g => ({ name: g.name, pins: g.pins }));
+}

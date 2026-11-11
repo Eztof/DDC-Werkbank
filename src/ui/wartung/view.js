@@ -10,10 +10,10 @@ import { btn, chk, emptyState, findingsCount, flyout, icon, kindTag, lazySelectE
 import { findingWhere, ignButton, ignFilterEl, ignPass, isIgnored, persistWhere, pref, setIgnored, setPref, whereLine } from "../core/persist.js";
 import { pinCorrText, pinValue } from "../views/points.js";
 import { liveInfo, livePinText } from "../core/live.js";
-import { WTG_NS, ispXml, newGid, pinsOfGroup, regroupBy, setKlartext, wdModel } from "./generator.js";
+import { WTG_NS, hwModules, ispXml, moduleArtikel, newGid, pinsOfGroup, regroupBy, setKlartext, wdModel } from "./generator.js";
 import { assignPlant, plantOfNode } from "./anlagen.js";
 import { FS_OK, WDOC, wDate, wDateFromInput, wDateToInput, wPersons, wPrueferDefault, wPrueferOf, wRenumber, wSetPruefer, wSnapshot, wUndo, wdocBauteile, wdocChanged, wdocInfo, wdocInsertIsp, wdocOpen, wdocPickAndLink, wdocSave, wdocStatus, wdocText, wkid, wkids, wset, wtxt } from "./wtgml.js";
-import { LK_ON, artRemarkSuggestion, lkCentral, lkGoto, lkLinks, lkSplitTag, pinOnlyExternal, pinUnlinked } from "./link.js";
+import { LK_ON, artRemarkSuggestion, infoParse, infoTyp, lkCentral, lkGoto, lkLinks, lkSplitTag, pinOnlyExternal, pinUnlinked, setInfoTyp } from "./link.js";
 
 /* =========================================================================
    Ansicht: Wartungsdoku – Dokument bearbeiten, aus Sicherung übernehmen,
@@ -186,6 +186,44 @@ function wNewFacility(D, isp, name, after) {
   wRenumber(isp);
   return f;
 }
+/* ---------- Module (SBM, FBM, Raumregler) aus der Sicherung in eine bestehende Doku ---------- */
+function missingModules(isp, C) {
+  const have = new Set();
+  for (const f of wkids(isp, "facility")) for (const a of wkids(f, "Artikel")) {
+    const nr = wtxt(a, "nummer").trim().toUpperCase(); if (nr.startsWith("#")) continue;
+    const pr = artProp(a, "BUS Systemadresse"), m = (pr ? wtxt(pr, "value") : "").match(/(?:Modul|EZR)\s+(\S+)/);
+    have.add(nr + "|" + (m ? m[1] : "?"));
+  }
+  return hwModules(C).filter(m => !have.has(m.type.toUpperCase() + "|" + m.addr));
+}
+function addModules(D, isp, C, mods) {
+  const W = wdModel(C);
+  /* nur eine echte Station (kein Datenpunkt) – sonst eigene Anlage „Module“ ganz oben */
+  let st = null;
+  for (const f of wkids(isp, "facility")) { const a = wkids(f, "Artikel").find(x => !wtxt(x, "nummer").trim().startsWith("#")); if (a) { st = { f, a }; break; } }
+  let fac = st ? st.f : null;
+  if (!fac) { fac = wNewFacility(D, isp, "Module", null); isp.insertBefore(fac, wkids(isp, "facility")[0]); }
+  const Wx = Object.assign({}, W, { isp: Object.assign({}, W.isp, { bez: st ? wtxt(st.a, "standort") || W.isp.bez : W.isp.bez, fillProps: true }) });
+  const frag = new DOMParser().parseFromString('<r xmlns="' + WTG_NS + '">' + mods.map((m, i) => moduleArtikel(Wx, m, i + 1, "")).join("") + "</r>", "application/xml");
+  const arts = wkids(fac, "Artikel");
+  let after = null; for (const a of arts) if (!wtxt(a, "nummer").trim().startsWith("#")) after = a;
+  let before = after ? after.nextElementSibling : arts[0] || null;
+  for (const el of [...frag.documentElement.children]) fac.insertBefore(D.doc.importNode(el, true), before);
+  wRenumber(isp);
+  return fac;
+}
+function modulesBtn(D, isp, rerender, changed) {
+  const C = APP.centrals.length ? centralForIsp(isp) : null;
+  const miss = C ? missingModules(isp, C) : [];
+  if (!miss.length) return null;
+  return btn("Module ergänzen (" + miss.length + ")", "plus", () => {
+    wSnapshot(D);
+    const fac = addModules(D, isp, C, miss);
+    changed();
+    toast(miss.length + (miss.length === 1 ? " Modul" : " Module") + " bei „" + (wtxt(fac, "facBezeichnung") || "Station") + "“ eingetragen – Strg+Z macht es rückgängig.", "ok", 3500);
+    rerender();
+  }, "", "Aus der Sicherung bei der Automationsstation eintragen: " + trunc(miss.map(m => m.type + " " + m.addr + (m.name ? " (" + m.name + ")" : "")).join(", "), 600));
+}
 function wdDocTab(body, D) {
   if (!D.date) D.date = wDate();
   const isps = wIsps(D);
@@ -276,7 +314,8 @@ function wdDocTab(body, D) {
       btn("Alle offenen Prüfungen: Ja", "check", () => { for (const a of allArts) for (const j of wkids(a, "job")) if (!wtxt(j, "executed")) setExecuted(D, a, j, "Ja"); changed(); rerender(); }),
       btn("Gesamtzustand ausfüllen", "doc", () => { for (const f of wkids(isp, "facility")) if (!wtxt(f, "facZustand").trim()) wset(f, "facZustand", facZustandVorschlag(f)); changed(); rerender(); }, "", "Leere Gesamtzustände der Anlagen aus den Prüfergebnissen vorschlagen"),
       prPerson ? btn("„Geprüft durch " + prPerson.name + "“ bei allen geprüften Datenpunkten", "check", () => { checked.forEach(a => wSetPruefer(a, prPerson)); changed(); toast(checked.length + " Datenpunkte: geprüft durch " + prPerson.name, "ok"); rerender(); }) : null,
-      btn("Anlage hinzufügen", "plus", () => { const name = prompt("Name der neuen Anlage:", "Neue Anlage"); if (name == null) return; wSnapshot(D); D.sel = wNewFacility(D, isp, name.trim() || "Neue Anlage"); changed(); rerender(); })));
+      btn("Anlage hinzufügen", "plus", () => { const name = prompt("Name der neuen Anlage:", "Neue Anlage"); if (name == null) return; wSnapshot(D); D.sel = wNewFacility(D, isp, name.trim() || "Neue Anlage"); changed(); rerender(); }),
+      modulesBtn(D, isp, rerender, changed)));
     main.appendChild(zustandBox("Gesamtzustand der ISP (ISP-Kommentar)", ispComment(isp), "Kommentar zur ISP, z. B. „Wartung durchgeführt. Alle Anlagen in Ordnung.“",
       v => { setIspComment(isp, v); changed(); }, () => ispKommentarVorschlag(isp)));
     if (ispMode === "alle") {
@@ -309,6 +348,7 @@ function wdDocTab(body, D) {
   const fi = facs.indexOf(fac);
   main.appendChild(h("div", { class: "row" }, nm, ...statPills(s), h("span", { class: "grow" }), undoBtn,
     btn("Alle offenen: Ja", "check", () => { for (const a of wkids(fac, "Artikel")) for (const j of wkids(a, "job")) if (!wtxt(j, "executed")) setExecuted(D, a, j, "Ja"); changed(); rerender(); }, "", "Alle noch offenen Prüfungen dieser Anlage als durchgeführt (Ja) markieren"),
+    wkids(fac, "Artikel").some(x => !wtxt(x, "nummer").trim().startsWith("#")) ? modulesBtn(D, isp, rerender, changed) : null,
     btn(null, "up", () => { wSnapshot(D); isp.insertBefore(fac, facs[fi - 1]); wRenumber(isp); changed(); rerender(); }, "subtle" + (fi === 0 ? " dis" : ""), "Anlage nach oben"),
     btn(null, "down", () => { wSnapshot(D); isp.insertBefore(fac, facs[fi + 1] ? facs[fi + 1].nextElementSibling : null); wRenumber(isp); changed(); rerender(); }, "subtle" + (fi === facs.length - 1 ? " dis" : ""), "Anlage nach unten"),
     btn(null, "trash", () => { const n = wkids(fac, "Artikel").length; if (n && !confirm("Anlage „" + wtxt(fac, "facBezeichnung") + "“ mit " + n + " Datenpunkten löschen?")) return; wSnapshot(D); fac.remove(); wRenumber(isp); D.sel = isp; changed(); rerender(); }, "subtle", "Anlage löschen")));
@@ -392,6 +432,7 @@ function wdArtTable(main, D, ctx) {
   const allCb = h("input", { type: "checkbox", checked: all.length && all.every(a => D.pick.has(a)) });
   allCb.addEventListener("change", () => { all.forEach(a => allCb.checked ? D.pick.add(a) : D.pick.delete(a)); rerender(); });
   tbl.appendChild(h("thead", null, h("tr", null, h("th", { style: { width: "34px" } }, h("label", { class: "chk" }, allCb)), h("th", { style: { width: "56px" } }, "Art"), h("th", null, "Klartext / Prüfung"),
+    h("th", { style: { width: "120px" }, title: "Wird im Info-Feld vor der Klemme eingetragen: „Typ: … · Klemme …“" }, "Typ"),
     h("th", { style: { width: "118px" } }, "Ergebnis"), h("th", null, "Bemerkung"), h("th", { style: { width: "130px" } }, "Prüfdatum"), h("th", { style: { width: "158px" } }, "Geprüft durch"), h("th", { style: { width: "40px" } }))));
   const tb = h("tbody");
   let flashRow = null;
@@ -429,18 +470,25 @@ function wdArtTable(main, D, ctx) {
     const link = pinForArt(a, isp);
     const on = link && LK_ON.has(link.st);
     const infoTxt = infoP && wtxt(infoP, "value") ? wtxt(infoP, "value") : "";
+    const infoPart = infoParse(infoTxt), infoShow = [infoPart.klemme, infoPart.rest].filter(Boolean).join(" · ");
+    let typCell = h("td");
+    if (/^#/.test(nr)) {
+      const ty = h("input", { class: "in sm", value: infoTyp(a), placeholder: "Typ", style: { width: "100%" }, title: "Typ (z. B. Fühler- oder Antriebstyp) – steht dann im Info-Feld vor der Klemme" });
+      ty.addEventListener("change", () => { setInfoTyp(a, ty.value); changed(); });
+      typCell = h("td", null, ty);
+    }
     const hasC = APP.centrals.length && /^#/.test(nr) && centralForIsp(isp);
     const unl = on ? pinUnlinked(link.p) : null, ext = on && !unl ? pinOnlyExternal(link.p) : null;
     const head = h("td", null, kt, h("span", { class: "sub artsub" }, h("span", { class: "artsub-l" },
       multi && !group ? [h("span", { class: "facchip", title: "Anlage" }, wtxt(facOf(a), "facBezeichnung") || "Anlage"), " "] : null,
       wtxt(a, "artBezeichnung"),
-      on ? [" · ", h("a", { class: "klink", title: "In der Datenpunktliste zeigen" + (APP.centrals.length > 1 ? " (" + stationLabel(link.C) + ")" : "") + (link.st === "sicher" ? " – erkannt, noch nicht ins Info-Feld eingetragen" : ""), onclick: e => { e.stopPropagation(); jumpToPin(link.C, link.p); } }, icon("jump"), (infoTxt && /Klemme/.test(infoTxt) ? infoTxt : "Klemme " + link.p.klemme)),
+      on ? [" · ", h("a", { class: "klink", title: "In der Datenpunktliste zeigen" + (APP.centrals.length > 1 ? " (" + stationLabel(link.C) + ")" : "") + (link.st === "sicher" ? " – erkannt, noch nicht ins Info-Feld eingetragen" : ""), onclick: e => { e.stopPropagation(); jumpToPin(link.C, link.p); } }, icon("jump"), (infoPart.klemme ? infoShow : "Klemme " + link.p.klemme)),
           link.st === "sicher" ? h("span", { class: "lk-mark", title: "Erkannt, noch nicht eingetragen – im Tab „Verknüpfung“ eintragen" }, "≈") : null,
           unl ? h("span", { class: "nolink", title: unl }, " · nicht verknüpft") : null,
           ext ? h("span", { class: "extlink", title: ext.why }, " · " + ext.text) : null]
         : link ? [" · ", h("a", { class: "klink lk-sug", title: "Vorschlag – im Tab „Verknüpfung“ prüfen", onclick: e => { e.stopPropagation(); lkGoto(D, isp, a); } }, icon("swap"), "Klemme " + link.p.klemme + "?")]
-        : hasC && (lkLinks(D, isp).arts.get(a) || {}).st === "keine" ? [infoTxt ? " · " + infoTxt : null, " · ", h("a", { class: "klink lk-sug", title: "Keine Klemme erkannt – im Tab „Verknüpfung“ zuordnen", onclick: e => { e.stopPropagation(); lkGoto(D, isp, a); } }, icon("swap"), "zuordnen")]
-        : infoTxt ? " · " + infoTxt : null), on ? artValueChip(link.C, link.p) : null));
+        : hasC && (lkLinks(D, isp).arts.get(a) || {}).st === "keine" ? [infoShow ? " · " + infoShow : null, " · ", h("a", { class: "klink lk-sug", title: "Keine Klemme erkannt – im Tab „Verknüpfung“ zuordnen", onclick: e => { e.stopPropagation(); lkGoto(D, isp, a); } }, icon("swap"), "zuordnen")]
+        : infoShow ? " · " + infoShow : null), on ? artValueChip(link.C, link.p) : null));
     const jobCells = j => {
       const cur = wtxt(j, "executed");
       const ex = h("select", { class: "in sm exsel " + exClass(cur) });
@@ -459,19 +507,19 @@ function wdArtTable(main, D, ctx) {
     const tag = nr.startsWith("#") ? kindTag(nr.slice(1)) : h("span", { class: "mono small" }, nr);
     let tr;
     if (jobs.length === 1) {
-      tr = h("tr", { class: (D.pick.has(a) ? "on " : "") + exClass(wtxt(jobs[0], "executed")) }, h("td", null, h("label", { class: "chk" }, cb)), h("td", { class: "grip-cell", title: "Ziehen: auf eine Anlage links ablegen" }, tag), head, ...jobCells(jobs[0]), prCell(a), h("td", null, rowMenu(a)));
+      tr = h("tr", { class: (D.pick.has(a) ? "on " : "") + exClass(wtxt(jobs[0], "executed")) }, h("td", null, h("label", { class: "chk" }, cb)), h("td", { class: "grip-cell", title: "Ziehen: auf eine Anlage links ablegen" }, tag), head, typCell, ...jobCells(jobs[0]), prCell(a), h("td", null, rowMenu(a)));
       tb.appendChild(tr);
     } else {
       const js = jobStats(jobs);
       const open = !!(D.openArt && D.openArt.has(a));
-      tr = h("tr", { class: (D.pick.has(a) ? "on " : "") + rowExClass(jobs) }, h("td", null, h("label", { class: "chk" }, cb)), h("td", { class: "grip-cell" }, tag), head,
+      tr = h("tr", { class: (D.pick.has(a) ? "on " : "") + rowExClass(jobs) }, h("td", null, h("label", { class: "chk" }, cb)), h("td", { class: "grip-cell" }, tag), head, typCell,
         h("td", { colspan: 3 }, h("span", { class: "row" },
           btn(jobs.length + " Arbeiten", open ? "chevd" : "chev", () => { D.openArt = D.openArt || new Set(); open ? D.openArt.delete(a) : D.openArt.add(a); rerender(); }, "sm subtle"),
           ...statPills(js),
           js.offen ? btn("offene: Ja", "check", () => { for (const j of jobs) if (!wtxt(j, "executed")) setExecuted(D, a, j, "Ja"); changed(); rerender(); }, "sm subtle") : null)),
         prCell(a), h("td", null, rowMenu(a)));
       tb.appendChild(tr);
-      if (open) for (const j of jobs) tb.appendChild(h("tr", { class: "subjob " + exClass(wtxt(j, "executed")) }, h("td"), h("td"), h("td", { class: "small", style: { paddingLeft: "22px" } }, wtxt(j, "jobDescription")), ...jobCells(j), h("td"), h("td")));
+      if (open) for (const j of jobs) tb.appendChild(h("tr", { class: "subjob " + exClass(wtxt(j, "executed")) }, h("td"), h("td"), h("td", { class: "small", style: { paddingLeft: "22px" } }, wtxt(j, "jobDescription")), h("td"), ...jobCells(j), h("td"), h("td")));
     }
     tr.draggable = true;
     if (D.flashArt === a) flashRow = tr;
@@ -488,13 +536,13 @@ function wdArtTable(main, D, ctx) {
       const fa = all.filter(a => facOf(a) === f);
       if (!fa.length) continue;
       const fs = jobStats(facJobs(f));
-      tb.appendChild(h("tr", { class: "grp" }, h("td", { colspan: 8 }, h("span", { class: "row" },
+      tb.appendChild(h("tr", { class: "grp" }, h("td", { colspan: 9 }, h("span", { class: "row" },
         h("a", { class: "grp-name", title: "Nur diese Anlage zeigen", onclick: () => { D.sel = f; rerender(); } }, wtxt(f, "facBezeichnung") || "Anlage"),
         h("span", { class: "muted small" }, fa.length + (fa.length === 1 ? " Datenpunkt" : " Datenpunkte")), ...statPills(fs)))));
       wdSortArts(fa, isp, sortKey).forEach(addRow);
     }
   } else wdSortArts(all, isp, sortKey).forEach(addRow);
-  if (!all.length) tb.appendChild(h("tr", null, h("td", { colspan: 8, class: "muted" }, multi ? "Keine Datenpunkte in dieser ISP." : "Keine Datenpunkte in dieser Anlage.")));
+  if (!all.length) tb.appendChild(h("tr", null, h("td", { colspan: 9, class: "muted" }, multi ? "Keine Datenpunkte in dieser ISP." : "Keine Datenpunkte in dieser Anlage.")));
   tbl.appendChild(tb);
   main.appendChild(tbl);
   drawPick();
@@ -511,6 +559,7 @@ function wdGenTab(body, D) {
   const models = APP.centrals.map(c => wdModel(c));
   if (!APP.wdActive || !byCid(APP.wdActive)) APP.wdActive = APP.cur || APP.centrals[0].cid;
   const C = byCid(APP.wdActive), W = wdModel(C);
+  const hwMods = hwModules(C);
 
   /* Ziel + Einfügen */
   const bts = D ? wdocBauteile(D) : [];
@@ -564,7 +613,10 @@ function wdGenTab(body, D) {
     ...field("Produktdatenblatt", W.isp.produktDoc, v => W.isp.produktDoc = v, "leer lassen, wenn nicht vorhanden")));
   ed.appendChild(h("div", { class: "row", style: { marginTop: "8px" } },
     chk("Automationsstation als eigene Gruppe anlegen", W.isp.station, v => W.isp.station = v),
-    chk("Adresse und Softwarestand aus der Sicherung eintragen", W.isp.fillProps, v => W.isp.fillProps = v)));
+    chk("Adresse und Softwarestand aus der Sicherung eintragen", W.isp.fillProps, v => W.isp.fillProps = v),
+    hwMods.length ? chk("Module bei der Station aufführen (" + hwMods.length + ")", W.isp.modules, v => { W.isp.modules = v; renderAll(); }) : null));
+  if (hwMods.length && W.isp.modules) ed.appendChild(h("div", { class: "small muted", style: { marginTop: "6px" }, title: hwMods.map(m => m.type + " " + m.addr + (m.name ? " – " + m.name : "")).join("\n") },
+    "Module: " + trunc(hwMods.map(m => m.type + " " + m.addr).join(", "), 260)));
   const redo = fn => { fn(); setKlartext(W, W.opt.klartext); renderAll(); };
   const num = h("input", { class: "in sm", type: "number", min: 0, max: 99, value: W.opt.mode === "anlage" ? W.opt.splitAt || 0 : W.opt.grpMax, style: { width: "64px" }, title: W.opt.mode === "anlage" ? "0 = Anlagen nie teilen" : "" });
   num.addEventListener("change", () => redo(() => { const v = Math.max(0, parseInt(num.value, 10) || 0); if (W.opt.mode === "anlage") W.opt.splitAt = v; else W.opt.grpMax = Math.max(2, v || 12); regroupBy(W); }));

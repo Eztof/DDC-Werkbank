@@ -220,4 +220,8 @@ Gefunden, Bedeutung nur teilweise bekannt:
   - `AX P=…; W=…`, `DS`, `AI`, `DM`, `TX`, `V`, `T`, `L` (Parameter)
   - `N` Wochenprogramm, `J` Jahresprogramm, `GT=` Klartext
 - Die Schnellparametrierung übersetzt die .wwf in eine **.PRO-Datei**, und SPClientDDC sendet diese. Beim Auslesen läuft es umgekehrt: Die .PRO wird in die .wwf „eingetragen“.
-- Eine Umwandlung `.p90 → .wwf` ist mit den Definitionen (Abschnitt 4.2) machbar, aber noch nicht gebaut.
+- Die Werkbank wandelt `.p90`/`.EZR`/`.PRO` mit den Definitionen (Abschnitt 4.2) in eine `.wwf` um. Damit „Übersetzen“ in SPEnterprise ohne Fehler durchläuft, gilt:
+  - In Klartexten und Kommentaren steht kein `_` (wird zu Leerzeichen).
+  - Leere Verweise (Kreis/Parameter 0) werden weggelassen.
+  - Parameter 1207 und 2030 sowie Parameter mit Attribut-Bit 0x04 werden nicht geschrieben (SPEnterprise lehnt sie ab).
+  - `N`-Zeilen (Wochenprogramm) stehen direkt hinter `M NR=117|67|74`, `J`-Zeilen (Jahresprogramm) hinter `M NR=116|68`.

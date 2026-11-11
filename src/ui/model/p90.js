@@ -19,6 +19,7 @@ const UNITS = { "13": "min", "108": "°C", "109": "K", "150": "%", "190": "kByte
 const unitText = c => UNITS[c] || "";
 const HEX2 = /^[0-9A-F]{2}$/i;
 const REF_Z = /^(\d{3})\.(\d{3})$/;     // Quelle einer Verknüpfung: Zentrale.Gerät, z. B. 002.710
+const isRef = t => REF_Z.test(t[0] || "") && /\//.test(t[1] || "");   // „002.710 B7/01“ – nicht ein Wert wie „100.000 0“
 
 /* "p1 1.2.1 5100/1 28.5 108 0F 00 WT Becken Soll" → Bestandteile */
 export function parseP1(line) {
@@ -40,7 +41,7 @@ export function parseP1(line) {
   if (i < 0) for (let k = 1; k < t.length - 1; k++) if (HEX2.test(t[k]) && HEX2.test(t[k + 1])) { i = k; break; }
   if (i < 0) { r.val = rest.trim(); return r; }
   let v = t.slice(0, i).filter(x => x !== "");
-  if (v.length >= 2 && /^\d+$/.test(v[v.length - 1]) && !REF_Z.test(v[0])) r.unit = v.pop();
+  if (v.length >= 2 && /^\d+$/.test(v[v.length - 1]) && !isRef(v)) r.unit = v.pop();
   r.tok = v; r.val = v.join(" ");
   r.attr = t[i]; r.st = t[i + 1]; r.gt = t.slice(i + 2).join(" ").trim();
   return r;
@@ -80,7 +81,10 @@ function kindFromDef(d) {
 }
 function kindGuess(r) {
   if (r.quoted) return "TX";
-  if (REF_Z.test(r.tok[0] || "")) return / [EA] \d\d:\d\d/.test(r.val) ? "T" : /^L\d/.test(r.base) ? "L" : "V";
+  if (/^L\d+$/.test(r.base) && (r.tok[0] === "---" || REF_Z.test(r.tok[0] || ""))) return "L";
+  if (/^[0-9a-f]{8}$/i.test(r.val) && /[a-f]/i.test(r.val)) return "DM";          // Status-/Fehlerwort (hex)
+  if (/^[01]{8}$/.test(r.val)) return /^2/.test(r.st) ? "DM" : "DS";                   // Bitmaske
+  if (isRef(r.tok)) return / [EA] \d\d:\d\d/.test(r.val) ? "T" : /^L\d/.test(r.base) ? "L" : "V";
   const dig = /^[01]$/.test(r.val) && !r.unit;
   const letter = (r.base.match(/^[A-Za-z]+/) || [""])[0];
   if (letter === "b" || letter === "y") return "AI";
@@ -99,7 +103,8 @@ function refsOf(tok) {
     if (z && tok[i + 1] && /\//.test(tok[i + 1])) {
       const [b, n] = tok[i + 1].split("/");
       const ni = /^[NI]$/.test(tok[i + 2] || "") ? tok[i + 2] : "N";
-      out.push(`${+z[1]}.${+z[2]} ${b}/${parseInt(n, 10) || 1}${ni}${op}`);
+      /* „000.000 0000/00“ = keine Quelle eingetragen → leer lassen (Platz bleibt, wie „---“ in der .wwf) */
+      out.push(/^0+$/.test(b) ? null : `${+z[1]}.${+z[2]} ${b}/${parseInt(n, 10) || 1}${ni}${op}`);
       i += /^[NI]$/.test(tok[i + 2] || "") ? 2 : 1;
       const o = (tok[i + 1] || "").toLowerCase();
       op = o === "and" || o === "or" ? o : "";
@@ -109,6 +114,30 @@ function refsOf(tok) {
   return out;
 }
 
+const SP_SKIP = new Set(["1207", "2030"]);   // ohne Definitionen: bekannte Systemparameter, die SPEnterprise ablehnt
+/* Nutzzeiten je Wochentag (1014 = Mo … 1020 = So): „06:00-14:00 --- --- ---“ = bis zu 4 Blöcke.
+   So liefert die DDC die Wochenprogramme (Menü 117 der Zentrale, Menü 74 der EZR). */
+const NZ_DAY = { "1014": 0, "1015": 1, "1016": 2, "1017": 3, "1018": 4, "1019": 5, "1020": 6 };
+const NZ_VAL = /^(?:---|\d\d:\d\d-\d\d:\d\d)(?: (?:---|\d\d:\d\d-\d\d:\d\d)){0,3}$/;
+const JDP_VAL = /^([PE])([A-Z])([A-Z]) (\d{4}) (\d\d\.\d\d)(?:-(\d\d\.\d\d))?$/;   // Jahresprogramm-Eintrag „PAN 0000 31.12-01.01“
+const emptyWeek = () => Array(7).fill("--:--");
+function addBlocks(P, day, val) {
+  String(val).split(" ").forEach((b, i) => {
+    const m = b.match(/^(\d\d:\d\d)-(\d\d:\d\d)$/);
+    if (!m || i > 3) return;
+    (P["BEG" + (i + 1)] ||= emptyWeek())[day] = timeOk(m[1]);
+    (P["END" + (i + 1)] ||= emptyWeek())[day] = timeOk(m[2]);
+  });
+}
+/* Lampe: „001.703 S1/01 N ---“ → [LD, LB]; „---“ steht für eine leere Quelle */
+function lampRefs(tok) {
+  const out = [];
+  for (let i = 0; i < tok.length && out.length < 2; i++) {
+    if (tok[i] === "---") { out.push(null); continue; }
+    if (REF_Z.test(tok[i])) { const [x] = refsOf(tok.slice(i, i + 3)); out.push(x || null); i += /^[NI]$/.test(tok[i + 2] || "") ? 2 : 1; }
+  }
+  return out;
+}
 const DAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
 const timeOk = v => { const m = String(v || "").match(/^(\d\d):(\d\d)$/); return m && (+m[1] < 24 || v === "24:00") ? v : "--:--"; };
 
@@ -120,8 +149,10 @@ function recordsOf(z, devices, def) {
   recs.push({ kind: "Z", f: { NR: String(z), TYP: typ0 }, sched: {} });
   recs.push({ kind: "B", f: { TYP: typ0 }, sched: {} });
   const progs = new Map();   // Wochenprogramm-Nr → { BEG1: [ "", Mo … So ], … }
+  const jahr = new Map();    // Jahresprogramm-Nr → [{ i, typ, prog, del, zu, beg, end }]
   for (const d of devices) {
     const g = +d.addr.split(".")[2];
+    const dprogs = g === 0 ? progs : new Map();
     if (g !== 0) recs.push({ kind: "K", f: { NR: String(g), TYP: d.group ? devName(d.group, d.type) : "", GT: d.text || "" }, sched: {} });
     for (const l of d.menus) {
       const m = l.match(/^m1 \S+ (\S+)(?: (\S+))?/);
@@ -134,7 +165,7 @@ function recordsOf(z, devices, def) {
       /* ohne Definitionen: Vorlagen der Schnellparametrierung (falls in die Werkbank geladen) */
       const MK = !D && d.group ? makroDef(devName(d.group, d.type), r.base) : null;
       const pinLike = /^[bykBYK]\d+$/.test(r.base);
-      const kind = (D && kindFromDef(D)) || (MK && !(MK.kind === "V" && !REF_Z.test(r.tok[0] || "")) && MK.kind) || kindGuess(r);
+      const kind = (D && kindFromDef(D)) || (MK && !(MK.kind === "V" && !isRef(r.tok)) && MK.kind) || kindGuess(r);
       const f = { P: r.base + "/" + r.inst, W: r.val, ST: r.st };
       if (r.gt) f.GT = r.gt;
       if (D && D.name) {
@@ -145,13 +176,33 @@ function recordsOf(z, devices, def) {
       const u = unitText(r.unit || (D && D.unit) || "") || (MK && MK.unit && !/keine/i.test(MK.unit) ? MK.unit : "");
       if (u) f.E = u;
       if (kind === "AX" && D) { f.UG = D.min; f.OG = D.max; }
-      if (kind === "V") refsOf(r.tok).slice(0, 4).forEach((x, i) => { f["V" + (i + 1)] = x; });
+      /* Parameter, die die Schnellparametrierung nicht kennt (Attribut-Bit 0x04 in D1, z. B. 1207 Task-Zustand,
+         2030 Treiber), lehnt SPEnterprise beim Übersetzen ab → für die .wwf weglassen */
+      if (D ? (D.attr & 0x04) : (g === 0 && SP_SKIP.has(r.base))) f.noSP = true;
+      if (kind === "V") refsOf(r.tok).slice(0, 4).forEach((x, i) => { if (x) f["V" + (i + 1)] = x; });
       else if (kind === "T") {
         const [ref] = refsOf(r.tok); if (ref) f.TV = ref;
         const tz = r.val.match(/ ([EA]) (\S+)$/);
         if (tz) f.TZ = tz[1] + " " + tz[2].replace(/\/00:00:00$/, "");
       } else if (kind === "L") {
-        const [a, b] = refsOf(r.tok); if (a) f.LD = a; if (b) f.LB = b;
+        const [a, b] = lampRefs(r.tok); if (a) f.LD = a; if (b) f.LB = b;
+      }
+      /* Nutzzeiten → Wochenprogramm N (der Parameter bleibt für die Ansichten erhalten, nicht aber in der .wwf) */
+      if (r.base in NZ_DAY && NZ_VAL.test(r.val)) {
+        if (!dprogs.has(r.inst)) dprogs.set(r.inst, {});
+        addBlocks(dprogs.get(r.inst), NZ_DAY[r.base], r.val);
+        f.noSP = true;
+      }
+      /* aktuelle Nutzzeitblöcke heute/morgen (1010/1011), Datums- und Zeitblock-Werte: kennt die .wwf nicht */
+      if ((D && [21, 22].includes(D.typ)) || /^\d\d\.\d\d\.\d\d$/.test(r.val) || (!D && NZ_VAL.test(r.val))) f.noSP = true;
+      /* Jahresprogramm 501…532 („JDP %(n)“) → J-Datensatz */
+      const jm = (D ? D.typ === 30 : /^5(0[1-9]|[12]\d|3[0-2])$/.test(r.base)) && (r.val.match(JDP_VAL) || r.val === "---");
+      if (jm && g === 0) {
+        if (Array.isArray(jm)) {
+          if (!jahr.has(r.inst)) jahr.set(r.inst, []);
+          jahr.get(r.inst).push({ i: parseInt(r.base, 10) - 500, typ: jm[1], prog: jm[2], del: jm[3], zu: jm[4], beg: jm[5], end: jm[6] || "--.--" });
+        }
+        f.noSP = true;
       }
       /* Schaltzeiten der Wochenprogramme: Parameter mit Namen „Mo-BEGINN1“ … „So-ENDE4“, Index = Programm */
       const sm = D && D.name.match(/^(Mo|Di|Mi|Do|Fr|Sa|So)-(BEGINN|ENDE)(\d)$/i);
@@ -164,13 +215,15 @@ function recordsOf(z, devices, def) {
       }
       recs.push({ kind, f, sched: {}, kreis: g });
     }
+    if (g !== 0) for (const [nr, sc] of dprogs) recs.push({ kind: "N", f: { NR: String(nr) }, sched: sc, kreis: g });
   }
-  return { recs, progs };
+  const jrecs = [...jahr].map(([nr, L]) => ({ kind: "J", f: { NR: String(nr) }, sched: {}, jdp: L.sort((a, b) => a.i - b.i), kreis: 0 }));
+  return { recs, progs, jrecs };
 }
 
 /* Datensätze in Reihenfolge der .wwf: je Kreis K, dann seine Menüs und Parameter */
 function ordered(z, devices, def) {
-  const { recs, progs } = recordsOf(z, devices, def);
+  const { recs, progs, jrecs } = recordsOf(z, devices, def);
   const out = recs.filter(r => r.kind === "Z" || r.kind === "B");
   const rest = recs.filter(r => r.kind !== "Z" && r.kind !== "B");
   /* recordsOf liefert schon gerätweise; Grundgerät-Datensätze (ohne K davor) zuerst */
@@ -182,8 +235,15 @@ function ordered(z, devices, def) {
   }
   out.push(...groups.get(0));
   for (const [nr, sc] of progs) out.push({ kind: "N", f: { NR: String(nr) }, sched: sc });
+  out.push(...jrecs);
   for (const [k, L] of groups) if (k !== 0) out.push(...L);
   return out;
+}
+
+/* Definitionen der Zentrale z (aus ihrem eigenen Abschnitt), sonst alle */
+function defsFor(B, z, devices) {
+  const own = devices.map(d => B.defsBy && B.defsBy[d.addr]).find(x => x && x.D1.length);
+  return defIndex(own ? own.D1 : B.definitions.D1);
 }
 
 /* Geräte je Zentrale. Adresse a.z.g; bei kleinen Anlagen (DDC3035 …) ist z = 0, die Verknüpfungen nennen dann a */
@@ -201,12 +261,11 @@ function byZentrale(B) {
 export function parseP90(text, label, fileName) {
   const B = parseBackup(text);
   if (!B.devices.length) throw new Error(B.aborted ? "Sicherung wurde abgebrochen, bevor ein Gerät gelesen war" : "Keine Geräte in der P90-Sicherung");
-  const def = defIndex(B.definitions.D1);
   const byZ = byZentrale(B);
   const stamp = (B.header.Erstellt || "").replace(/,/, "");
   const out = [];
   for (const [z, devices] of byZ) {
-    const C = buildDDC3000(ordered(z, devices, def), label, fileName, {
+    const C = buildDDC3000(ordered(z, devices, defsFor(B, z, devices)), label, fileName, {
       format: (B.plain ? "DDC3000 · Sicherung des K&P-Programms (" + ((fileName || "").match(/\.\w+$/) || [".PRO"])[0].toUpperCase() + ")" : "DDC3000 · P90-Sicherung (.p90)") + (B.definitions.D1.length ? "" : " ohne Definitionen"),
       stamp, stampSrc: stamp ? "Sicherung erstellt" : "", values: true
     });
@@ -247,36 +306,90 @@ function rtfEsc(s) {
 const pad = (s, n) => String(s ?? "").padEnd(n);
 const wP = f => { const [b, i] = String(f.P).split("/"); return (+i || 1) > 1 ? b + "/" + (+i) : b; };
 const wTZ = tz => String(tz || "").replace(/^([EA]) 0?(\d+):/, "$1 $2:");
+/* Text für die .wwf: „_“ leitet in der Schnellparametrierung einen Platzhalter ein (#def _ANL …) → Leerzeichen */
+const tx = s => String(s ?? "").replace(/_/g, " ");
+/* Werte, die die Schnellparametrierung lesen kann – sonst leer lassen („W=“ = nicht vorgegeben, wie in den Vorlagen) */
+const wAX = v => { v = String(v ?? "").trim(); return /^-?\d+(\.\d+)?$|^-+$|^[\\/][-\\/]*$|^\d\d:\d\d$/.test(v) ? v : ""; };
+const wDS = v => { v = String(v ?? "").trim(); return /^\d{1,2}$|^[01]{2,8}$|^[ST]$/.test(v) ? v : ""; };
 const RK_TYP = { "LÜFTUNG": "RK-Lüftung", "HEIZUNG": "RK-Heizung", "FESTWERT": "RK-Festwert" };
+
+/* Reihenfolge wie in einer echten .wwf: Wochen-/Jahresprogramm (N/J) und ihr Status-Parameter direkt hinter
+   ihrem Menü (117/67/74 bzw. 116/68), N und J je Gerät fortlaufend nummeriert. */
+const WEEK_M = /^(?:117|67|74)\/(\d+)$/, YEAR_M = /^(?:116|68)\/(\d+)$/;
+function wwfOrder(recs) {
+  const out = [], groups = [];
+  for (const r of recs) {
+    if (r.kind === "Z" || r.kind === "B") { out.push(r); continue; }
+    if (r.kind === "K" || !groups.length) groups.push({ head: r.kind === "K" ? r : null, list: [] });
+    if (r.kind !== "K") groups[groups.length - 1].list.push(r);
+  }
+  for (const G of groups) {
+    if (G.head) out.push(G.head);
+    const used = new Set();
+    const find = (kind, nr) => G.list.find(r => r.kind === kind && +r.f.NR === nr && !used.has(r));
+    const stat = (b, nr) => G.list.find(r => r.f.P && !used.has(r) && (r.f.P === b + "/" + nr || (nr === 1 && r.f.P === b)));
+    let nN = 0, nJ = 0;
+    const menus = G.list.filter(r => r.kind === "M");
+    for (const m of menus) {
+      out.push(m); used.add(m);
+      let x;
+      if ((x = String(m.f.NR).match(WEEK_M))) {
+        const n = find("N", +x[1]);
+        if (n) { const st = stat("N", +x[1]); if (st) { out.push(st); used.add(st); } out.push({ ...n, wNR: ++nN }); used.add(n); }
+      } else if ((x = String(m.f.NR).match(YEAR_M))) {
+        const j = find("J", +x[1]);
+        if (j) { const st = stat("J", +x[1]); if (st) { out.push(st); used.add(st); } out.push({ ...j, wNR: ++nJ }); used.add(j); }
+      }
+    }
+    for (const r of G.list) if (!used.has(r)) out.push(r.kind === "N" ? { ...r, wNR: ++nN } : r.kind === "J" ? { ...r, wNR: ++nJ } : r);
+  }
+  return out;
+}
 
 function wwfLines(recs, name) {
   const L = [];
-  const head = (kind, f) => pad(kind, 8) + "P=" + pad(wP(f), 10) + "; K=     !" + (f.GT || f.K || "");
+  recs = wwfOrder(recs);
+  const head = (kind, f) => pad(kind, 8) + "P=" + pad(wP(f), 10) + "; K=     !" + tx(f.GT || f.K);
   const kindOf = r => (r.kind === "DS" && /^[NJ]\//.test(r.f.P)) ? "DM" : r.kind;   // Status Wochen-/Jahresprogramm: in der .wwf DM
   const refs = (f, keys) => keys.map((k, i) => "       " + k + "=" + pad(f[k] || "---", 15) + "; T" + (i + 1) + "=");
+  name = tx(name);
   for (const r of recs) {
     const f = r.f;
+    if (f.noSP) continue;
+    if (r.kind === "T" && !f.TV) continue;          // Zeitglied ohne Quelle = nicht benutzt (steht in echten .wwf nicht drin)
     switch (kindOf(r)) {
       case "Z": L.push("Z      NR=" + pad(f.NR, 5) + "; TYP=DDC3000    ; K=" + name); break;
       case "B": L.push("B      NR=" + pad(recs[0].f.NR, 5) + "; TYP=" + pad(f.TYP, 11) + "; K=", "       GT=" + name); break;
-      case "K": L.push("K      NR=" + pad(f.NR, 5) + "; TYP=" + (RK_TYP[f.TYP] || f.TYP || ""), "       RK=", "      ANL=", "       GT=" + (f.GT || "")); break;
+      case "K": L.push("K      NR=" + pad(f.NR, 5) + "; TYP=" + (RK_TYP[f.TYP] || f.TYP || ""), "       RK=", "      ANL=", "       GT=" + tx(f.GT)); break;
       case "M": L.push("M      NR=" + pad(f.NR, 5) + "; AKTIV=1    ; K=" + f.NR); break;
+      case "J": {
+        const blocks = Math.max(1, Math.ceil(Math.max(0, ...r.jdp.map(e => e.i)) / 5));
+        for (let b = 0; b < blocks; b++) {
+          if (b === 0) L.push("J      NR=" + pad(r.wNR || f.NR, 5) + "; K=", "     !     Start   Ende    Programm   L\u00f6schen    Zuordnung");
+          else L.push("J      NR=" + (r.wNR || f.NR));
+          for (let k = 1; k <= 5; k++) {
+            const e = r.jdp.find(x => x.i === b * 5 + k);
+            L.push("     JDP" + String(k).padStart(2, "0") + "=" + pad(e ? e.beg : "--.--", 7) + "=" + pad(e ? e.end : "--.--", 11) + "=" + pad(e ? e.prog : "", 9) + "=" + pad(e ? e.del : "N", 9) + "=" + (e ? e.zu : "0000"));
+          }
+        }
+        break;
+      }
       case "N": {
-        L.push("N      NR=" + pad(f.NR, 5) + "; K=", "     !     MO     DI     MI     DO     FR     SA     SO  ", "     !------------------------------------------------------------");
+        L.push("N      NR=" + pad(r.wNR || f.NR, 5) + "; K=", "     !     MO     DI     MI     DO     FR     SA     SO  ", "     !------------------------------------------------------------");
         for (let i = 1; i <= 4; i++) for (const k of ["BEG", "END"]) {
           const a = r.sched[k + i] || Array(7).fill("--:--");
           L.push("     " + k + i + "=" + a.map(x => pad(x, 6)).join("=").replace(/\s+$/, ""));
         }
         break;
       }
-      case "AX": L.push(head("AX", f), "        W=" + pad(f.W, 5) + "; E=" + pad(f.E || "keine Einh", 5) + "; Z=", "       UG=" + pad(f.UG, 5) + "; OG=" + (f.OG || ""), "       GT=" + (f.GT || "")); break;
-      case "AI": L.push(head("AI", f), "        E=" + pad(f.E || "keine Einh", 5) + "; Z=     ; SMIN=     ; SMAX=", "       GT=" + (f.GT || "")); break;
-      case "DS": L.push(head("DS", f), "        W=" + pad(f.W, 5) + "; Z=", "       TM=  ,=              ", "       GT=" + (f.GT || "")); break;
-      case "DM": L.push(head("DM", f), "       TM=  ,=                ,=              ", "      INV=0    ; Z=", "       GT=" + (f.GT || "")); break;
-      case "TX": L.push(pad("TX", 8) + "P=" + wP(f), "        W=" + (f.W || ""), "       GT=" + (f.GT || "")); break;
-      case "V": L.push(head("V", f), ...refs(f, ["V1", "V2", "V3", "V4"]), "       TV=", "       GT=" + (f.GT || "")); break;
-      case "T": L.push(head("T", f), "       TV=" + pad(f.TV || "---", 15) + "; T1=", "       TZ=" + pad(wTZ(f.TZ), 15) + "; T2=", "       GT=" + (f.GT || "")); break;
-      case "L": L.push(head("L", f), "       LD=" + pad(f.LD || "---", 15) + "; T1=", "       LB=" + pad(f.LB || "---", 15) + "; T2=", "        F=" + (f.F || ""), "       GT=" + (f.GT || "")); break;
+      case "AX": L.push(head("AX", f), "        W=" + pad(wAX(f.W), 5) + "; E=" + pad(f.E || "keine Einh", 5) + "; Z=", "       UG=" + pad(f.UG, 5) + "; OG=" + (f.OG || ""), "       GT=" + tx(f.GT)); break;
+      case "AI": L.push(head("AI", f), "        E=" + pad(f.E || "keine Einh", 5) + "; Z=     ; SMIN=     ; SMAX=", "       GT=" + tx(f.GT)); break;
+      case "DS": L.push(head("DS", f), "        W=" + pad(wDS(f.W), 5) + "; Z=", "       TM=  ,=              ", "       GT=" + tx(f.GT)); break;
+      case "DM": L.push(head("DM", f), "       TM=  ,=                ,=              ", "      INV=0    ; Z=", "       GT=" + tx(f.GT)); break;
+      case "TX": L.push(pad("TX", 8) + "P=" + wP(f), "        W=" + tx(f.W), "       GT=" + tx(f.GT)); break;
+      case "V": L.push(head("V", f), ...refs(f, ["V1", "V2", "V3", "V4"]), "       TV=", "       GT=" + tx(f.GT)); break;
+      case "T": L.push(head("T", f), "       TV=" + pad(f.TV || "---", 15) + "; T1=", "       TZ=" + pad(wTZ(f.TZ), 15) + "; T2=", "       GT=" + tx(f.GT)); break;
+      case "L": L.push(head("L", f), "       LD=" + pad(f.LD || "---", 15) + "; T1=", "       LB=" + pad(f.LB || "---", 15) + "; T2=", "        F=" + (f.F || ""), "       GT=" + tx(f.GT)); break;
     }
   }
   return L;
@@ -285,11 +398,10 @@ function wwfLines(recs, name) {
 export function toWwf(text, name) {
   const B = parseBackup(text);
   if (!B.devices.length) throw new Error("Keine Geräte in der Sicherung");
-  const def = defIndex(B.definitions.D1);
   const out = [];
   for (const [z, devices] of byZentrale(B)) {
     const nm = name || "Zentrale " + z;
-    const lines = wwfLines(ordered(z, devices, def), nm);
+    const lines = wwfLines(ordered(z, devices, defsFor(B, z, devices)), nm);
     const rtf = "{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0\\fmodern\\fprq1\\fcharset0 Courier New;}}\r\n" +
       "{\\colortbl ;\\red0\\green0\\blue0;\\red255\\green255\\blue255;}\r\n" +
       "\\viewkind4\\uc1\\pard\\cf1\\highlight2\\lang1031\\protect\\f0\\fs24\\par\r\n" +

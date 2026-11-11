@@ -548,7 +548,8 @@ select.in.bad { color: var(--err); font-weight: 600; }
 .wgrp.off .gh input.gn { opacity: .5; text-decoration: line-through; }
 .chip.on .sw-dot { box-shadow: 0 0 0 1.5px var(--on-accent); }
 table.wdoc td:nth-child(3) { min-width: 250px; }
-table.wdoc td:nth-child(5) { min-width: 150px; }
+table.wdoc td:nth-child(4) { min-width: 110px; }   /* Typ */
+table.wdoc td:nth-child(6) { min-width: 150px; }   /* Bemerkung */
 table.wdoc input[type=date] { width: 128px; }
 
 /* Wartungsdoku: Ergebnis-Farben, Sprungmarken */
@@ -2002,8 +2003,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const fm = P(ds, "freeMem");
     if (fm) add("Gerät", "Freier Speicher", fm.text + " %", parseInt(fm.text, 10) < 10);
     for (const can of [...C.nodes.values()].filter((n) => n.type === "SY_CAN" && n.mod === "000")) {
-      const tx = P(can, "TXFrame"), rx = P(can, "RXFrame");
-      if (tx || rx) add("Bus", can.addr, "TX " + (tx ? fmtNum(tx.text) : "–") + " · RX " + (rx ? fmtNum(rx.text) : "–"));
+      const tx2 = P(can, "TXFrame"), rx = P(can, "RXFrame");
+      if (tx2 || rx) add("Bus", can.addr, "TX " + (tx2 ? fmtNum(tx2.text) : "–") + " · RX " + (rx ? fmtNum(rx.text) : "–"));
     }
     const em = byType("SY_Email");
     add("Meldungsversand", "E-Mail-Empfänger", (P(em, "1") || {}).text);
@@ -3430,6 +3431,53 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     wRenumber(isp);
     return f;
   }
+  function missingModules(isp, C) {
+    const have = /* @__PURE__ */ new Set();
+    for (const f of wkids(isp, "facility")) for (const a of wkids(f, "Artikel")) {
+      const nr = wtxt(a, "nummer").trim().toUpperCase();
+      if (nr.startsWith("#")) continue;
+      const pr = artProp(a, "BUS Systemadresse"), m = (pr ? wtxt(pr, "value") : "").match(/(?:Modul|EZR)\s+(\S+)/);
+      have.add(nr + "|" + (m ? m[1] : "?"));
+    }
+    return hwModules(C).filter((m) => !have.has(m.type.toUpperCase() + "|" + m.addr));
+  }
+  function addModules(D, isp, C, mods) {
+    const W = wdModel(C);
+    let st = null;
+    for (const f of wkids(isp, "facility")) {
+      const a = wkids(f, "Artikel").find((x) => !wtxt(x, "nummer").trim().startsWith("#"));
+      if (a) {
+        st = { f, a };
+        break;
+      }
+    }
+    let fac = st ? st.f : null;
+    if (!fac) {
+      fac = wNewFacility(D, isp, "Module", null);
+      isp.insertBefore(fac, wkids(isp, "facility")[0]);
+    }
+    const Wx = Object.assign({}, W, { isp: Object.assign({}, W.isp, { bez: st ? wtxt(st.a, "standort") || W.isp.bez : W.isp.bez, fillProps: true }) });
+    const frag = new DOMParser().parseFromString('<r xmlns="' + WTG_NS + '">' + mods.map((m, i) => moduleArtikel(Wx, m, i + 1, "")).join("") + "</r>", "application/xml");
+    const arts = wkids(fac, "Artikel");
+    let after = null;
+    for (const a of arts) if (!wtxt(a, "nummer").trim().startsWith("#")) after = a;
+    let before = after ? after.nextElementSibling : arts[0] || null;
+    for (const el of [...frag.documentElement.children]) fac.insertBefore(D.doc.importNode(el, true), before);
+    wRenumber(isp);
+    return fac;
+  }
+  function modulesBtn(D, isp, rerender, changed) {
+    const C = APP.centrals.length ? centralForIsp(isp) : null;
+    const miss = C ? missingModules(isp, C) : [];
+    if (!miss.length) return null;
+    return btn("Module ergänzen (" + miss.length + ")", "plus", () => {
+      wSnapshot(D);
+      const fac = addModules(D, isp, C, miss);
+      changed();
+      toast(miss.length + (miss.length === 1 ? " Modul" : " Module") + " bei „" + (wtxt(fac, "facBezeichnung") || "Station") + "“ eingetragen – Strg+Z macht es rückgängig.", "ok", 3500);
+      rerender();
+    }, "", "Aus der Sicherung bei der Automationsstation eintragen: " + trunc(miss.map((m) => m.type + " " + m.addr + (m.name ? " (" + m.name + ")" : "")).join(", "), 600));
+  }
   function wdDocTab(body, D) {
     if (!D.date) D.date = wDate();
     const isps = wIsps(D);
@@ -3610,7 +3658,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           D.sel = wNewFacility(D, isp2, name.trim() || "Neue Anlage");
           changed();
           rerender();
-        })
+        }),
+        modulesBtn(D, isp2, rerender, changed)
       ));
       main.appendChild(zustandBox(
         "Gesamtzustand der ISP (ISP-Kommentar)",
@@ -3699,6 +3748,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         changed();
         rerender();
       }, "", "Alle noch offenen Prüfungen dieser Anlage als durchgeführt (Ja) markieren"),
+      wkids(fac, "Artikel").some((x) => !wtxt(x, "nummer").trim().startsWith("#")) ? modulesBtn(D, isp, rerender, changed) : null,
       btn(null, "up", () => {
         wSnapshot(D);
         isp.insertBefore(fac, facs[fi - 1]);
@@ -3846,6 +3896,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       h("th", { style: { width: "34px" } }, h("label", { class: "chk" }, allCb)),
       h("th", { style: { width: "56px" } }, "Art"),
       h("th", null, "Klartext / Prüfung"),
+      h("th", { style: { width: "120px" }, title: "Wird im Info-Feld vor der Klemme eingetragen: „Typ: … · Klemme …“" }, "Typ"),
       h("th", { style: { width: "118px" } }, "Ergebnis"),
       h("th", null, "Bemerkung"),
       h("th", { style: { width: "130px" } }, "Prüfdatum"),
@@ -3924,6 +3975,16 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       const link = pinForArt(a, isp);
       const on2 = link && LK_ON.has(link.st);
       const infoTxt = infoP && wtxt(infoP, "value") ? wtxt(infoP, "value") : "";
+      const infoPart = infoParse(infoTxt), infoShow = [infoPart.klemme, infoPart.rest].filter(Boolean).join(" · ");
+      let typCell = h("td");
+      if (/^#/.test(nr)) {
+        const ty = h("input", { class: "in sm", value: infoTyp(a), placeholder: "Typ", style: { width: "100%" }, title: "Typ (z. B. Fühler- oder Antriebstyp) – steht dann im Info-Feld vor der Klemme" });
+        ty.addEventListener("change", () => {
+          setInfoTyp(a, ty.value);
+          changed();
+        });
+        typCell = h("td", null, ty);
+      }
       const hasC = APP.centrals.length && /^#/.test(nr) && centralForIsp(isp);
       const unl = on2 ? pinUnlinked(link.p) : null, ext = on2 && !unl ? pinOnlyExternal(link.p) : null;
       const head = h("td", null, kt, h("span", { class: "sub artsub" }, h(
@@ -3936,17 +3997,17 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           h("a", { class: "klink", title: "In der Datenpunktliste zeigen" + (APP.centrals.length > 1 ? " (" + stationLabel(link.C) + ")" : "") + (link.st === "sicher" ? " – erkannt, noch nicht ins Info-Feld eingetragen" : ""), onclick: (e) => {
             e.stopPropagation();
             jumpToPin(link.C, link.p);
-          } }, icon("jump"), infoTxt && /Klemme/.test(infoTxt) ? infoTxt : "Klemme " + link.p.klemme),
+          } }, icon("jump"), infoPart.klemme ? infoShow : "Klemme " + link.p.klemme),
           link.st === "sicher" ? h("span", { class: "lk-mark", title: "Erkannt, noch nicht eingetragen – im Tab „Verknüpfung“ eintragen" }, "≈") : null,
           unl ? h("span", { class: "nolink", title: unl }, " · nicht verknüpft") : null,
           ext ? h("span", { class: "extlink", title: ext.why }, " · " + ext.text) : null
         ] : link ? [" · ", h("a", { class: "klink lk-sug", title: "Vorschlag – im Tab „Verknüpfung“ prüfen", onclick: (e) => {
           e.stopPropagation();
           lkGoto(D, isp, a);
-        } }, icon("swap"), "Klemme " + link.p.klemme + "?")] : hasC && (lkLinks(D, isp).arts.get(a) || {}).st === "keine" ? [infoTxt ? " · " + infoTxt : null, " · ", h("a", { class: "klink lk-sug", title: "Keine Klemme erkannt – im Tab „Verknüpfung“ zuordnen", onclick: (e) => {
+        } }, icon("swap"), "Klemme " + link.p.klemme + "?")] : hasC && (lkLinks(D, isp).arts.get(a) || {}).st === "keine" ? [infoShow ? " · " + infoShow : null, " · ", h("a", { class: "klink lk-sug", title: "Keine Klemme erkannt – im Tab „Verknüpfung“ zuordnen", onclick: (e) => {
           e.stopPropagation();
           lkGoto(D, isp, a);
-        } }, icon("swap"), "zuordnen")] : infoTxt ? " · " + infoTxt : null
+        } }, icon("swap"), "zuordnen")] : infoShow ? " · " + infoShow : null
       ), on2 ? artValueChip(link.C, link.p) : null));
       const jobCells = (j) => {
         const cur = wtxt(j, "executed");
@@ -3984,7 +4045,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       const tag = nr.startsWith("#") ? kindTag(nr.slice(1)) : h("span", { class: "mono small" }, nr);
       let tr;
       if (jobs.length === 1) {
-        tr = h("tr", { class: (D.pick.has(a) ? "on " : "") + exClass(wtxt(jobs[0], "executed")) }, h("td", null, h("label", { class: "chk" }, cb)), h("td", { class: "grip-cell", title: "Ziehen: auf eine Anlage links ablegen" }, tag), head, ...jobCells(jobs[0]), prCell(a), h("td", null, rowMenu(a)));
+        tr = h("tr", { class: (D.pick.has(a) ? "on " : "") + exClass(wtxt(jobs[0], "executed")) }, h("td", null, h("label", { class: "chk" }, cb)), h("td", { class: "grip-cell", title: "Ziehen: auf eine Anlage links ablegen" }, tag), head, typCell, ...jobCells(jobs[0]), prCell(a), h("td", null, rowMenu(a)));
         tb.appendChild(tr);
       } else {
         const js = jobStats(jobs);
@@ -3995,6 +4056,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           h("td", null, h("label", { class: "chk" }, cb)),
           h("td", { class: "grip-cell" }, tag),
           head,
+          typCell,
           h("td", { colspan: 3 }, h(
             "span",
             { class: "row" },
@@ -4014,7 +4076,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           h("td", null, rowMenu(a))
         );
         tb.appendChild(tr);
-        if (open) for (const j of jobs) tb.appendChild(h("tr", { class: "subjob " + exClass(wtxt(j, "executed")) }, h("td"), h("td"), h("td", { class: "small", style: { paddingLeft: "22px" } }, wtxt(j, "jobDescription")), ...jobCells(j), h("td"), h("td")));
+        if (open) for (const j of jobs) tb.appendChild(h("tr", { class: "subjob " + exClass(wtxt(j, "executed")) }, h("td"), h("td"), h("td", { class: "small", style: { paddingLeft: "22px" } }, wtxt(j, "jobDescription")), h("td"), ...jobCells(j), h("td"), h("td")));
       }
       tr.draggable = true;
       if (D.flashArt === a) flashRow = tr;
@@ -4038,7 +4100,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         const fa = all.filter((a) => facOf(a) === f);
         if (!fa.length) continue;
         const fs = jobStats(facJobs(f));
-        tb.appendChild(h("tr", { class: "grp" }, h("td", { colspan: 8 }, h(
+        tb.appendChild(h("tr", { class: "grp" }, h("td", { colspan: 9 }, h(
           "span",
           { class: "row" },
           h("a", { class: "grp-name", title: "Nur diese Anlage zeigen", onclick: () => {
@@ -4051,7 +4113,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         wdSortArts(fa, isp, sortKey).forEach(addRow);
       }
     } else wdSortArts(all, isp, sortKey).forEach(addRow);
-    if (!all.length) tb.appendChild(h("tr", null, h("td", { colspan: 8, class: "muted" }, multi ? "Keine Datenpunkte in dieser ISP." : "Keine Datenpunkte in dieser Anlage.")));
+    if (!all.length) tb.appendChild(h("tr", null, h("td", { colspan: 9, class: "muted" }, multi ? "Keine Datenpunkte in dieser ISP." : "Keine Datenpunkte in dieser Anlage.")));
     tbl.appendChild(tb);
     main.appendChild(tbl);
     drawPick();
@@ -4076,6 +4138,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const models = APP.centrals.map((c) => wdModel(c));
     if (!APP.wdActive || !byCid(APP.wdActive)) APP.wdActive = APP.cur || APP.centrals[0].cid;
     const C = byCid(APP.wdActive), W = wdModel(C);
+    const hwMods = hwModules(C);
     const bts = D ? wdocBauteile(D) : [];
     if (APP.wdBte == null || APP.wdBte >= bts.length) APP.wdBte = 0;
     const used = models.filter((x) => x.use);
@@ -4158,7 +4221,16 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       "div",
       { class: "row", style: { marginTop: "8px" } },
       chk("Automationsstation als eigene Gruppe anlegen", W.isp.station, (v) => W.isp.station = v),
-      chk("Adresse und Softwarestand aus der Sicherung eintragen", W.isp.fillProps, (v) => W.isp.fillProps = v)
+      chk("Adresse und Softwarestand aus der Sicherung eintragen", W.isp.fillProps, (v) => W.isp.fillProps = v),
+      hwMods.length ? chk("Module bei der Station aufführen (" + hwMods.length + ")", W.isp.modules, (v) => {
+        W.isp.modules = v;
+        renderAll();
+      }) : null
+    ));
+    if (hwMods.length && W.isp.modules) ed.appendChild(h(
+      "div",
+      { class: "small muted", style: { marginTop: "6px" }, title: hwMods.map((m) => m.type + " " + m.addr + (m.name ? " – " + m.name : "")).join("\n") },
+      "Module: " + trunc(hwMods.map((m) => m.type + " " + m.addr).join(", "), 260)
     ));
     const redo = (fn) => {
       fn();
@@ -4477,9 +4549,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     if (!tgt) return { st: null, tgt: null };
     const texts = uniq([rec && rec.text, rec && rec.origText, mangelText(f, !!(tgt.art && !tgt.station))].filter(Boolean));
     const hay = tgt.job ? wtxt(tgt.job, "jobBemerkung") + "\n" + (tgt.art ? wtxt(tgt.fac, "facZustand").split("\n").filter((l) => l.startsWith(artName(tgt.art) + ": ") || l.startsWith(lkSplitTag(artName(tgt.art)).base + ": ")).join("\n") : "") : tgt.fac ? wtxt(tgt.fac, "facZustand") : "";
-    for (const tx of texts) {
-      if (hay.includes("Mangel behoben: " + tx)) return { st: "behoben", tgt, text: tx };
-      if (hay.includes(tx)) return { st: "offen", tgt, text: tx };
+    for (const tx2 of texts) {
+      if (hay.includes("Mangel behoben: " + tx2)) return { st: "behoben", tgt, text: tx2 };
+      if (hay.includes(tx2)) return { st: "offen", tgt, text: tx2 };
     }
     return { st: null, tgt };
   }
@@ -4501,11 +4573,11 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   function cleanBem(s2) {
     return s2.replace(/(\s*;\s*){2,}/g, "; ").replace(/^\s*;\s*|\s*;\s*$/g, "").replace(/\s{2,}/g, " ").trim();
   }
-  function stripMangel(el, tx) {
-    if (!el || !tx) return false;
+  function stripMangel(el, tx2) {
+    if (!el || !tx2) return false;
     if (el.localName === "job") {
       const cur2 = wtxt(el, "jobBemerkung");
-      const next2 = cleanBem(cur2.split("Mangel behoben: " + tx).join("").split(tx).join(""));
+      const next2 = cleanBem(cur2.split("Mangel behoben: " + tx2).join("").split(tx2).join(""));
       if (next2 !== cur2.trim()) {
         wset(el, "jobBemerkung", next2);
         return true;
@@ -4513,7 +4585,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       return false;
     }
     const cur = wtxt(el, "facZustand");
-    const next = cur.split("\n").filter((l) => !l.includes(tx)).join("\n").trim();
+    const next = cur.split("\n").filter((l) => !l.includes(tx2)).join("\n").trim();
     if (next !== cur.trim()) {
       wset(el, "facZustand", next);
       return true;
@@ -4525,7 +4597,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const els = uniq([...(rec.written || []).map((w) => w.el), tgt && tgt.job, tgt && tgt.fac].filter((el) => el && D.doc.contains(el)));
     for (const el of els) {
       let removed = false;
-      for (const tx of texts) removed = stripMangel(el, tx) || removed;
+      for (const tx2 of texts) removed = stripMangel(el, tx2) || removed;
       if (removed && el.localName === "job" && wtxt(el, "executed") === "Mangel" && !/\S/.test(wtxt(el, "jobBemerkung"))) wset(el, "executed", "Ja");
     }
     rec.written = [];
@@ -7239,32 +7311,253 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     if (!gk) gk = [...win.P.groups.keys()][0];
     return { plant: win.P, group: win.P.groups.get(gk), how };
   }
+  function isSig(t) {
+    if (SIG.has(t)) return true;
+    if (!/^[a-z]/.test(t)) return false;
+    for (const s2 of SIG_START) if (t.length > s2.length && t.startsWith(s2)) return true;
+    for (const s2 of SIG_END) if (t.length >= s2.length + 3 && t.endsWith(s2)) return true;
+    return false;
+  }
+  function nameTokens(s2) {
+    const out = [];
+    for (const m of String(s2 || "").matchAll(/([A-Za-zÄÖÜäöüß]+)(\.)?|(\d+)/g)) {
+      if (m[3]) out.push({ t: String(parseInt(m[3], 10)), i: m.index, e: m.index + m[0].length, num: true });
+      else {
+        const s0 = String(s2), e = m.index + m[1].length;
+        const code = /\d/.test(s0[e] || "") || s0[m.index - 1] === "_" || s0[e] === "_";
+        out.push({ t: deUml(m[1]), i: m.index, e: m.index + m[0].length, ab: !!m[2], code });
+      }
+    }
+    return out;
+  }
+  function validPart(toks) {
+    if (!toks.length || !toks.some((x) => !x.num && x.t.length >= 2)) return false;
+    return toks.length >= 2 || meaningful(toks[0].t);
+  }
+  function objKey(name) {
+    const tk = nameTokens(name);
+    const pure = (x) => !x.code && (SIG.has(x.t) || SIG_START.some((s2) => x.t.length > s2.length && x.t.startsWith(s2)));
+    const sig = (x) => !x.code && isSig(x.t);
+    let i = 0;
+    while (i < tk.length && pure(tk[i])) i++;
+    let j = i < tk.length && sig(tk[i]) ? i + 1 : i;
+    while (j < tk.length && !sig(tk[j])) j++;
+    const toks = tk.slice(i, j);
+    if (!validPart(toks)) return null;
+    return { name: String(name), toks };
+  }
+  function cleanLen(K, L) {
+    while (L > 1 && /[A-Za-z0-9ÄÖÜäöüß]/.test(K.name[K.toks[L - 1].e] || "")) L--;
+    return L;
+  }
+  function editDist1(a, b) {
+    if (a === b) return true;
+    if (Math.abs(a.length - b.length) > 1) return false;
+    let i = 0;
+    while (i < a.length && a[i] === b[i]) i++;
+    if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
+    return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
+  }
+  function canonizer(keys) {
+    const cnt = /* @__PURE__ */ new Map();
+    for (const K of keys) for (const x of K.toks) if (!x.num) cnt.set(x.t, (cnt.get(x.t) || 0) + 1);
+    const words = [...cnt.keys()];
+    const abbr = /* @__PURE__ */ new Map(), typo = /* @__PURE__ */ new Map();
+    for (const w of words) {
+      if (w.length >= 4) {
+        let best = null;
+        for (const u of words) if (u.length > w.length && u.startsWith(w) && (!best || cnt.get(u) > cnt.get(best))) best = u;
+        if (best) abbr.set(w, best);
+      }
+      if (w.length >= 5) {
+        let best = null;
+        for (const u of words) if (u !== w && u.length >= 5 && cnt.get(u) > cnt.get(w) && editDist1(u, w) && (!best || cnt.get(u) > cnt.get(best))) best = u;
+        if (best) typo.set(w, best);
+      }
+    }
+    return (K) => {
+      if (!K) return null;
+      if (!K.k) K.k = K.toks.map((x) => x.num ? x.t : x.ab && abbr.get(x.t) || typo.get(x.t) || x.t);
+      return K;
+    };
+  }
+  function keyRel(A, B) {
+    const a = A.k, b = B.k, n = Math.min(a.length, b.length);
+    if (!n) return 0;
+    let p = 0;
+    while (p < n && a[p] === b[p]) p++;
+    const short = a.length <= b.length ? A : B;
+    if (p === n) return validPart(short.toks) ? n : 0;
+    let s2 = 0;
+    while (s2 < n && a[a.length - 1 - s2] === b[b.length - 1 - s2]) s2++;
+    if (s2 === n && short.k.some(meaningful)) return n - 0.5;
+    return 0;
+  }
+  function wordHit(w, v) {
+    if (w === v) return true;
+    if (w.length < 5 || v.length < 5) return false;
+    return w.endsWith(v) || v.endsWith(w) || w.startsWith(v) || v.startsWith(w);
+  }
+  function lcpRel(A, B) {
+    const a = A.k, b = B.k, n = Math.min(a.length, b.length);
+    let p = 0;
+    while (p < n && a[p] === b[p]) p++;
+    if (p < 3 || p < a.length / 2 || !validPart(A.toks.slice(0, p))) return 0;
+    return p - 0.25;
+  }
+  function bestPlant(K, plantKeys) {
+    const sc = [];
+    for (const [P, keys] of plantKeys) {
+      let s2 = 0;
+      for (const M of keys) {
+        const r = Math.max(keyRel(K, M), lcpRel(K, M));
+        if (r > s2) s2 = r;
+      }
+      if (s2 > 0) sc.push({ P, keys, s: s2 });
+    }
+    if (!sc.length) return null;
+    const top = Math.max(...sc.map((x) => x.s));
+    const tied = sc.filter((x) => x.s === top);
+    if (tied.length === 1) return tied[0].P;
+    if (top % 1 !== 0.75) return null;
+    const tail = new Set(K.k.slice(Math.floor(top)).filter(meaningful));
+    for (const x of tied) {
+      let suf = 0, hit = 0;
+      for (const M of x.keys) {
+        let q = 0;
+        while (q < K.k.length && q < M.k.length && K.k[K.k.length - 1 - q] === M.k[M.k.length - 1 - q]) q++;
+        if (q > suf && K.k.slice(K.k.length - q).some((w) => /^[a-z]/.test(w))) suf = q;
+      }
+      const v = new Set(x.keys.flatMap((M) => M.k));
+      for (const w of tail) if (v.has(w)) hit++;
+      x.t = 2 * suf + hit;
+    }
+    tied.sort((a, b) => b.t - a.t);
+    return tied[0].t > 0 && tied[0].t > tied[1].t ? tied[0].P : null;
+  }
   function regroupPlants(W, C, splitAt) {
     const plants = plantsOf(C);
+    const d3 = C.format === "DDC3000";
     const byPlant = /* @__PURE__ */ new Map();
     const rest = [], allg = [];
+    const keyOf2 = /* @__PURE__ */ new Map();
     for (const p of W.pins) {
       p.plant = p.plantName = p.pgroup = p.pgroupName = null;
       p.how = "";
       if (!p.include) continue;
+      keyOf2.set(p, objKey(p.name));
+    }
+    const canon = canonizer([...keyOf2.values(), ...[...plants.values()].map((P) => objKey(P.name))].filter(Boolean));
+    for (const K of keyOf2.values()) canon(K);
+    const put = (p, P, how, G) => {
+      p.plant = P.key;
+      p.plantName = P.name;
+      p.pgroup = G ? G.key : null;
+      p.pgroupName = G ? G.name : "";
+      p.how = how;
+      if (!byPlant.has(P.key)) byPlant.set(P.key, []);
+      byPlant.get(P.key).push(p);
+    };
+    for (const p of W.pins) {
+      if (!p.include) continue;
       const cp = pinOf(C, p.uid);
       const a = cp ? assignPlant(C, cp) : { plant: null };
-      if (a.shared || a.plant && a.plant.collector && C.format === "DDC3000" || !a.plant && ALLG_RE.test(deUml(p.name))) {
-        allg.push(p);
+      const allgName = ALLG_RE.test(deUml(p.name));
+      if (a.shared) {
+        if (d3 && !allgName) rest.push(p);
+        else {
+          p.how = "geteilt";
+          allg.push(p);
+        }
         continue;
       }
-      if (!a.plant || a.plant.generic && C.format === "DDC3000" || a.plant.collector && a.how !== "Programm") {
-        rest.push(p);
+      if (a.plant && a.plant.collector && (d3 || a.how !== "Programm")) {
+        (allgName ? allg : rest).push(p);
         continue;
       }
-      p.plant = a.plant.key;
-      p.plantName = a.plant.name;
-      p.pgroup = a.group ? a.group.key : null;
-      p.pgroupName = a.group ? a.group.name : "";
-      p.how = a.how;
-      if (!byPlant.has(a.plant.key)) byPlant.set(a.plant.key, []);
-      byPlant.get(a.plant.key).push(p);
+      if (!a.plant || a.plant.generic && d3) {
+        (allgName ? allg : rest).push(p);
+        continue;
+      }
+      put(p, a.plant, a.how, a.group);
     }
+    const disp = /* @__PURE__ */ new Map();
+    for (const P of plants.values()) {
+      const PK = canon(objKey(P.name));
+      if (PK) {
+        const t0 = nameTokens(P.name);
+        const i = t0.findIndex((x) => !isSig(x.t));
+        disp.set(P.key, i > 0 ? P.name.slice(t0[i].i).trim() : P.name);
+      }
+      if (!d3 || P.generic || !byPlant.has(P.key)) continue;
+      const pins = byPlant.get(P.key), named = pins.filter((p) => keyOf2.get(p));
+      if (!named.length) continue;
+      const nt = PK ? PK.k.filter(meaningful) : [];
+      const generic = !PK || !nt.length && GENERIC_PLANT.test(PK.k[0]) || nt.length === 1 && GENERIC_PLANT.test(nt[0]);
+      if (!generic) {
+        if (!nt.length) continue;
+        const fit = named.filter((p) => keyOf2.get(p).k.some((w) => nt.some((v) => wordHit(w, v)))).length;
+        if (fit / named.length >= 0.34) continue;
+      }
+      let dom = null;
+      const need = Math.max(1, Math.ceil(named.length * 0.6));
+      for (const p of named) {
+        const K = keyOf2.get(p);
+        for (let L = K.k.length; L >= 1; L--) {
+          if (dom && L <= dom.L) break;
+          const pre = K.k.slice(0, L);
+          if (!validPart(K.toks.slice(0, L)) || !pre.some(meaningful)) continue;
+          const n = named.filter((q) => {
+            const k = keyOf2.get(q).k;
+            return k.length >= L && pre.every((w, i) => k[i] === w);
+          }).length;
+          if (n >= need) {
+            dom = { L, K };
+            break;
+          }
+        }
+      }
+      if (dom) {
+        disp.set(P.key, keyText(dom.K, cleanLen(dom.K, dom.L)));
+        continue;
+      }
+      byPlant.delete(P.key);
+      for (const p of pins) {
+        p.plant = p.plantName = p.pgroup = p.pgroupName = null;
+        p.how = "";
+        rest.push(p);
+      }
+    }
+    const plantKeys = /* @__PURE__ */ new Map();
+    for (const [key, pins] of byPlant) {
+      const P = plants.get(key), ks = [];
+      const PK = canon(objKey(disp.get(key) || P.name));
+      if (PK && !(PK.k.length === 1 && GENERIC_PLANT.test(PK.k[0]))) ks.push(PK);
+      for (const p of pins) if (p.how === "Programm" && keyOf2.get(p)) ks.push(keyOf2.get(p));
+      plantKeys.set(P, ks);
+    }
+    const take = (arr, p) => {
+      const i = arr.indexOf(p);
+      if (i >= 0) arr.splice(i, 1);
+    };
+    for (const [key, pins] of [...byPlant]) for (const p of [...pins]) {
+      if (p.how !== "Name" || !keyOf2.get(p)) continue;
+      const P = bestPlant(keyOf2.get(p), plantKeys);
+      if (P && P.key !== key) {
+        take(pins, p);
+        put(p, P, "Name", null);
+      }
+    }
+    for (const p of [...rest]) {
+      const K = keyOf2.get(p);
+      if (!K) continue;
+      const P = bestPlant(K, plantKeys);
+      if (P) {
+        take(rest, p);
+        put(p, P, "Name", null);
+      }
+    }
+    for (const [key, pins] of [...byPlant]) if (!pins.length) byPlant.delete(key);
     const list = [];
     const order = [...plants.keys()];
     const real = order.filter((k) => byPlant.has(k));
@@ -7272,17 +7565,58 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       byPlant.get(real[0]).push(...rest.splice(0), ...allg.splice(0));
       byPlant.get(real[0]).sort((a, b) => natCmp(a.klemme, b.klemme));
     }
+    const clusters = rest.length ? keyClusters(rest.map((p) => ({ p, K: keyOf2.get(p) })), W.opt.grpMax || 12, canon) : [];
+    const vocab = /* @__PURE__ */ new Map(), seen = /* @__PURE__ */ new Map();
+    for (const [P, ks] of plantKeys) {
+      const v = /* @__PURE__ */ new Set();
+      for (const M of ks) for (const w of M.k) v.add(w);
+      vocab.set(P, { v, ks });
+      for (const w of v) if (meaningful(w)) seen.set(w, (seen.get(w) || 0) + 1);
+    }
+    const numClash = (K, ks) => K.k.some((w, i) => /^\d+$/.test(K.k[i + 1] || "") && meaningful(w) && ks.some((M) => M.k.some((x, j) => x === w && /^\d+$/.test(M.k[j + 1] || "") && M.k[j + 1] !== K.k[i + 1])) && !ks.some((M) => M.k.some((x, j) => x === w && M.k[j + 1] === K.k[i + 1])));
+    const headHit = (w, v) => w === v || Math.min(w.length, v.length) >= 5 && (w.startsWith(v) || v.startsWith(w)) || Math.min(w.length, v.length) >= 6 && (w.endsWith(v) || v.endsWith(w));
+    for (let i = clusters.length - 1; i >= 0; i--) {
+      const c = clusters[i];
+      if (!c.K) continue;
+      const core = c.K.k.filter((w) => meaningful(w) && (seen.get(w) || 0) < 2);
+      if (!core.length) continue;
+      const hits = [...vocab].filter(([, x]) => core.every((w) => [...x.v].some((v) => meaningful(v) && headHit(w, v))) && !numClash(c.K, x.ks));
+      if (hits.length !== 1) continue;
+      for (const p of c.pins) put(p, hits[0][0], "Name", null);
+      clusters.splice(i, 1);
+    }
+    const sameKey = (A, B) => A.k.length === B.k.length && A.k.every((w, i) => w === B.k[i]);
+    const allgLeft = [];
+    for (const p of allg) {
+      const K = keyOf2.get(p);
+      if (K) {
+        const hitC = clusters.filter((c) => c.pins.some((q) => keyOf2.get(q) && sameKey(keyOf2.get(q), K)));
+        if (hitC.length === 1) {
+          hitC[0].pins.push(p);
+          p.how = "";
+          continue;
+        }
+        const hitP = [...plantKeys].filter(([, ks]) => ks.some((M) => sameKey(M, K)));
+        if (hitP.length === 1 && !hitC.length) {
+          put(p, hitP[0][0], "Name", null);
+          continue;
+        }
+      }
+      if (p.how === "geteilt") p.how = "Programm";
+      allgLeft.push(p);
+    }
     const allgKey = order.find((k) => /^allgemein$/i.test(plants.get(k).name));
-    if (allg.length) {
+    if (allgLeft.length) {
       if (allgKey) {
-        (byPlant.get(allgKey) || byPlant.set(allgKey, []).get(allgKey)).push(...allg);
+        (byPlant.get(allgKey) || byPlant.set(allgKey, []).get(allgKey)).push(...allgLeft);
         byPlant.get(allgKey).sort((a, b) => natCmp(a.klemme, b.klemme));
-      } else list.push({ name: "Allgemein", pins: allg });
+      } else list.push({ name: "Allgemein", pins: allgLeft });
     }
     for (const key of order) {
       const pins = byPlant.get(key);
       if (!pins || !pins.length) continue;
-      const P = plants.get(key);
+      const P = plants.get(key), pname = disp.get(key) || P.name;
+      for (const p of pins) p.plantName = pname;
       if (splitAt && pins.length > splitAt && P.groups.size > 1) {
         const sub = /* @__PURE__ */ new Map();
         for (const p of pins) {
@@ -7292,35 +7626,121 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         }
         for (const [gk, sp] of [...sub].sort((a, b) => natCmp(a[0], b[0]))) {
           const gn = (P.groups.get(gk) || {}).name;
-          list.push({ name: gn && norm(gn) !== norm(P.name) ? P.name + " – " + gn : P.name, pins: sp });
+          list.push({ name: gn && norm(gn) !== norm(pname) ? pname + " – " + gn : pname, pins: sp });
         }
-      } else list.push({ name: P.name, pins });
+      } else list.push({ name: pname, pins: pins.sort((a, b) => natCmp(a.klemme, b.klemme)) });
     }
-    if (rest.length) {
-      for (const g of nameGroups(rest, W.opt.grpMax || 12)) list.push(g);
-    }
+    for (const c of clusters) list.push({ name: c.name, pins: c.pins.sort((a, b) => natCmp(a.klemme, b.klemme)) });
     const merged = [];
     for (const g of list) {
-      const m = merged.find((x) => x.name === g.name);
+      const m = merged.find((x) => norm(x.name) === norm(g.name));
       if (m) m.pins.push(...g.pins);
       else merged.push(g);
     }
     applyGroups(W, merged);
   }
-  function nameGroups(pins, maxSize) {
-    const keyed = pins.map((p) => {
-      const words = String(p.name || "").split(/\s+/).filter(Boolean);
-      const sig = words.filter((w) => {
-        const f = nameFeatures(w);
-        return f.alpha.size > 0;
+  function keyClusters(items, maxSize, canon) {
+    const named = items.filter((x) => x.K), unnamed = items.filter((x) => !x.K).map((x) => x.p);
+    const root = { ch: /* @__PURE__ */ new Map(), items: [], count: 0 };
+    for (const x of named) {
+      canon(x.K);
+      let n = root;
+      n.count++;
+      for (const w of x.K.k) {
+        if (!n.ch.has(w)) n.ch.set(w, { ch: /* @__PURE__ */ new Map(), items: [], count: 0 });
+        n = n.ch.get(w);
+        n.count++;
+      }
+      n.items.push(x);
+    }
+    const flat = (n) => {
+      const a = [...n.items];
+      n.ch.forEach((c) => a.push(...flat(c)));
+      return a;
+    };
+    const out = [];
+    const add = (xs, depth, pooled) => {
+      if (xs.length) out.push({ xs, depth, pooled });
+    };
+    (function walk(node, depth) {
+      if (!node.count) return;
+      const kids2 = [...node.ch.values()];
+      if (!kids2.length) {
+        add(flat(node), depth, false);
+        return;
+      }
+      if (kids2.length === 1 && !node.items.length) {
+        walk(kids2[0], depth + 1);
+        return;
+      }
+      const split = depth === 0 || node.count > maxSize && kids2.filter((c) => c.count >= 3).length >= 2;
+      if (split) {
+        const here = [...node.items];
+        for (const c of kids2) {
+          if (c.count === 1 && depth > 0) here.push(...flat(c));
+          else walk(c, depth + 1);
+        }
+        add(here, depth, true);
+        return;
+      }
+      const dom = kids2.find((c) => c.count >= 2 && c.count >= 0.75 * node.count);
+      if (dom) {
+        walk(dom, depth + 1);
+        add([...node.items, ...kids2.filter((c) => c !== dom).flatMap(flat)], depth, true);
+        return;
+      }
+      add(flat(node), depth, false);
+    })(root, 0);
+    const res = [];
+    for (const g of out) {
+      let L = g.depth;
+      if (!g.pooled || !L || g.xs.length === 1) {
+        const ks = g.xs.map((x) => x.K.k), n = Math.min(...ks.map((k) => k.length));
+        let l = 0;
+        while (l < n && ks.every((k) => k[l] === ks[0][l])) l++;
+        L = Math.max(L, l);
+      }
+      if (!L) L = 1;
+      L = Math.min(...g.xs.filter((x) => x.K.k.length >= L).map((x) => cleanLen(x.K, L)));
+      const cnt = /* @__PURE__ */ new Map();
+      let K0 = null;
+      for (const x of g.xs) {
+        if (x.K.k.length < L) continue;
+        const t = keyText(x.K, L);
+        cnt.set(t, (cnt.get(t) || 0) + 1);
+        if (!K0) K0 = x.K;
+      }
+      let name = "", bn = 0;
+      cnt.forEach((n, t) => {
+        if (n > bn) {
+          bn = n;
+          name = t;
+        }
       });
-      return { p, key: sig.join(" ") };
-    });
-    const fake = keyed.map((k) => ({ name: k.key, _p: k.p }));
-    const groups = autoGroup(fake, maxSize, dominantPrefix(fake.filter((x) => x.name).map((x) => x.name)));
-    return groups.map((g) => ({ name: !g.name || g.name === "Ohne Bezeichnung" || !nameFeatures(g.name).alpha.size ? "Weitere Datenpunkte" : g.name, pins: g.pins.map((x) => x._p) }));
+      const K = K0 ? { k: K0.k.slice(0, L), toks: K0.toks.slice(0, L), name: K0.name } : null;
+      res.push({ name: name || "Weitere Datenpunkte", K, pins: g.xs.map((x) => x.p) });
+    }
+    const tailOf = (a, b) => b.k.length < a.k.length && b.k.every((w, i) => w === a.k[a.k.length - b.k.length + i]) && b.k.some(meaningful);
+    const headOf = (a, b) => b.k.length < a.k.length && b.k.every((w, i) => w === a.k[i]) && validPart(b.toks);
+    for (let pass = 0; pass < 2; pass++) for (let i = res.length - 1; i >= 0; i--) {
+      const g = res[i];
+      if (!g.K) continue;
+      let hosts = res.filter((h2) => h2 !== g && h2.K && h2.pins.length >= g.pins.length && (tailOf(g.K, h2.K) || tailOf(h2.K, g.K)));
+      if (hosts.length !== 1 && g.pins.length <= 2) hosts = res.filter((h2) => h2 !== g && h2.K && headOf(g.K, h2.K));
+      if (hosts.length === 1) {
+        hosts[0].pins.push(...g.pins);
+        res.splice(i, 1);
+      }
+    }
+    if (unnamed.length) res.push({ name: "Weitere Datenpunkte", K: null, pins: unnamed });
+    return res;
   }
-  var GENERIC_WORDS, pfx, ALLG_RE;
+  function nameGroups(pins, maxSize) {
+    const items = pins.map((p) => ({ p, K: objKey(p.name) }));
+    const canon = canonizer(items.map((x) => x.K).filter(Boolean));
+    return keyClusters(items, maxSize, canon).map((g) => ({ name: g.name, pins: g.pins }));
+  }
+  var GENERIC_WORDS, pfx, SIG, SIG_START, SIG_END, meaningful, keyText, ALLG_RE, GENERIC_PLANT;
   var init_anlagen = __esm({
     "src/ui/wartung/anlagen.js"() {
       init_util();
@@ -7329,7 +7749,13 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       init_generator();
       GENERIC_WORDS = new Set("temperatur temp fuehler raumfuehler raumtemp raumtemperatur betrieb betr betriebsmeldung stoerung stoer stoermeldung ansteuern anst ansteuerung anforderung anf freigabe freig meldung meld meldungen sollwert soll istwert wert ventil regelventil stellventil pumpe zuluft zulu abluft ablu fortluft fort aussenluft aussen umluft vorlauf ruecklauf vl rl raum feuchte rf druck diff differenzdruck min max auf zu stufe eg kg og ug dg res reserve und u des der die das mit von fuer im in am an kl x3 ausgeloest waechter druckwaechter stroemungswaechter regelung steuerung gruppe anlage allgemein klappe klappen filter rep schal schalter reparaturschalter hand auto ein aus lampe sm bm sb ssm signal prim sek primaer sekundaer ext extern intern grad c k v ma eingang ausgang analog binaer kontakt neue neu alt sonstige weitere ansteuern sammelstoermeldung entriegeln quittieren quittierung frostschutz anzeige zustand status ueberwachung wartung ok nicht keine".split(" "));
       pfx = (a, b) => a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a));
+      SIG = new Set("temp temperatur fuehler ventil pumpe betrieb betr stoerung stoer ansteuern anst ansteuerung anforderung anf freigabe freig meldung meld sollwert soll istwert ist wert kontakt taster schalter ein aus auf zu stufe alarm signal stellsignal stellgroesse regelgroesse druck impuls impulse vorlauf ruecklauf vl rl vorl rueckl sek prim primaer sekundaer min max ueberw ueberwachung sm bm sb ssm hand auto quittierung quittieren entriegeln reset rm warnung wassermangel stb stw not oben unten aktuell gesamt fern rueckmeldung".split(" "));
+      SIG_START = ["temp", "betrieb", "stoer", "freig", "anford", "sollw", "istw", "quitt", "entrieg", "rueckmeld", "stell"];
+      SIG_END = ["pumpe", "ventil", "fuehler", "kontakt", "taster", "schalter", "waechter", "melder", "meldung", "signal", "impuls", "druck", "temperatur", "anf", "stoerung", "betrieb"];
+      meaningful = (t) => t.length >= 3 && /^[a-z]/.test(t) && !GENERIC_WORDS.has(t) && !isSig(t);
+      keyText = (K, L) => K.name.slice(K.toks[0].i, K.toks[(L || K.toks.length) - 1].e).replace(/\s+/g, " ").trim();
       ALLG_RE = /ssm|sammelst|entriegel|quittier|phasen|ueberspann|steuersicherung|not ?aus|brandschutz|brandmeld|netzausfall|aussentemp|aussenfuehler|koppelrelais/;
+      GENERIC_PLANT = /^(festwert|heizung|lueftung|kaelte|kreis|regelkreis|rk|anlage|allgemein|sonstiges?|frei|reserve)$/;
     }
   });
 
@@ -7363,89 +7789,6 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     let n = 0;
     while (n < prefix.length && n < tokens.length - 1 && tokens[n] === prefix[n]) n++;
     return tokens.slice(n);
-  }
-  function autoGroup(pins, maxSize, prefix) {
-    prefix = prefix || [];
-    const named = pins.filter((p) => p.name.trim() !== ""), unnamed = pins.filter((p) => p.name.trim() === "");
-    const root = { ch: /* @__PURE__ */ new Map(), items: [], count: 0 };
-    named.forEach((p) => {
-      let n = root;
-      n.count++;
-      for (const w of tok(p.name)) {
-        if (!n.ch.has(w)) n.ch.set(w, { ch: /* @__PURE__ */ new Map(), items: [], count: 0 });
-        n = n.ch.get(w);
-        n.count++;
-      }
-      n.items.push(p);
-    });
-    let out = [];
-    const flat = (n) => {
-      const a = [...n.items];
-      n.ch.forEach((c) => a.push(...flat(c)));
-      return a;
-    };
-    (function walk(node, path) {
-      if (node.count === 0) return;
-      if (node.count <= maxSize || node.ch.size === 0) {
-        out.push({ path, pins: flat(node) });
-        return;
-      }
-      if (node.ch.size === 1 && node.items.length === 0) {
-        const [w, c] = [...node.ch][0];
-        walk(c, path.concat(w));
-        return;
-      }
-      if (node.items.length) out.push({ path, pins: node.items.slice() });
-      node.ch.forEach((c, w) => walk(c, path.concat(w)));
-    })(root, []);
-    const common = (a, b) => {
-      let i = 0;
-      while (i < a.length && i < b.length && a[i] === b[i]) i++;
-      return i;
-    };
-    const floor = prefix.length;
-    for (let pass = 0; pass < 6; pass++) {
-      let done = true;
-      for (let i = 0; i < out.length; i++) {
-        if (out[i].pins.length > 2) continue;
-        let best = -1, bl = 0;
-        [i - 1, i + 1].forEach((j) => {
-          if (j < 0 || j >= out.length) return;
-          const l = common(out[i].path, out[j].path);
-          if (l > floor && l >= bl && out[i].pins.length + out[j].pins.length <= maxSize) {
-            bl = l;
-            best = j;
-          }
-        });
-        if (best < 0) continue;
-        const keep = Math.min(i, best), drop = Math.max(i, best);
-        out[keep] = { path: out[keep].path.slice(0, bl), pins: out[keep].pins.concat(out[drop].pins) };
-        out.splice(drop, 1);
-        done = false;
-        break;
-      }
-      if (done) break;
-    }
-    out.forEach((g) => {
-      g.name = stripPrefix(g.path, prefix).join(" ") || g.path.join(" ") || "Allgemein";
-    });
-    const byName = /* @__PURE__ */ new Map();
-    out.forEach((g) => {
-      if (!byName.has(g.name)) byName.set(g.name, []);
-      byName.get(g.name).push(g);
-    });
-    const merged = [], gone = /* @__PURE__ */ new Set();
-    out.forEach((g) => {
-      if (gone.has(g)) return;
-      const same = byName.get(g.name);
-      if (same.length > 1) {
-        same.forEach((x) => gone.add(x));
-        merged.push({ name: g.name, pins: same.reduce((a, x) => a.concat(x.pins), []) });
-      } else merged.push(g);
-    });
-    out = merged;
-    if (unnamed.length) out.push({ name: "Ohne Bezeichnung", pins: unnamed });
-    return out.filter((g) => g.pins.length);
   }
   function applyGroups(W, list) {
     W.groups = list.map((g) => ({ gid: newGid(), name: g.name }));
@@ -7519,7 +7862,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       bacnetDevId: m.bacnetDevId,
       applRev: m.applRev,
       build: m.build,
-      isp: { bez: m.name, station: true, facName: "ISP " + m.name, artBez: "Automationsstation mit Bedienfunktion", produktDoc: PRODUKT_DOC[(m.stationType || "").toUpperCase()] || PRODUKT_DOC[m.stationType] || "", fillProps: true },
+      isp: { bez: m.name, station: true, facName: "ISP " + m.name, artBez: "Automationsstation mit Bedienfunktion", produktDoc: PRODUKT_DOC[(m.stationType || "").toUpperCase()] || PRODUKT_DOC[m.stationType] || "", fillProps: true, modules: true },
       opt: { info: "klemme", sortKind: false, klartext: "zentrale", grpMax: 12, mode: "anlage", splitAt: 0 }
     };
     W.C = C;
@@ -7564,6 +7907,33 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     });
     return x + I + "</Artikel>\n";
   }
+  function hwModules(C) {
+    const d3 = C.format === "DDC3000", out = [];
+    for (const m of C.modules || []) {
+      const t = String(m.type || "").trim();
+      if (!t) continue;
+      if (d3 ? m.addr === "0" || !HW_D3.test(t) : /^0+$/.test(m.addr) || /^(BACnet|IO_)/i.test(t)) continue;
+      const cat = /^(SBM|BMA|BMD|ASM)/i.test(t) ? "Schaltschrankmodul" : /^(FBM|FBK|FBA|FBS)/i.test(t) ? "Feldbusmodul" : /^(EZR|ERR)/i.test(t) ? "Einzelraumregler" : /^(FBR|RBW|RPW)/i.test(t) ? "Raumbediengerät" : "Modul";
+      const name = String(m.name || "").replace(/\s+/g, " ").trim().replace(new RegExp("^" + t.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&") + "(?:\\s+|$)", "i"), "");
+      out.push({ addr: String(m.addr), type: t, cat, name, fw: m.fw || "", active: m.active !== false });
+    }
+    return out;
+  }
+  function moduleAddr(W, m) {
+    return "Zentrale " + (W.centralAddr || "?") + " · " + (/^(EZR|ERR)/i.test(m.type) ? "EZR " : "Modul ") + m.addr;
+  }
+  function moduleArtikel(W, m, sortId, ind) {
+    const I = ind, I1 = I + "    ", I2 = I1 + "    ";
+    let x = I + '<Artikel active="true" sortId="' + sortId + '">\n' + wtag(I1, "nummer", m.type) + I1 + "<installationClass>\n";
+    x += wtag(I2, "description", "6.1 Anlagen-Automationseinrichtungen (AAE)") + wtag(I2, "shortkey", "54");
+    x += propBlock(I2, "BUS Systemadresse", W.isp.fillProps ? moduleAddr(W, m) : "", "Text");
+    if (m.fw) x += propBlock(I2, "Softwareversion", W.isp.fillProps ? m.fw : "", "Text");
+    x += I1 + "</installationClass>\n" + wtag(I1, "artBezeichnung", m.cat) + (m.name ? wtag(I1, "artKlartext", m.name) : "") + wtag(I1, "artLbnr", m.type) + wtag(I1, "standort", W.isp.bez);
+    (/Raum/.test(m.cat) || m.cat === "Einzelraumregler" ? ROOM_JOBS : MODULE_JOBS).forEach(([rm, team, d]) => {
+      x += jobBlock(I1, rm, team, d);
+    });
+    return x + I + "</Artikel>\n";
+  }
   function dpArtikel(W, p, sortId, ind) {
     const I = ind, I1 = I + "    ", I2 = I1 + "    ";
     const k = KIND_INFO[p.kind] && p.kind !== "frei" ? { nummer: KIND_INFO[p.kind].nummer, bez: KIND_INFO[p.kind].name, lbnr: KIND_INFO[p.kind].lbnr } : { nummer: "#" + p.kind, bez: p.kind, lbnr: true };
@@ -7583,7 +7953,14 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const I = ind, I1 = I + "    ", I2 = I1 + "    ";
     let x = I + '<Isp sortId="' + sortId + '">\n' + wtag(I1, "ispBezeichnung", W.isp.bez);
     let fac = 1;
-    if (W.isp.station) x += I1 + '<facility sortId="' + fac++ + '">\n' + wtag(I2, "facBezeichnung", W.isp.facName) + stationArtikel(W, 1, I2) + I1 + "</facility>\n";
+    const mods = W.isp.modules && W.C ? hwModules(W.C) : [];
+    if (W.isp.station || mods.length) {
+      x += I1 + '<facility sortId="' + fac++ + '">\n' + wtag(I2, "facBezeichnung", W.isp.facName);
+      let n = 1;
+      if (W.isp.station) x += stationArtikel(W, n++, I2);
+      for (const m of mods) x += moduleArtikel(W, m, n++, I2);
+      x += I1 + "</facility>\n";
+    }
     W.groups.forEach((g) => {
       const pins = pinsOfGroup(W, g.gid);
       if (!pins.length) return;
@@ -7602,7 +7979,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     else if (o.mode === "modul") regroupModule(W, C);
     else regroupOne(W);
   }
-  var WTG_NS, STATION_JOBS, STATION_PROPS, PRODUKT_DOC, GID, newGid, tok;
+  var WTG_NS, STATION_JOBS, STATION_PROPS, MODULE_JOBS, ROOM_JOBS, PRODUKT_DOC, GID, newGid, tok, HW_D3;
   var init_generator = __esm({
     "src/ui/wartung/generator.js"() {
       init_state();
@@ -7637,10 +8014,24 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         ["false", "true", "Verifizierung der Datensicherung"]
       ];
       STATION_PROPS = [["BUS Systemadresse", "Text"], ["letzter Batteriewechsel", "Datum"], ["Softwareversion", "Text"], ["nächster Batteriewechsel", "Datum"], ["Netzwerkparameter", "Text"]];
+      MODULE_JOBS = [
+        ["false", "false", "Anschlussverbindungen auf elektrische/mechanische Funktion prüfen, ggf. nachziehen"],
+        ["false", "false", "Auf fach- und funktionsgerechte Installation und Umgebungsbedingungen prüfen"],
+        ["false", "false", "Auf Verschmutzung, Beschädigung, Korrosion und Befestigung prüfen"],
+        ["false", "false", "Funktionselemente (z.B. Bedien- und Anzeigeeinrichtungen) prüfen"],
+        ["false", "true", "Signale abgleichen"]
+      ];
+      ROOM_JOBS = [
+        ["false", "false", "Anschlussverbindungen auf elektrische/mechanische Funktion prüfen, ggf. nachziehen"],
+        ["false", "false", "Auf Verschmutzung, Beschädigung, Korrosion und Befestigung prüfen"],
+        ["false", "false", "Funktionselemente (z.B. Bedien- und Anzeigeeinrichtungen) prüfen"],
+        ["true", "true", "Regelkreis/Modulfunktion/Optimierungsfunktion gemäß Einstellparameter unter Berücksichtigung aller Zusatzfunktionen prüfen"]
+      ];
       PRODUKT_DOC = { DDC4200: "2.60-10.200-01-DE-DDC4200.pdf", DDC4200E: "2.60-10-210-01-DE-DDC4200e-2017-04-13.pdf" };
       GID = 1;
       newGid = () => "g" + GID++;
       tok = (v) => String(v || "").trim().split(/\s+/).filter(Boolean);
+      HW_D3 = /^(SBM|FBM|FBK|FBR|FBS|FBA|EZR|ERR|RBW|RPW|ASM|BMA|BMD)/i;
     }
   });
 
@@ -7720,8 +8111,49 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   }
   function lkInfoKlemme(a) {
     const p = artProp(a, "Info");
-    const m = p && wtxt(p, "value").match(/Klemme\s+([^\s·]+)/);
+    const m = p && wtxt(p, "value").match(/Klemme:?\s+([^\s·]+)/);
     return m ? m[1] : "";
+  }
+  function infoParse(v) {
+    let s2 = String(v || "").trim(), typ = "";
+    const t = s2.match(/^Typ:\s*([^·]*?)\s*(?:·\s*|$)/);
+    if (t) {
+      typ = t[1].trim();
+      s2 = s2.slice(t[0].length).trim();
+    }
+    return /^Klemme:?\s/.test(s2) ? { typ, klemme: s2, rest: "" } : { typ, klemme: "", rest: s2 };
+  }
+  function infoCompose(typ, klemme, rest) {
+    return [typ ? "Typ: " + typ : "", klemme, rest].filter(Boolean).join(" · ");
+  }
+  function infoProp(a) {
+    let pr = artProp(a, "Info");
+    if (pr) return pr;
+    const doc = a.ownerDocument;
+    let ic = wkid(a, "installationClass");
+    if (!ic) {
+      ic = wplace(a, doc.createElementNS(WTG_NS, "installationClass"));
+      wset(ic, "description", "N/V");
+      wset(ic, "shortkey", "NV");
+    }
+    pr = doc.createElementNS(WTG_NS, "articleProperties");
+    ic.appendChild(pr);
+    wset(pr, "description", "Info");
+    wset(pr, "length", "0");
+    wset(pr, "type", "Text");
+    wset(pr, "checked", "true");
+    return pr;
+  }
+  function infoTyp(a) {
+    const p = artProp(a, "Info");
+    return p ? infoParse(wtxt(p, "value")).typ : "";
+  }
+  function setInfoTyp(a, typ) {
+    typ = String(typ || "").replace(/·/g, "-").trim();
+    const old = artProp(a, "Info");
+    if (!typ && !old) return;
+    const pr = old || infoProp(a), P = infoParse(wtxt(pr, "value"));
+    wset(pr, "value", infoCompose(typ, P.klemme, P.rest) || null);
   }
   function pinExternal(p) {
     if (!p) return [];
@@ -8016,30 +8448,15 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return "Klemme " + p.klemme;
   }
   function lkWriteInfo(a, C, p, mode) {
-    const doc = a.ownerDocument;
-    let ic = wkid(a, "installationClass");
-    if (!ic) {
-      ic = wplace(a, doc.createElementNS(WTG_NS, "installationClass"));
-      wset(ic, "description", "N/V");
-      wset(ic, "shortkey", "NV");
-    }
-    let pr = artProp(a, "Info");
-    if (!pr) {
-      pr = doc.createElementNS(WTG_NS, "articleProperties");
-      ic.appendChild(pr);
-      wset(pr, "description", "Info");
-      wset(pr, "length", "0");
-      wset(pr, "type", "Text");
-      wset(pr, "checked", "true");
-    }
-    const old = wtxt(pr, "value").trim();
-    let v = lkInfoText(C, p, mode);
-    if (old && !/^Klemme\s/.test(old)) v += " · " + old;
-    wset(pr, "value", v);
+    const pr = infoProp(a);
+    const P = infoParse(wtxt(pr, "value"));
+    wset(pr, "value", infoCompose(P.typ, lkInfoText(C, p, mode), P.rest));
   }
   function lkClearInfo(a) {
     const pr = artProp(a, "Info");
-    if (pr && /^Klemme\s/.test(wtxt(pr, "value").trim())) wset(pr, "value", null);
+    if (!pr) return;
+    const P = infoParse(wtxt(pr, "value"));
+    if (P.klemme) wset(pr, "value", infoCompose(P.typ, "", P.rest) || null);
   }
   function lkInfoMode() {
     return pref("lkInfoMode", "klemme");
@@ -9155,7 +9572,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
       h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
-      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.7.0")
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.8.0")
     ));
   }
   function renderTitle() {
@@ -9665,9 +10082,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     const M = C.meta;
     const kreise = /* @__PURE__ */ new Map([[0, { nr: 0, typ: "Grundgerät", name: "", modules: [] }]]);
     const params = [], scheds = [];
-    let kreis = 0;
+    let kreis = 0, weekCtx = null;
     for (const r of recs) {
       const f = r.f;
+      const wm = r.kind === "M" && String(f.NR || "").match(/^(?:117|67|74)\/(\d+)$/);
+      if (wm) weekCtx = +wm[1];
+      else if (r.kind !== "N" && !(f.P && /^N(\/|$)/.test(f.P))) weekCtx = null;
       switch (r.kind) {
         case "Z":
           M.centralAddr = (f.NR || "").trim();
@@ -9685,7 +10105,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           (kreise.get(kreis) || kreise.get(0)).modules.push({ nr: f.NR, aktiv: f.AKTIV });
           break;
         case "N":
-          scheds.push({ kreis, nr: parseInt(f.NR, 10) || 1, sched: r.sched });
+          scheds.push({ kreis, nr: weekCtx || parseInt(f.NR, 10) || 1, sched: r.sched });
+          weekCtx = null;
           break;
         default:
           if (f.P != null) {
@@ -10241,11 +10662,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return { text: out.join("\r\n") + "\r\n", ident, zentralen, devices, failed, seconds, aborted };
   }
   function parseBackup(text) {
+    var _a, _b;
     const old = !/Zeichensatz: UTF-8/.test(text.slice(0, 2e3));
     const byte = (ch) => CP1252_REV.get(ch) ?? ch.charCodeAt(0);
     const fix = (s2) => old ? s2.replace(/[^\x00-\x7f]+/g, (x) => decode(Array.from(x, byte))) : s2;
-    const res = { header: {}, devices: [], definitions: { D1: [], D3: [], D5: [] }, aborted: false };
-    let dev = null, def = null;
+    const res = { header: {}, devices: [], definitions: { D1: [], D3: [], D5: [] }, defsBy: {}, aborted: false };
+    let dev = null, def = null, defAt = null;
     const plain = !/^\[Gerät /m.test(text);
     const byAddr = /* @__PURE__ */ new Map();
     const plainDev = (addr) => {
@@ -10273,9 +10695,10 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         def = null;
         continue;
       }
-      if (m = l.match(/^\[Definitionen \S+ (D[024]) /)) {
-        def = { D0: "D1", D2: "D3", D4: "D5" }[m[1]];
+      if (m = l.match(/^\[Definitionen (\S+) (D[024]) /)) {
+        def = { D0: "D1", D2: "D3", D4: "D5" }[m[2]];
         dev = null;
+        defAt = (_a = res.defsBy)[_b = m[1]] || (_a[_b] = { D1: [], D3: [], D5: [] });
         continue;
       }
       if (dev && (m = l.match(/^# Ende m0: (.*) \| Ende p0: (.*)$/))) {
@@ -10296,7 +10719,11 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       if (plain && (m = l.match(/^[mp]1 (\d+\.\d+\.\d+) /))) dev = plainDev(m[1]);
       if (dev && l.startsWith("m1 ")) dev.menus.push(fix(l));
       else if (dev && l.startsWith("p1 ")) dev.values.push(fix(l));
-      else if (def && l.startsWith(def + " ")) res.definitions[def].push(fix(l));
+      else if (def && l.startsWith(def + " ")) {
+        const x = fix(l);
+        res.definitions[def].push(x);
+        if (defAt) defAt[def].push(x);
+      }
     }
     res.plain = plain;
     for (const d of res.devices) if (!d.name) d.name = d.group ? devName(d.group, d.type) : "";
@@ -10438,6 +10865,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   var unitText = (c) => UNITS2[c] || "";
   var HEX2 = /^[0-9A-F]{2}$/i;
   var REF_Z = /^(\d{3})\.(\d{3})$/;
+  var isRef = (t) => REF_Z.test(t[0] || "") && /\//.test(t[1] || "");
   function parseP1(line) {
     const m = line.match(/^p1 (\d+)\.(\d+)\.(\d+) ([^\s/]*)\/(\d+) ?(.*)$/);
     if (!m) return null;
@@ -10473,7 +10901,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       return r;
     }
     let v = t.slice(0, i).filter((x) => x !== "");
-    if (v.length >= 2 && /^\d+$/.test(v[v.length - 1]) && !REF_Z.test(v[0])) r.unit = v.pop();
+    if (v.length >= 2 && /^\d+$/.test(v[v.length - 1]) && !isRef(v)) r.unit = v.pop();
     r.tok = v;
     r.val = v.join(" ");
     r.attr = t[i];
@@ -10525,7 +10953,10 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   }
   function kindGuess(r) {
     if (r.quoted) return "TX";
-    if (REF_Z.test(r.tok[0] || "")) return / [EA] \d\d:\d\d/.test(r.val) ? "T" : /^L\d/.test(r.base) ? "L" : "V";
+    if (/^L\d+$/.test(r.base) && (r.tok[0] === "---" || REF_Z.test(r.tok[0] || ""))) return "L";
+    if (/^[0-9a-f]{8}$/i.test(r.val) && /[a-f]/i.test(r.val)) return "DM";
+    if (/^[01]{8}$/.test(r.val)) return /^2/.test(r.st) ? "DM" : "DS";
+    if (isRef(r.tok)) return / [EA] \d\d:\d\d/.test(r.val) ? "T" : /^L\d/.test(r.base) ? "L" : "V";
     const dig = /^[01]$/.test(r.val) && !r.unit;
     const letter = (r.base.match(/^[A-Za-z]+/) || [""])[0];
     if (letter === "b" || letter === "y") return "AI";
@@ -10542,11 +10973,40 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       if (z && tok2[i + 1] && /\//.test(tok2[i + 1])) {
         const [b, n] = tok2[i + 1].split("/");
         const ni = /^[NI]$/.test(tok2[i + 2] || "") ? tok2[i + 2] : "N";
-        out.push(`${+z[1]}.${+z[2]} ${b}/${parseInt(n, 10) || 1}${ni}${op}`);
+        out.push(/^0+$/.test(b) ? null : `${+z[1]}.${+z[2]} ${b}/${parseInt(n, 10) || 1}${ni}${op}`);
         i += /^[NI]$/.test(tok2[i + 2] || "") ? 2 : 1;
         const o = (tok2[i + 1] || "").toLowerCase();
         op = o === "and" || o === "or" ? o : "";
         if (o && !REF_Z.test(tok2[i + 1])) i++;
+      }
+    }
+    return out;
+  }
+  var SP_SKIP = /* @__PURE__ */ new Set(["1207", "2030"]);
+  var NZ_DAY = { "1014": 0, "1015": 1, "1016": 2, "1017": 3, "1018": 4, "1019": 5, "1020": 6 };
+  var NZ_VAL = /^(?:---|\d\d:\d\d-\d\d:\d\d)(?: (?:---|\d\d:\d\d-\d\d:\d\d)){0,3}$/;
+  var JDP_VAL = /^([PE])([A-Z])([A-Z]) (\d{4}) (\d\d\.\d\d)(?:-(\d\d\.\d\d))?$/;
+  var emptyWeek = () => Array(7).fill("--:--");
+  function addBlocks(P, day, val) {
+    String(val).split(" ").forEach((b, i) => {
+      var _a, _b;
+      const m = b.match(/^(\d\d:\d\d)-(\d\d:\d\d)$/);
+      if (!m || i > 3) return;
+      (P[_a = "BEG" + (i + 1)] || (P[_a] = emptyWeek()))[day] = timeOk(m[1]);
+      (P[_b = "END" + (i + 1)] || (P[_b] = emptyWeek()))[day] = timeOk(m[2]);
+    });
+  }
+  function lampRefs(tok2) {
+    const out = [];
+    for (let i = 0; i < tok2.length && out.length < 2; i++) {
+      if (tok2[i] === "---") {
+        out.push(null);
+        continue;
+      }
+      if (REF_Z.test(tok2[i])) {
+        const [x] = refsOf(tok2.slice(i, i + 3));
+        out.push(x || null);
+        i += /^[NI]$/.test(tok2[i + 2] || "") ? 2 : 1;
       }
     }
     return out;
@@ -10563,8 +11023,10 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     recs.push({ kind: "Z", f: { NR: String(z), TYP: typ0 }, sched: {} });
     recs.push({ kind: "B", f: { TYP: typ0 }, sched: {} });
     const progs = /* @__PURE__ */ new Map();
+    const jahr = /* @__PURE__ */ new Map();
     for (const d of devices) {
       const g = +d.addr.split(".")[2];
+      const dprogs = g === 0 ? progs : /* @__PURE__ */ new Map();
       if (g !== 0) recs.push({ kind: "K", f: { NR: String(g), TYP: d.group ? devName(d.group, d.type) : "", GT: d.text || "" }, sched: {} });
       for (const l of d.menus) {
         const m = l.match(/^m1 \S+ (\S+)(?: (\S+))?/);
@@ -10576,7 +11038,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         const D = def(d.group, r.base);
         const MK = !D && d.group ? makroDef(devName(d.group, d.type), r.base) : null;
         const pinLike = /^[bykBYK]\d+$/.test(r.base);
-        const kind = D && kindFromDef(D) || MK && !(MK.kind === "V" && !REF_Z.test(r.tok[0] || "")) && MK.kind || kindGuess(r);
+        const kind = D && kindFromDef(D) || MK && !(MK.kind === "V" && !isRef(r.tok)) && MK.kind || kindGuess(r);
         const f = { P: r.base + "/" + r.inst, W: r.val, ST: r.st };
         if (r.gt) f.GT = r.gt;
         if (D && D.name) {
@@ -10590,8 +11052,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           f.UG = D.min;
           f.OG = D.max;
         }
+        if (D ? D.attr & 4 : g === 0 && SP_SKIP.has(r.base)) f.noSP = true;
         if (kind === "V") refsOf(r.tok).slice(0, 4).forEach((x, i) => {
-          f["V" + (i + 1)] = x;
+          if (x) f["V" + (i + 1)] = x;
         });
         else if (kind === "T") {
           const [ref] = refsOf(r.tok);
@@ -10599,9 +11062,23 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           const tz = r.val.match(/ ([EA]) (\S+)$/);
           if (tz) f.TZ = tz[1] + " " + tz[2].replace(/\/00:00:00$/, "");
         } else if (kind === "L") {
-          const [a, b] = refsOf(r.tok);
+          const [a, b] = lampRefs(r.tok);
           if (a) f.LD = a;
           if (b) f.LB = b;
+        }
+        if (r.base in NZ_DAY && NZ_VAL.test(r.val)) {
+          if (!dprogs.has(r.inst)) dprogs.set(r.inst, {});
+          addBlocks(dprogs.get(r.inst), NZ_DAY[r.base], r.val);
+          f.noSP = true;
+        }
+        if (D && [21, 22].includes(D.typ) || /^\d\d\.\d\d\.\d\d$/.test(r.val) || !D && NZ_VAL.test(r.val)) f.noSP = true;
+        const jm = (D ? D.typ === 30 : /^5(0[1-9]|[12]\d|3[0-2])$/.test(r.base)) && (r.val.match(JDP_VAL) || r.val === "---");
+        if (jm && g === 0) {
+          if (Array.isArray(jm)) {
+            if (!jahr.has(r.inst)) jahr.set(r.inst, []);
+            jahr.get(r.inst).push({ i: parseInt(r.base, 10) - 500, typ: jm[1], prog: jm[2], del: jm[3], zu: jm[4], beg: jm[5], end: jm[6] || "--.--" });
+          }
+          f.noSP = true;
         }
         const sm = D && D.name.match(/^(Mo|Di|Mi|Do|Fr|Sa|So)-(BEGINN|ENDE)(\d)$/i);
         if (sm && g === 0) {
@@ -10614,11 +11091,13 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         }
         recs.push({ kind, f, sched: {}, kreis: g });
       }
+      if (g !== 0) for (const [nr, sc] of dprogs) recs.push({ kind: "N", f: { NR: String(nr) }, sched: sc, kreis: g });
     }
-    return { recs, progs };
+    const jrecs = [...jahr].map(([nr, L]) => ({ kind: "J", f: { NR: String(nr) }, sched: {}, jdp: L.sort((a, b) => a.i - b.i), kreis: 0 }));
+    return { recs, progs, jrecs };
   }
   function ordered(z, devices, def) {
-    const { recs, progs } = recordsOf(z, devices, def);
+    const { recs, progs, jrecs } = recordsOf(z, devices, def);
     const out = recs.filter((r) => r.kind === "Z" || r.kind === "B");
     const rest = recs.filter((r) => r.kind !== "Z" && r.kind !== "B");
     let cur = 0;
@@ -10633,8 +11112,13 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     }
     out.push(...groups.get(0));
     for (const [nr, sc] of progs) out.push({ kind: "N", f: { NR: String(nr) }, sched: sc });
+    out.push(...jrecs);
     for (const [k, L] of groups) if (k !== 0) out.push(...L);
     return out;
+  }
+  function defsFor(B, z, devices) {
+    const own = devices.map((d) => B.defsBy && B.defsBy[d.addr]).find((x) => x && x.D1.length);
+    return defIndex(own ? own.D1 : B.definitions.D1);
   }
   function byZentrale(B) {
     const byZ = /* @__PURE__ */ new Map();
@@ -10649,12 +11133,11 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   function parseP90(text, label, fileName2) {
     const B = parseBackup(text);
     if (!B.devices.length) throw new Error(B.aborted ? "Sicherung wurde abgebrochen, bevor ein Gerät gelesen war" : "Keine Geräte in der P90-Sicherung");
-    const def = defIndex(B.definitions.D1);
     const byZ = byZentrale(B);
     const stamp2 = (B.header.Erstellt || "").replace(/,/, "");
     const out = [];
     for (const [z, devices] of byZ) {
-      const C = buildDDC3000(ordered(z, devices, def), label, fileName2, {
+      const C = buildDDC3000(ordered(z, devices, defsFor(B, z, devices)), label, fileName2, {
         format: (B.plain ? "DDC3000 · Sicherung des K&P-Programms (" + ((fileName2 || "").match(/\.\w+$/) || [".PRO"])[0].toUpperCase() + ")" : "DDC3000 · P90-Sicherung (.p90)") + (B.definitions.D1.length ? "" : " ohne Definitionen"),
         stamp: stamp2,
         stampSrc: stamp2 ? "Sicherung erstellt" : "",
@@ -10701,14 +11184,78 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return (+i || 1) > 1 ? b + "/" + +i : b;
   };
   var wTZ = (tz) => String(tz || "").replace(/^([EA]) 0?(\d+):/, "$1 $2:");
+  var tx = (s2) => String(s2 ?? "").replace(/_/g, " ");
+  var wAX = (v) => {
+    v = String(v ?? "").trim();
+    return /^-?\d+(\.\d+)?$|^-+$|^[\\/][-\\/]*$|^\d\d:\d\d$/.test(v) ? v : "";
+  };
+  var wDS = (v) => {
+    v = String(v ?? "").trim();
+    return /^\d{1,2}$|^[01]{2,8}$|^[ST]$/.test(v) ? v : "";
+  };
   var RK_TYP = { "LÜFTUNG": "RK-Lüftung", "HEIZUNG": "RK-Heizung", "FESTWERT": "RK-Festwert" };
+  var WEEK_M = /^(?:117|67|74)\/(\d+)$/;
+  var YEAR_M = /^(?:116|68)\/(\d+)$/;
+  function wwfOrder(recs) {
+    const out = [], groups = [];
+    for (const r of recs) {
+      if (r.kind === "Z" || r.kind === "B") {
+        out.push(r);
+        continue;
+      }
+      if (r.kind === "K" || !groups.length) groups.push({ head: r.kind === "K" ? r : null, list: [] });
+      if (r.kind !== "K") groups[groups.length - 1].list.push(r);
+    }
+    for (const G of groups) {
+      if (G.head) out.push(G.head);
+      const used = /* @__PURE__ */ new Set();
+      const find = (kind, nr) => G.list.find((r) => r.kind === kind && +r.f.NR === nr && !used.has(r));
+      const stat = (b, nr) => G.list.find((r) => r.f.P && !used.has(r) && (r.f.P === b + "/" + nr || nr === 1 && r.f.P === b));
+      let nN = 0, nJ = 0;
+      const menus = G.list.filter((r) => r.kind === "M");
+      for (const m of menus) {
+        out.push(m);
+        used.add(m);
+        let x;
+        if (x = String(m.f.NR).match(WEEK_M)) {
+          const n = find("N", +x[1]);
+          if (n) {
+            const st = stat("N", +x[1]);
+            if (st) {
+              out.push(st);
+              used.add(st);
+            }
+            out.push({ ...n, wNR: ++nN });
+            used.add(n);
+          }
+        } else if (x = String(m.f.NR).match(YEAR_M)) {
+          const j = find("J", +x[1]);
+          if (j) {
+            const st = stat("J", +x[1]);
+            if (st) {
+              out.push(st);
+              used.add(st);
+            }
+            out.push({ ...j, wNR: ++nJ });
+            used.add(j);
+          }
+        }
+      }
+      for (const r of G.list) if (!used.has(r)) out.push(r.kind === "N" ? { ...r, wNR: ++nN } : r.kind === "J" ? { ...r, wNR: ++nJ } : r);
+    }
+    return out;
+  }
   function wwfLines(recs, name) {
     const L = [];
-    const head = (kind, f) => pad(kind, 8) + "P=" + pad(wP(f), 10) + "; K=     !" + (f.GT || f.K || "");
+    recs = wwfOrder(recs);
+    const head = (kind, f) => pad(kind, 8) + "P=" + pad(wP(f), 10) + "; K=     !" + tx(f.GT || f.K);
     const kindOf = (r) => r.kind === "DS" && /^[NJ]\//.test(r.f.P) ? "DM" : r.kind;
     const refs = (f, keys) => keys.map((k, i) => "       " + k + "=" + pad(f[k] || "---", 15) + "; T" + (i + 1) + "=");
+    name = tx(name);
     for (const r of recs) {
       const f = r.f;
+      if (f.noSP) continue;
+      if (r.kind === "T" && !f.TV) continue;
       switch (kindOf(r)) {
         case "Z":
           L.push("Z      NR=" + pad(f.NR, 5) + "; TYP=DDC3000    ; K=" + name);
@@ -10717,13 +11264,25 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           L.push("B      NR=" + pad(recs[0].f.NR, 5) + "; TYP=" + pad(f.TYP, 11) + "; K=", "       GT=" + name);
           break;
         case "K":
-          L.push("K      NR=" + pad(f.NR, 5) + "; TYP=" + (RK_TYP[f.TYP] || f.TYP || ""), "       RK=", "      ANL=", "       GT=" + (f.GT || ""));
+          L.push("K      NR=" + pad(f.NR, 5) + "; TYP=" + (RK_TYP[f.TYP] || f.TYP || ""), "       RK=", "      ANL=", "       GT=" + tx(f.GT));
           break;
         case "M":
           L.push("M      NR=" + pad(f.NR, 5) + "; AKTIV=1    ; K=" + f.NR);
           break;
+        case "J": {
+          const blocks = Math.max(1, Math.ceil(Math.max(0, ...r.jdp.map((e) => e.i)) / 5));
+          for (let b = 0; b < blocks; b++) {
+            if (b === 0) L.push("J      NR=" + pad(r.wNR || f.NR, 5) + "; K=", "     !     Start   Ende    Programm   Löschen    Zuordnung");
+            else L.push("J      NR=" + (r.wNR || f.NR));
+            for (let k = 1; k <= 5; k++) {
+              const e = r.jdp.find((x) => x.i === b * 5 + k);
+              L.push("     JDP" + String(k).padStart(2, "0") + "=" + pad(e ? e.beg : "--.--", 7) + "=" + pad(e ? e.end : "--.--", 11) + "=" + pad(e ? e.prog : "", 9) + "=" + pad(e ? e.del : "N", 9) + "=" + (e ? e.zu : "0000"));
+            }
+          }
+          break;
+        }
         case "N": {
-          L.push("N      NR=" + pad(f.NR, 5) + "; K=", "     !     MO     DI     MI     DO     FR     SA     SO  ", "     !------------------------------------------------------------");
+          L.push("N      NR=" + pad(r.wNR || f.NR, 5) + "; K=", "     !     MO     DI     MI     DO     FR     SA     SO  ", "     !------------------------------------------------------------");
           for (let i = 1; i <= 4; i++) for (const k of ["BEG", "END"]) {
             const a = r.sched[k + i] || Array(7).fill("--:--");
             L.push("     " + k + i + "=" + a.map((x) => pad(x, 6)).join("=").replace(/\s+$/, ""));
@@ -10731,28 +11290,28 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           break;
         }
         case "AX":
-          L.push(head("AX", f), "        W=" + pad(f.W, 5) + "; E=" + pad(f.E || "keine Einh", 5) + "; Z=", "       UG=" + pad(f.UG, 5) + "; OG=" + (f.OG || ""), "       GT=" + (f.GT || ""));
+          L.push(head("AX", f), "        W=" + pad(wAX(f.W), 5) + "; E=" + pad(f.E || "keine Einh", 5) + "; Z=", "       UG=" + pad(f.UG, 5) + "; OG=" + (f.OG || ""), "       GT=" + tx(f.GT));
           break;
         case "AI":
-          L.push(head("AI", f), "        E=" + pad(f.E || "keine Einh", 5) + "; Z=     ; SMIN=     ; SMAX=", "       GT=" + (f.GT || ""));
+          L.push(head("AI", f), "        E=" + pad(f.E || "keine Einh", 5) + "; Z=     ; SMIN=     ; SMAX=", "       GT=" + tx(f.GT));
           break;
         case "DS":
-          L.push(head("DS", f), "        W=" + pad(f.W, 5) + "; Z=", "       TM=  ,=              ", "       GT=" + (f.GT || ""));
+          L.push(head("DS", f), "        W=" + pad(wDS(f.W), 5) + "; Z=", "       TM=  ,=              ", "       GT=" + tx(f.GT));
           break;
         case "DM":
-          L.push(head("DM", f), "       TM=  ,=                ,=              ", "      INV=0    ; Z=", "       GT=" + (f.GT || ""));
+          L.push(head("DM", f), "       TM=  ,=                ,=              ", "      INV=0    ; Z=", "       GT=" + tx(f.GT));
           break;
         case "TX":
-          L.push(pad("TX", 8) + "P=" + wP(f), "        W=" + (f.W || ""), "       GT=" + (f.GT || ""));
+          L.push(pad("TX", 8) + "P=" + wP(f), "        W=" + tx(f.W), "       GT=" + tx(f.GT));
           break;
         case "V":
-          L.push(head("V", f), ...refs(f, ["V1", "V2", "V3", "V4"]), "       TV=", "       GT=" + (f.GT || ""));
+          L.push(head("V", f), ...refs(f, ["V1", "V2", "V3", "V4"]), "       TV=", "       GT=" + tx(f.GT));
           break;
         case "T":
-          L.push(head("T", f), "       TV=" + pad(f.TV || "---", 15) + "; T1=", "       TZ=" + pad(wTZ(f.TZ), 15) + "; T2=", "       GT=" + (f.GT || ""));
+          L.push(head("T", f), "       TV=" + pad(f.TV || "---", 15) + "; T1=", "       TZ=" + pad(wTZ(f.TZ), 15) + "; T2=", "       GT=" + tx(f.GT));
           break;
         case "L":
-          L.push(head("L", f), "       LD=" + pad(f.LD || "---", 15) + "; T1=", "       LB=" + pad(f.LB || "---", 15) + "; T2=", "        F=" + (f.F || ""), "       GT=" + (f.GT || ""));
+          L.push(head("L", f), "       LD=" + pad(f.LD || "---", 15) + "; T1=", "       LB=" + pad(f.LB || "---", 15) + "; T2=", "        F=" + (f.F || ""), "       GT=" + tx(f.GT));
           break;
       }
     }
@@ -10761,11 +11320,10 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   function toWwf(text, name) {
     const B = parseBackup(text);
     if (!B.devices.length) throw new Error("Keine Geräte in der Sicherung");
-    const def = defIndex(B.definitions.D1);
     const out = [];
     for (const [z, devices] of byZentrale(B)) {
       const nm = name || "Zentrale " + z;
-      const lines = wwfLines(ordered(z, devices, def), nm);
+      const lines = wwfLines(ordered(z, devices, defsFor(B, z, devices)), nm);
       const rtf = "{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0\\fmodern\\fprq1\\fcharset0 Courier New;}}\r\n{\\colortbl ;\\red0\\green0\\blue0;\\red255\\green255\\blue255;}\r\n\\viewkind4\\uc1\\pard\\cf1\\highlight2\\lang1031\\protect\\f0\\fs24\\par\r\n" + lines.map((l) => rtfEsc(l) + "\\par\r\n").join("") + "\\par\r\n}\r\n\0";
       out.push({ z, name: nm, rtf });
     }
@@ -13401,7 +13959,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   init_persist();
   init_wtgml();
   var api = {
-    version: "0.7.0",
+    version: "0.8.0",
     register: ALL,
     state: APP,
     curC,
