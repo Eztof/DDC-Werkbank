@@ -361,6 +361,29 @@ export function regroupPlants(W, C, splitAt) {
     byPlant.delete(P.key);
     for (const p of pins) { p.plant = p.plantName = p.pgroup = p.pgroupName = null; p.how = ""; rest.push(p); }
   }
+  /* Programm-Klemmen, deren Bezeichnung ein anderes Objekt nennt ("Lichtpausenraum Ablüfter" in „Lüftung Saal“):
+     eigene Gruppe, wenn das Objekt weitere Klemmen hat */
+  const plainKey = p => { const K = keyOf.get(p); return K && !K.toks.some(x => x.code) ? K : null; };
+  const firstObj = K => K.k.find(meaningful);
+  const objCount = new Map();
+  for (const p of W.pins) { const K = p.include && plainKey(p); const w = K && firstObj(K); if (w) objCount.set(w, (objCount.get(w) || 0) + 1); }
+  for (const [key, pins] of byPlant) {
+    const P = plants.get(key); if (P.generic) continue;
+    const PK = canon(objKey(disp.get(key) || P.name));
+    const N = PK ? PK.k.filter(meaningful) : [];
+    const named = pins.filter(plainKey);
+    if (!N.length || named.length < 3) continue;
+    const wc = new Map();
+    for (const p of named) for (const w of new Set(plainKey(p).k.filter(meaningful))) wc.set(w, (wc.get(w) || 0) + 1);
+    const fits = K => K.k.some(w => meaningful(w) && (N.some(v => wordHit(w, v)) || (wc.get(w) || 0) >= named.length / 2));
+    const foreign = named.filter(p => p.how === "Programm" && !fits(plainKey(p)) && (objCount.get(firstObj(plainKey(p)) || "") || 0) >= 2);
+    if (!foreign.length || foreign.length > named.length / 2) continue;
+    for (const p of foreign) {
+      pins.splice(pins.indexOf(p), 1);
+      p.plant = p.plantName = p.pgroup = p.pgroupName = null; p.how = "";
+      rest.push(p);
+    }
+  }
   /* Schlüssel je Anlage: Anlagenname + per Programm zugeordnete Klemmen */
   const plantKeys = new Map();
   for (const [key, pins] of byPlant) {
@@ -470,7 +493,7 @@ export function regroupPlants(W, C, splitAt) {
   /* Sammelmeldungen u. Ä.: zu einer Gruppe mit einer Klemme gleichen Schlüssels, sonst Allgemein */
   const sameKey = (A, B) => A.k.length === B.k.length && A.k.every((w, i) => w === B.k[i]);
   const allgLeft = [];
-  const allgKey = order.find(k => /^allgemein$/i.test(plants.get(k).name));
+  const allgKey = order.find(k => /^allgemein\b/i.test(plants.get(k).name));   /* auch „Allgemein / Schaltschrank / Kalender“ */
   for (const p of allg) {
     const K = keyOf.get(p);
     if (K) {

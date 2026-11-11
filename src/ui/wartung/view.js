@@ -662,7 +662,13 @@ function wdGenTab(body, D) {
         btn(null, anyIn ? "eye" : "eyeoff", () => { all.forEach(p => p.include = !anyIn); renderAll(); }, "subtle sm", anyIn ? "Ganze Gruppe aus der Doku nehmen" : "Gruppe wieder aufnehmen"),
         btn(null, "up", () => { W.groups.splice(gi - 1, 0, W.groups.splice(gi, 1)[0]); renderAll(); }, "subtle sm", "nach oben"),
         btn(null, "down", () => { W.groups.splice(gi + 1, 0, W.groups.splice(gi, 1)[0]); renderAll(); }, "subtle sm", "nach unten"),
-        btn(null, "trash", () => { const t = W.groups.find(x => x.gid !== g.gid); W.pins.filter(p => p.gid === g.gid).forEach(p => p.gid = t.gid); W.groups.splice(gi, 1); renderAll(); }, "subtle sm", "Gruppe auflösen (Datenpunkte in die erste Gruppe)")));
+        btn(null, "trash", () => {
+          const n = all.length;
+          if (n && !confirm("Gruppe „" + g.name + "“ auflösen? Die " + n + " Datenpunkte kommen nach „Weitere Datenpunkte“.\n(Ganz aus der Doku nehmen: Auge-Knopf)")) return;
+          let t = W.groups.find(x => x.gid !== g.gid && /^weitere datenpunkte$/i.test(x.name));
+          if (!t && n) { t = { gid: newGid(), name: "Weitere Datenpunkte" }; W.groups.push(t); }
+          all.forEach(p => p.gid = t.gid); W.groups.splice(W.groups.indexOf(g), 1); renderAll();
+        }, "subtle sm", "Gruppe auflösen (Datenpunkte nach „Weitere Datenpunkte“)")));
     const btns = $$("button", d.firstChild);
     if (gi === 0) btns[1].disabled = true;
     if (gi === W.groups.length - 1) btns[2].disabled = true;

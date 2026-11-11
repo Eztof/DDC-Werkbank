@@ -135,3 +135,54 @@ test("Module bei der Station und Feld „Typ“ im Info-Feld (ältere Dokus blei
     await browser.close();
   }
 });
+
+test("Programm-Klemme mit fremder Bezeichnung bekommt ihre eigene Gruppe (Ablüfter in „Lüftung Saal“)", async () => {
+  const pin = (a, txt, sub, typ, para, src) => `<Object Addr="P.${a}" Type="P"><Text>${txt}</Text><Para Addr="1"><Value Type="Int">1</Value></Para>` +
+    `<SubObj Addr="${sub}.01" Type="${sub}"><Para Addr="${para}"><Value Type="Bool">0</Value>` +
+    (src ? `<FuncObj Addr="1" Type="FSource"><Para Addr="1"><Value Type="Source">${src}</Value></Para></FuncObj>` : "") + `</Para></SubObj></Object>`;
+  const xml = fs.readFileSync(FIX("beispiel-datasave.xml"), "utf8")
+    .replace(/RLT1 /g, "RLT 1 ")
+    .replace('<Object Addr="P.05" Type="P"><Text>Reserve</Text>',
+      pin("06", "Lager Ablüfter Betrieb", "CDI", "CDI", "k") +
+      pin("07", "Lager Ablüfter Freigabe", "CDO", "CDO", "K", "//001/01/01/M.02/Y") +
+      pin("08", "Lager Abluft BSK 1", "CDI", "CDI", "k") +
+      pin("09", "Heizkreis Nord Pumpe Freigabe", "CDO", "CDO", "K", "//001/02/01/M.01/Y") +
+      '<Object Addr="P.05" Type="P"><Text>Reserve</Text>')
+    .replace('<Object Addr="R.01" Type="S066">',
+      '<Object Addr="M.02" Type="M"><Text>Freigabe Lager</Text><Para Addr="E1"><Text>Betrieb</Text>' +
+      '<FuncObj Addr="1" Type="FSource"><Para Addr="1"><Value Type="Source">//001/00/00/P.06/CDI.01/k</Value></Para></FuncObj></Para>' +
+      '<Para Addr="Y"><Text>Freigabe</Text><Value Type="Bool">1</Value></Para></Object><Object Addr="R.01" Type="S066">')
+    .replace(/<\/Plant>\s*<\/Module>\s*<\/Central>/, '</Plant><Plant Addr="02" Type="HK"><Text>Heizkreis Nord</Text><Group Addr="01" Type="RG"><Text>Regelung</Text>' +
+      '<Object Addr="M.01" Type="M"><Text>Pumpe</Text><Para Addr="Y"><Text>Freigabe</Text><Value Type="Bool">1</Value></Para></Object></Group></Plant></Module></Central>');
+  const f = path.join(TMP, "fremd.xml");
+  fs.writeFileSync(f, xml);
+  const { browser, page, errors } = await open([f]);
+  try {
+    await page.click(".nav-item[data-view='wartung']");
+    await page.waitForFunction(() => Object.keys(window.DDCWerkbank.state.wd || {}).length >= 1);
+    const groups = await page.evaluate(() => {
+      const A = window.DDCWerkbank.state, C = A.centrals[0], W = A.wd[C.cid];
+      return Object.fromEntries(W.groups.map(g => [g.name, W.pins.filter(p => p.include && p.gid === g.gid).map(p => p.klemme).sort()]).filter(x => x[1].length));
+    });
+    assert.deepEqual(groups["Lager"], ["001/P.06", "001/P.07", "001/P.08"], JSON.stringify(groups));
+    assert.deepEqual(groups["RLT 1 Halle"], ["001/P.01", "001/P.02", "001/P.03", "001/P.04"]);
+    assert.deepEqual(groups["Heizkreis Nord"], ["001/P.09"]);
+    /* Papierkorb an einer Gruppe: Datenpunkte nach „Weitere Datenpunkte“, nicht in die erste Gruppe */
+    await page.click(".pivot button[data-tab='gen']");
+    await page.waitForSelector(".wgrp input.gn");
+    await page.evaluate(() => {
+      const g = [...document.querySelectorAll(".wgrp")].find(d => d.querySelector("input.gn").value === "Lager");
+      g.querySelector("button[title^='Gruppe auflösen']").click();
+    });
+    const after = await page.evaluate(() => {
+      const A = window.DDCWerkbank.state, W = A.wd[A.centrals[0].cid];
+      return Object.fromEntries(W.groups.map(g => [g.name, W.pins.filter(p => p.include && p.gid === g.gid).map(p => p.klemme).sort()]).filter(x => x[1].length));
+    });
+    assert.equal(after["Lager"], undefined);
+    assert.deepEqual(after["Weitere Datenpunkte"], ["001/P.06", "001/P.07", "001/P.08"]);
+    assert.deepEqual(after["RLT 1 Halle"], ["001/P.01", "001/P.02", "001/P.03", "001/P.04"]);
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});

@@ -4326,11 +4326,17 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
             renderAll();
           }, "subtle sm", "nach unten"),
           btn(null, "trash", () => {
-            const t = W.groups.find((x) => x.gid !== g.gid);
-            W.pins.filter((p) => p.gid === g.gid).forEach((p) => p.gid = t.gid);
-            W.groups.splice(gi, 1);
+            const n = all.length;
+            if (n && !confirm("Gruppe „" + g.name + "“ auflösen? Die " + n + " Datenpunkte kommen nach „Weitere Datenpunkte“.\n(Ganz aus der Doku nehmen: Auge-Knopf)")) return;
+            let t = W.groups.find((x) => x.gid !== g.gid && /^weitere datenpunkte$/i.test(x.name));
+            if (!t && n) {
+              t = { gid: newGid(), name: "Weitere Datenpunkte" };
+              W.groups.push(t);
+            }
+            all.forEach((p) => p.gid = t.gid);
+            W.groups.splice(W.groups.indexOf(g), 1);
             renderAll();
-          }, "subtle sm", "Gruppe auflösen (Datenpunkte in die erste Gruppe)")
+          }, "subtle sm", "Gruppe auflösen (Datenpunkte nach „Weitere Datenpunkte“)")
         )
       );
       const btns = $$("button", d.firstChild);
@@ -7537,6 +7543,36 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         rest.push(p);
       }
     }
+    const plainKey = (p) => {
+      const K = keyOf2.get(p);
+      return K && !K.toks.some((x) => x.code) ? K : null;
+    };
+    const firstObj = (K) => K.k.find(meaningful);
+    const objCount = /* @__PURE__ */ new Map();
+    for (const p of W.pins) {
+      const K = p.include && plainKey(p);
+      const w = K && firstObj(K);
+      if (w) objCount.set(w, (objCount.get(w) || 0) + 1);
+    }
+    for (const [key, pins] of byPlant) {
+      const P = plants.get(key);
+      if (P.generic) continue;
+      const PK = canon(objKey(disp.get(key) || P.name));
+      const N = PK ? PK.k.filter(meaningful) : [];
+      const named = pins.filter(plainKey);
+      if (!N.length || named.length < 3) continue;
+      const wc = /* @__PURE__ */ new Map();
+      for (const p of named) for (const w of new Set(plainKey(p).k.filter(meaningful))) wc.set(w, (wc.get(w) || 0) + 1);
+      const fits = (K) => K.k.some((w) => meaningful(w) && (N.some((v) => wordHit(w, v)) || (wc.get(w) || 0) >= named.length / 2));
+      const foreign = named.filter((p) => p.how === "Programm" && !fits(plainKey(p)) && (objCount.get(firstObj(plainKey(p)) || "") || 0) >= 2);
+      if (!foreign.length || foreign.length > named.length / 2) continue;
+      for (const p of foreign) {
+        pins.splice(pins.indexOf(p), 1);
+        p.plant = p.plantName = p.pgroup = p.pgroupName = null;
+        p.how = "";
+        rest.push(p);
+      }
+    }
     const plantKeys = /* @__PURE__ */ new Map();
     for (const [key, pins] of byPlant) {
       const P = plants.get(key), ks = [];
@@ -7660,7 +7696,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     }
     const sameKey = (A, B) => A.k.length === B.k.length && A.k.every((w, i) => w === B.k[i]);
     const allgLeft = [];
-    const allgKey = order.find((k) => /^allgemein$/i.test(plants.get(k).name));
+    const allgKey = order.find((k) => /^allgemein\b/i.test(plants.get(k).name));
     for (const p of allg) {
       const K = keyOf2.get(p);
       if (K) {
@@ -9695,7 +9731,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
       h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
-      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.8.1")
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.8.2")
     ));
   }
   function renderTitle() {
@@ -14082,7 +14118,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   init_persist();
   init_wtgml();
   var api = {
-    version: "0.8.1",
+    version: "0.8.2",
     register: ALL,
     state: APP,
     curC,
