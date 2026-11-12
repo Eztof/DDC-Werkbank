@@ -9731,7 +9731,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
       h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
-      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.8.2")
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.8.3")
     ));
   }
   function renderTitle() {
@@ -10715,7 +10715,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     }, signal } = options;
     const t0 = Date.now();
     const out = [];
-    let failed = 0, aborted = false;
+    let failed = 0, aborted = false, error = "";
     const prog = (phase, text, extra = {}) => onProgress2({ phase, text, ...extra });
     const checkAbort = () => {
       if (signal && signal.aborted) throw new Error("abgebrochen");
@@ -10804,6 +10804,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       }
     } catch (e) {
       aborted = true;
+      error = e.message;
       out.push(`# ABGEBROCHEN: ${e.message}`);
       prog("fehler", "Abgebrochen: " + e.message);
     } finally {
@@ -10818,7 +10819,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       out.push(`# Fertig nach ${seconds} s, ${failed ? failed + " Gerät(e) mit Fehler" : "ohne Fehler"}`);
       prog("fertig", `Fertig: ${devices.length} Geräte in ${seconds} s${failed ? `, ${failed} mit Fehler` : ""}`);
     }
-    return { text: out.join("\r\n") + "\r\n", ident, zentralen, devices, failed, seconds, aborted };
+    return { text: out.join("\r\n") + "\r\n", ident, zentralen, devices, failed, seconds, aborted, error };
   }
   function parseBackup(text) {
     var _a, _b;
@@ -13500,14 +13501,21 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   async function pickPort() {
     return navigator.serial.requestPort();
   }
-  async function openSerial(port, { baudRate = 9600 } = {}) {
+  var within = (ms, p, msg) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
+  async function openSerial(port, { baudRate = 9600, openTimeout = 1e4 } = {}) {
     try {
-      await port.open({ baudRate, dataBits: 8, parity: "none", stopBits: 1, flowControl: "none", bufferSize: 65536 });
+      await within(
+        openTimeout,
+        port.open({ baudRate, dataBits: 8, parity: "none", stopBits: 1, flowControl: "none", bufferSize: 65536 }),
+        "Der COM-Port meldet sich nicht (Treiber hängt). USB-Adapter abziehen, wieder anstecken und den Port neu auswählen."
+      );
     } catch (e) {
-      if (!/already open/i.test(e.message || "")) throw new Error("Port lässt sich nicht öffnen: " + e.message + " (von einem anderen Programm belegt?)");
+      if (!/already open/i.test(e.message || "")) throw new Error(/Treiber hängt/.test(e.message) ? e.message : "Port lässt sich nicht öffnen: " + e.message + " (von einem anderen Programm belegt, z. B. SPClientDDC?)");
     }
+    if (!port.readable || !port.writable) throw new Error("Der COM-Port ist geöffnet, aber nicht benutzbar – USB-Adapter neu anstecken.");
+    if (port.readable.locked || port.writable.locked) throw new Error("Der COM-Port hängt noch an einer vorherigen Sicherung – Seite neu laden (F5) und noch einmal starten.");
     try {
-      await port.setSignals({ dataTerminalReady: true, requestToSend: true });
+      await within(3e3, port.setSignals({ dataTerminalReady: true, requestToSend: true }), "setSignals");
     } catch (e) {
     }
     const listeners = /* @__PURE__ */ new Set();
@@ -13815,37 +13823,52 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     S.prog = { text: "Verbinde …", done: 0, total: 0 };
     S.ac = new AbortController();
     paint();
+    const pr = S._root && S._root.querySelector(".p90-prog");
+    if (pr && pr.scrollIntoView) pr.scrollIntoView({ block: "center", behavior: "smooth" });
     let transport = null, link = null;
+    const rx = { bytes: 0, frames: 0 };
     try {
       if (S.demo) transport = new SimDDC({ valuesPerDevice: 12, demo: true });
       else {
         const port = S.ports[S.portIdx];
         if (!port) throw new Error("Kein COM-Port gewählt.");
+        addLog("COM-Port öffnen (" + (+S.baud || 9600) + " Baud, 8N1) …");
         transport = await openSerial(port, { baudRate: +S.baud || 9600 });
+        addLog("COM-Port offen – melde mich an der DDC an …");
       }
       link = new P90Link(transport);
       link.on("log", (lvl, t) => addLog(t, lvl === "error" ? "err" : lvl === "warn" ? "warn" : ""));
+      link.on("rx", (buf) => {
+        rx.bytes += buf.length;
+      });
       link.on("frame", (ev, dir) => {
+        if (dir === "rx") rx.frames++;
         if (ev.type === "block") addLog((dir === "rx" ? "DDC ← " : "PC → ") + (ev.ok ? "" : "[Prüfsumme falsch] ") + ev.text, dir === "rx" ? "rx" : "tx");
       });
       const r = await createBackup(link, { definitions: S.defs, signal: S.ac.signal, onProgress });
       S.result = r;
+      if (!r.devices.length) {
+        const user = S.ac.signal.aborted;
+        S.err = user ? "Abgebrochen, bevor etwas gelesen wurde." : diagnose(rx, r.error);
+        S.prog = { text: user ? "Abgebrochen" : "Keine Verbindung zur DDC" };
+        if (!user) addLog(S.err, "err");
+        return;
+      }
       S.file = { name: handle ? handle.name : fileName(), text: r.text };
-      if (r.devices.length || r.aborted) {
-        if (handle) {
-          try {
-            const w = await handle.createWritable();
-            await w.write(r.text);
-            await w.close();
-            S.file.saved = true;
-            toast("Sicherung gespeichert: " + handle.name, "ok", 6e3);
-          } catch (e) {
-            S.err = "Speichern fehlgeschlagen: " + e.message + " – bitte „Herunterladen“ benutzen.";
-          }
+      if (handle) {
+        try {
+          const w = await handle.createWritable();
+          await w.write(r.text);
+          await w.close();
+          S.file.saved = true;
+          toast("Sicherung gespeichert: " + handle.name, "ok", 6e3);
+        } catch (e) {
+          S.err = "Speichern fehlgeschlagen: " + e.message + " – bitte „Herunterladen“ benutzen.";
         }
       }
     } catch (e) {
       S.err = e.message || String(e);
+      S.prog = { text: link ? "Abgebrochen mit Fehler" : "Keine Verbindung zum COM-Port" };
       addLog(S.err, "err");
     } finally {
       try {
@@ -13857,6 +13880,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       S.ac = null;
       paint();
     }
+  }
+  function diagnose(rx, err) {
+    const pins = "Kabel an der DDC3200: Klemme 58 → Pin 2, 59 → Pin 3, 60 → Pin 5 (9-polig)";
+    if (!rx.bytes) return "Die DDC antwortet nicht – am COM-Port kam kein einziges Byte an. Bitte prüfen: richtiger Port gewählt? " + pins + ". Läuft SPClientDDC oder ein anderes Programm mit diesem Port? Steht die DDC auf P90 (Parameter 4600 = Baudrate)?" + (err ? " (" + err + ")" : "");
+    if (!rx.frames) return "Am COM-Port kommen Daten an (" + rx.bytes + " Bytes), aber nichts Lesbares. Meist passt die Baudrate nicht: DDC-Parameter 4600 prüfen (oft 9600, manchmal 4800 oder 19200) und oben einstellen.";
+    return "Die DDC antwortet, die Anmeldung klappt aber nicht" + (err ? " (" + err + ")" : "") + ". Telegramme unten aufklappen und mir schicken.";
   }
   function onProgress(p) {
     S.prog = { ...S.prog, ...p };
@@ -14118,7 +14147,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   init_persist();
   init_wtgml();
   var api = {
-    version: "0.8.2",
+    version: "0.8.3",
     register: ALL,
     state: APP,
     curC,

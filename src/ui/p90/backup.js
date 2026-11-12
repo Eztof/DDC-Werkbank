@@ -28,7 +28,7 @@ export async function createBackup(link, options = {}) {
   const { definitions = true, onProgress = () => {}, signal } = options;
   const t0 = Date.now();
   const out = [];
-  let failed = 0, aborted = false;
+  let failed = 0, aborted = false, error = "";
   const prog = (phase, text, extra = {}) => onProgress({ phase, text, ...extra });
   const checkAbort = () => { if (signal && signal.aborted) throw new Error("abgebrochen"); };
   let abortDone = null;                       // Abbruch wartet, bis die DDC aufgehört hat zu senden
@@ -107,7 +107,7 @@ export async function createBackup(link, options = {}) {
       }
     }
   } catch (e) {
-    aborted = true;
+    aborted = true; error = e.message;
     out.push(`# ABGEBROCHEN: ${e.message}`);
     prog("fehler", "Abgebrochen: " + e.message);
   } finally {
@@ -119,7 +119,7 @@ export async function createBackup(link, options = {}) {
     out.push(`# Fertig nach ${seconds} s, ${failed ? failed + " Gerät(e) mit Fehler" : "ohne Fehler"}`);
     prog("fertig", `Fertig: ${devices.length} Geräte in ${seconds} s${failed ? `, ${failed} mit Fehler` : ""}`);
   }
-  return { text: out.join("\r\n") + "\r\n", ident, zentralen, devices, failed, seconds, aborted };
+  return { text: out.join("\r\n") + "\r\n", ident, zentralen, devices, failed, seconds, aborted, error };
 }
 
 /**

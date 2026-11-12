@@ -60,3 +60,35 @@ test("DDC3000 sichern (Demo) → öffnen → alle Ansichten", async () => {
     await browser.close();
   }
 });
+
+test("DDC3000 sichern: DDC antwortet nicht → klare Meldung, keine leere Datei", async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+    const errors = [];
+    page.on("pageerror", e => errors.push(e.message));
+    await page.addInitScript(() => {
+      window.__saved = 0;
+      const port = {
+        getInfo: () => ({ usbVendorId: 0x067b, usbProductId: 0x2303 }), readable: null, writable: null,
+        async open() { this.readable = new ReadableStream({ start() {} }); this.writable = new WritableStream({ write() {} }); },
+        async setSignals() {}, async close() {}
+      };
+      Object.defineProperty(navigator, "serial", { value: { getPorts: async () => [port], requestPort: async () => port } });
+      window.showSaveFilePicker = async () => ({ name: "x.p90", createWritable: async () => { window.__saved++; return { write: async () => {}, close: async () => {} }; } });
+    });
+    await page.goto("file://" + HTML);
+    await page.click(".nav-item:has-text('DDC3000 sichern')");
+    await page.waitForSelector("button:has-text('Sicherung starten'):not([disabled])");
+    await page.click("button:has-text('Sicherung starten')");
+    await page.waitForSelector("text=Die DDC antwortet nicht", { timeout: 40000 });
+    const t = await page.innerText(".page-body");
+    assert.match(t, /Keine Verbindung zur DDC/);
+    assert.match(t, /Klemme 58 → Pin 2/);
+    assert.equal(await page.$("button:has-text('In der Werkbank öffnen')"), null);
+    assert.equal(await page.evaluate(() => window.__saved), 0, "keine leere .p90 schreiben");
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});

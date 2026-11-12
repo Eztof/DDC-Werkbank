@@ -49,34 +49,60 @@ async function start() {
   S.running = true; S.err = ""; S.result = null; S.file = null; S.devices = []; S.log = []; S.prog = { text: "Verbinde …", done: 0, total: 0 };
   S.ac = new AbortController();
   paint();
+  /* Ablauf ins Bild holen – er steht unter den Einstellungen */
+  const pr = S._root && S._root.querySelector(".p90-prog");
+  if (pr && pr.scrollIntoView) pr.scrollIntoView({ block: "center", behavior: "smooth" });
   let transport = null, link = null;
+  const rx = { bytes: 0, frames: 0 };
   try {
     if (S.demo) transport = new SimDDC({ valuesPerDevice: 12, demo: true });
     else {
       const port = S.ports[S.portIdx];
       if (!port) throw new Error("Kein COM-Port gewählt.");
+      addLog("COM-Port öffnen (" + (+S.baud || 9600) + " Baud, 8N1) …");
       transport = await openSerial(port, { baudRate: +S.baud || 9600 });
+      addLog("COM-Port offen – melde mich an der DDC an …");
     }
     link = new P90Link(transport);
     link.on("log", (lvl, t) => addLog(t, lvl === "error" ? "err" : lvl === "warn" ? "warn" : ""));
-    link.on("frame", (ev, dir) => { if (ev.type === "block") addLog((dir === "rx" ? "DDC ← " : "PC → ") + (ev.ok ? "" : "[Prüfsumme falsch] ") + ev.text, dir === "rx" ? "rx" : "tx"); });
+    link.on("rx", buf => { rx.bytes += buf.length; });
+    link.on("frame", (ev, dir) => {
+      if (dir === "rx") rx.frames++;
+      if (ev.type === "block") addLog((dir === "rx" ? "DDC ← " : "PC → ") + (ev.ok ? "" : "[Prüfsumme falsch] ") + ev.text, dir === "rx" ? "rx" : "tx");
+    });
     const r = await createBackup(link, { definitions: S.defs, signal: S.ac.signal, onProgress: onProgress });
     S.result = r;
+    if (!r.devices.length) {
+      /* nichts gelesen: keine leere Datei speichern, sondern sagen, woran es liegt */
+      const user = S.ac.signal.aborted;
+      S.err = user ? "Abgebrochen, bevor etwas gelesen wurde." : diagnose(rx, r.error);
+      S.prog = { text: user ? "Abgebrochen" : "Keine Verbindung zur DDC" };
+      if (!user) addLog(S.err, "err");
+      return;
+    }
     S.file = { name: handle ? handle.name : fileName(), text: r.text };
-    if (r.devices.length || r.aborted) {
-      if (handle) {
-        try { const w = await handle.createWritable(); await w.write(r.text); await w.close(); S.file.saved = true; toast("Sicherung gespeichert: " + handle.name, "ok", 6000); }
-        catch (e) { S.err = "Speichern fehlgeschlagen: " + e.message + " – bitte „Herunterladen“ benutzen."; }
-      }
+    if (handle) {
+      try { const w = await handle.createWritable(); await w.write(r.text); await w.close(); S.file.saved = true; toast("Sicherung gespeichert: " + handle.name, "ok", 6000); }
+      catch (e) { S.err = "Speichern fehlgeschlagen: " + e.message + " – bitte „Herunterladen“ benutzen."; }
     }
   } catch (e) {
     S.err = e.message || String(e);
+    S.prog = { text: link ? "Abgebrochen mit Fehler" : "Keine Verbindung zum COM-Port" };
     addLog(S.err, "err");
   } finally {
     try { if (link) await link.close(); else if (transport && transport.close) await transport.close(); } catch (e) { /* egal */ }
     S.running = false; S.ac = null;
     paint();
   }
+}
+/* Warum die Anmeldung nicht klappt – aus dem, was am Port ankam */
+function diagnose(rx, err) {
+  const pins = "Kabel an der DDC3200: Klemme 58 → Pin 2, 59 → Pin 3, 60 → Pin 5 (9-polig)";
+  if (!rx.bytes) return "Die DDC antwortet nicht – am COM-Port kam kein einziges Byte an. Bitte prüfen: richtiger Port gewählt? " + pins +
+    ". Läuft SPClientDDC oder ein anderes Programm mit diesem Port? Steht die DDC auf P90 (Parameter 4600 = Baudrate)?" + (err ? " (" + err + ")" : "");
+  if (!rx.frames) return "Am COM-Port kommen Daten an (" + rx.bytes + " Bytes), aber nichts Lesbares. Meist passt die Baudrate nicht: " +
+    "DDC-Parameter 4600 prüfen (oft 9600, manchmal 4800 oder 19200) und oben einstellen.";
+  return "Die DDC antwortet, die Anmeldung klappt aber nicht" + (err ? " (" + err + ")" : "") + ". Telegramme unten aufklappen und mir schicken.";
 }
 function onProgress(p) {
   S.prog = { ...S.prog, ...p };

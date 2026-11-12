@@ -18,12 +18,18 @@ export function portLabel(port, i) {
 export async function knownPorts() { return serialSupported() ? navigator.serial.getPorts() : []; }
 export async function pickPort() { return navigator.serial.requestPort(); }
 
-export async function openSerial(port, { baudRate = 9600 } = {}) {
-  try { await port.open({ baudRate, dataBits: 8, parity: "none", stopBits: 1, flowControl: "none", bufferSize: 65536 }); }
+/* manche USB-Seriell-Treiber antworten beim Öffnen nie – dann nicht ewig warten */
+const within = (ms, p, msg) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
+
+export async function openSerial(port, { baudRate = 9600, openTimeout = 10000 } = {}) {
+  try { await within(openTimeout, port.open({ baudRate, dataBits: 8, parity: "none", stopBits: 1, flowControl: "none", bufferSize: 65536 }),
+    "Der COM-Port meldet sich nicht (Treiber hängt). USB-Adapter abziehen, wieder anstecken und den Port neu auswählen."); }
   catch (e) {
-    if (!/already open/i.test(e.message || "")) throw new Error("Port lässt sich nicht öffnen: " + e.message + " (von einem anderen Programm belegt?)");
+    if (!/already open/i.test(e.message || "")) throw new Error(/Treiber hängt/.test(e.message) ? e.message : "Port lässt sich nicht öffnen: " + e.message + " (von einem anderen Programm belegt, z. B. SPClientDDC?)");
   }
-  try { await port.setSignals({ dataTerminalReady: true, requestToSend: true }); } catch (e) { /* nicht jeder Adapter */ }
+  if (!port.readable || !port.writable) throw new Error("Der COM-Port ist geöffnet, aber nicht benutzbar – USB-Adapter neu anstecken.");
+  if (port.readable.locked || port.writable.locked) throw new Error("Der COM-Port hängt noch an einer vorherigen Sicherung – Seite neu laden (F5) und noch einmal starten.");
+  try { await within(3000, port.setSignals({ dataTerminalReady: true, requestToSend: true }), "setSignals"); } catch (e) { /* nicht jeder Adapter */ }
   const listeners = new Set();
   let keep = true, reader = null;
   const loop = (async () => {
