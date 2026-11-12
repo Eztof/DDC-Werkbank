@@ -9731,7 +9731,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
       h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
-      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.8.3")
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.8.4")
     ));
   }
   function renderTitle() {
@@ -13806,14 +13806,6 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   }
   async function start() {
     if (S.running) return;
-    let handle = null;
-    if (!S.demo && window.showSaveFilePicker) {
-      try {
-        handle = await window.showSaveFilePicker({ suggestedName: fileName(), startIn: "desktop", types: [{ description: "P90-Sicherung", accept: { "text/plain": [".p90"] } }] });
-      } catch (e) {
-        if (e.name === "AbortError") return;
-      }
-    }
     S.running = true;
     S.err = "";
     S.result = null;
@@ -13822,7 +13814,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     S.log = [];
     S.prog = { text: "Verbinde …", done: 0, total: 0 };
     S.ac = new AbortController();
-    paint();
+    addLog("Start (Werkbank 0.8.4, " + (S.demo ? "Demo" : "Port " + (S.portIdx + 1)) + ")");
+    try {
+      paint();
+    } catch (e) {
+      console.error(e);
+    }
     const pr = S._root && S._root.querySelector(".p90-prog");
     if (pr && pr.scrollIntoView) pr.scrollIntoView({ block: "center", behavior: "smooth" });
     let transport = null, link = null;
@@ -13854,14 +13851,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         if (!user) addLog(S.err, "err");
         return;
       }
-      S.file = { name: handle ? handle.name : fileName(), text: r.text };
-      if (handle) {
+      S.file = { name: fileName(), text: r.text };
+      if (!S.demo) {
         try {
-          const w = await handle.createWritable();
-          await w.write(r.text);
-          await w.close();
+          download2();
           S.file.saved = true;
-          toast("Sicherung gespeichert: " + handle.name, "ok", 6e3);
+          toast("Sicherung gespeichert (Download-Ordner): " + S.file.name, "ok", 8e3);
         } catch (e) {
           S.err = "Speichern fehlgeschlagen: " + e.message + " – bitte „Herunterladen“ benutzen.";
         }
@@ -14093,7 +14088,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         btn(S.file.saved ? "Nochmals herunterladen" : "Herunterladen", "download", download2),
         btn("Als .wwf für SPEnterprise", "download", () => downloadWwf(S.file.text, S.file.name), "", "Arbeitsdatei der Schnellparametrierung – in SPEnterprise öffnen"),
         btn(".PRO", "download", () => downloadPro(S.file.text, S.file.name), "", "Datei wie vom K&P-Programm (SPClientDDC)"),
-        h("span", { class: "muted small" }, (S.file.saved ? "Gespeichert als „" + S.file.name + "“. " : "") + r.devices.length + " Geräte" + (r.failed ? ", " + r.failed + " mit Fehler" : "") + (r.aborted ? " – abgebrochen, Datei ist unvollständig" : ""))
+        h("span", { class: "muted small" }, (S.file.saved ? "Gespeichert im Download-Ordner als „" + S.file.name + "“. " : "") + r.devices.length + " Geräte" + (r.failed ? ", " + r.failed + " mit Fehler" : "") + (r.aborted ? " – abgebrochen, Datei ist unvollständig" : ""))
       ));
     }
     card.appendChild(deviceList());
@@ -14147,7 +14142,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   init_persist();
   init_wtgml();
   var api = {
-    version: "0.8.3",
+    version: "0.8.4",
     register: ALL,
     state: APP,
     curC,

@@ -75,18 +75,20 @@ test("DDC3000 sichern: DDC antwortet nicht → klare Meldung, keine leere Datei"
         async setSignals() {}, async close() {}
       };
       Object.defineProperty(navigator, "serial", { value: { getPorts: async () => [port], requestPort: async () => port } });
-      window.showSaveFilePicker = async () => ({ name: "x.p90", createWritable: async () => { window.__saved++; return { write: async () => {}, close: async () => {} }; } });
+      /* Dateidialog, der nie zurückkommt – darf den Start nicht aufhalten */
+      window.showSaveFilePicker = () => new Promise(() => {});
     });
     await page.goto("file://" + HTML);
     await page.click(".nav-item:has-text('DDC3000 sichern')");
     await page.waitForSelector("button:has-text('Sicherung starten'):not([disabled])");
     await page.click("button:has-text('Sicherung starten')");
+    await page.waitForSelector("text=COM-Port öffnen", { timeout: 3000 });
     await page.waitForSelector("text=Die DDC antwortet nicht", { timeout: 40000 });
     const t = await page.innerText(".page-body");
     assert.match(t, /Keine Verbindung zur DDC/);
     assert.match(t, /Klemme 58 → Pin 2/);
     assert.equal(await page.$("button:has-text('In der Werkbank öffnen')"), null);
-    assert.equal(await page.evaluate(() => window.__saved), 0, "keine leere .p90 schreiben");
+    assert.equal(await page.$("button:has-text('Herunterladen')"), null, "keine leere .p90");
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

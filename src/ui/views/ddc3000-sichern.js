@@ -40,15 +40,12 @@ async function refreshPorts() { S.ports = await knownPorts(); }
 /* ---------- Ablauf ---------- */
 async function start() {
   if (S.running) return;
-  /* Speicherort gleich beim Klick wählen (der Browser verlangt dafür einen Klick) */
-  let handle = null;
-  if (!S.demo && window.showSaveFilePicker) {
-    try { handle = await window.showSaveFilePicker({ suggestedName: fileName(), startIn: "desktop", types: [{ description: "P90-Sicherung", accept: { "text/plain": [".p90"] } }] }); }
-    catch (e) { if (e.name === "AbortError") return; }
-  }
+  /* Sofort sichtbar starten – kein Dateidialog vorweg (der hat bei manchen
+     Rechnern den Start verschluckt). Gespeichert wird am Ende automatisch. */
   S.running = true; S.err = ""; S.result = null; S.file = null; S.devices = []; S.log = []; S.prog = { text: "Verbinde …", done: 0, total: 0 };
   S.ac = new AbortController();
-  paint();
+  addLog("Start (Werkbank " + __WB_VERSION__ + ", " + (S.demo ? "Demo" : "Port " + (S.portIdx + 1)) + ")");
+  try { paint(); } catch (e) { console.error(e); }
   /* Ablauf ins Bild holen – er steht unter den Einstellungen */
   const pr = S._root && S._root.querySelector(".p90-prog");
   if (pr && pr.scrollIntoView) pr.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -80,9 +77,10 @@ async function start() {
       if (!user) addLog(S.err, "err");
       return;
     }
-    S.file = { name: handle ? handle.name : fileName(), text: r.text };
-    if (handle) {
-      try { const w = await handle.createWritable(); await w.write(r.text); await w.close(); S.file.saved = true; toast("Sicherung gespeichert: " + handle.name, "ok", 6000); }
+    S.file = { name: fileName(), text: r.text };
+    /* gleich in den Download-Ordner legen, damit nichts verloren geht */
+    if (!S.demo) {
+      try { download(); S.file.saved = true; toast("Sicherung gespeichert (Download-Ordner): " + S.file.name, "ok", 8000); }
       catch (e) { S.err = "Speichern fehlgeschlagen: " + e.message + " – bitte „Herunterladen“ benutzen."; }
     }
   } catch (e) {
@@ -231,7 +229,7 @@ function resultCard() {
       btn(S.file.saved ? "Nochmals herunterladen" : "Herunterladen", "download", download),
       btn("Als .wwf für SPEnterprise", "download", () => downloadWwf(S.file.text, S.file.name), "", "Arbeitsdatei der Schnellparametrierung – in SPEnterprise öffnen"),
       btn(".PRO", "download", () => downloadPro(S.file.text, S.file.name), "", "Datei wie vom K&P-Programm (SPClientDDC)"),
-      h("span", { class: "muted small" }, (S.file.saved ? "Gespeichert als „" + S.file.name + "“. " : "") + r.devices.length + " Geräte" + (r.failed ? ", " + r.failed + " mit Fehler" : "") + (r.aborted ? " – abgebrochen, Datei ist unvollständig" : ""))));
+      h("span", { class: "muted small" }, (S.file.saved ? "Gespeichert im Download-Ordner als „" + S.file.name + "“. " : "") + r.devices.length + " Geräte" + (r.failed ? ", " + r.failed + " mit Fehler" : "") + (r.aborted ? " – abgebrochen, Datei ist unvollständig" : ""))));
   }
   card.appendChild(deviceList());
   const lg = h("div", { class: "p90-log mono small" }, S.log.map(logLine));
