@@ -15,7 +15,7 @@ import { makroDef } from "./d3makro.js";
    aus der Form des Werts abgeleitet.
    ========================================================================= */
 
-const UNITS = { "13": "min", "108": "°C", "109": "K", "150": "%", "190": "kByte" };   // Einheiten-Code der DDC → Text (mit echten .wwf/.EZR abgeglichen)
+const UNITS = { "12": "s", "13": "min", "108": "°C", "109": "K", "150": "%", "190": "kByte" };   // Einheiten-Code der DDC → Text (mit echten .wwf/.EZR abgeglichen)
 const unitText = c => UNITS[c] || "";
 const HEX2 = /^[0-9A-F]{2}$/i;
 const REF_Z = /^(\d{3})\.(\d{3})$/;     // Quelle einer Verknüpfung: Zentrale.Gerät, z. B. 002.710
@@ -56,13 +56,16 @@ function defIndex(lines) {
     const pm = t[2].match(/^([A-Za-z]*)(\d*)(?:-([A-Za-z]*)(\d+))?$/);
     if (!pm) continue;
     const d = { letter: pm[1], lo: pm[2] === "" ? null : +pm[2], hi: pm[4] != null ? +pm[4] : (pm[2] === "" ? null : +pm[2]),
-      typ: +t[3], max: t[5], min: t[6], dflt: t[7], unit: t[8], attr: parseInt(t[9], 16) || 0, name: t.slice(12).join(" ").trim(), range: pm[4] != null };
+      typ: +t[3], fmt: parseInt(t[4], 16) || 0, max: t[5], min: t[6], dflt: t[7], unit: t[8], attr: parseInt(t[9], 16) || 0, name: t.slice(12).join(" ").trim(), range: pm[4] != null };
     if (!byGroup.has(t[1])) byGroup.set(t[1], []);
     byGroup.get(t[1]).push(d);
   }
+  /* Die Regelkreise einer DDC3200 (Gruppe 31 u. a.) haben keine eigenen D1 – ihre Parameter (5101 …) stehen
+     in der Tabelle der Zentrale (Gruppe 32). Nur für reine Parameternummern übernehmen, nicht für Klemmen (b1, k1 …). */
+  const zentral = byGroup.get("32") || null;
   return (group, base) => {
-    const L = byGroup.get(String(group)); if (!L) return null;
     const m = base.match(/^([A-Za-z]*)(\d*)$/); if (!m) return null;
+    const L = byGroup.get(String(group)) || (!m[1] && m[2] ? zentral : null); if (!L) return null;
     const num = m[2] === "" ? null : +m[2];
     return L.find(d => d.letter === m[1] && (num == null ? d.lo == null : d.lo != null && num >= d.lo && num <= d.hi)) || null;
   };
@@ -114,7 +117,8 @@ function refsOf(tok) {
   return out;
 }
 
-const SP_SKIP = new Set(["1207", "2030"]);   // ohne Definitionen: bekannte Systemparameter, die SPEnterprise ablehnt
+const SP_SKIP = new Set(["1207", "2030"]);
+const SP_SKIP_ALWAYS = /^15(1[1-9]|20)$/;   // Z-Bus-Statistik „Top-20“ – kennt die Schnellparametrierung nicht   // ohne Definitionen: bekannte Systemparameter, die SPEnterprise ablehnt
 /* Nutzzeiten je Wochentag (1014 = Mo … 1020 = So): „06:00-14:00 --- --- ---“ = bis zu 4 Blöcke.
    So liefert die DDC die Wochenprogramme (Menü 117 der Zentrale, Menü 74 der EZR). */
 const NZ_DAY = { "1014": 0, "1015": 1, "1016": 2, "1017": 3, "1018": 4, "1019": 5, "1020": 6 };
@@ -175,10 +179,16 @@ function recordsOf(z, devices, def) {
       if (MK && MK.name && !pinLike && !f.K) f.K = MK.name;
       const u = unitText(r.unit || (D && D.unit) || "") || (MK && MK.unit && !/keine/i.test(MK.unit) ? MK.unit : "");
       if (u) f.E = u;
-      if (kind === "AX" && D) { f.UG = D.min; f.OG = D.max; }
+      /* Grenzen nur, wo die Schnellparametrierung sie selbst angibt: Format-Bit 0x80 (vorzeichenbehaftet) → keine */
+      if (kind === "AX" && D && !(D.fmt & 0x80)) { f.UG = D.min; f.OG = D.max; }
+      /* Status-Bit 0x80 = nicht belegt/aus: die DDC zeigt „-“, die .wwf auch (Wert 0 läge sonst unter UG) */
+      if (parseInt(r.st, 16) & 0x80) { if (kind === "AX") f.W = "-"; else if (kind === "TX") f.W = "---"; }
+      /* Texte: höchstens so lang, wie die Definition erlaubt (Format = Länge, z. B. 0x10 = 16 Zeichen) */
+      if (kind === "TX" && D && D.typ === 4 && (D.fmt & 0x7f) && f.W.length > (D.fmt & 0x7f)) f.W = f.W.slice(0, D.fmt & 0x7f).trimEnd();
       /* Parameter, die die Schnellparametrierung nicht kennt (Attribut-Bit 0x04 in D1, z. B. 1207 Task-Zustand,
          2030 Treiber), lehnt SPEnterprise beim Übersetzen ab → für die .wwf weglassen */
       if (D ? (D.attr & 0x04) : (g === 0 && SP_SKIP.has(r.base))) f.noSP = true;
+      if (g === 0 && SP_SKIP_ALWAYS.test(r.base)) f.noSP = true;
       if (kind === "V") refsOf(r.tok).slice(0, 4).forEach((x, i) => { if (x) f["V" + (i + 1)] = x; });
       else if (kind === "T") {
         const [ref] = refsOf(r.tok); if (ref) f.TV = ref;

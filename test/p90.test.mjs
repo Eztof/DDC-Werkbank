@@ -8,7 +8,7 @@ import * as cp850 from "../src/ui/p90/cp850.js";
 import { P90Link, LOGIN_IDENT } from "../src/ui/p90/link.js";
 import { createBackup, parseBackup } from "../src/ui/p90/backup.js";
 import { SimDDC } from "../src/ui/p90/sim.js";
-import { parseP1, parseP90 } from "../src/ui/model/p90.js";
+import { parseP1, parseP90, toWwf } from "../src/ui/model/p90.js";
 
 const txt = b => P.asciiText(b);
 
@@ -291,4 +291,30 @@ test(".wwf für SPEnterprise: nichts, woran das Übersetzen hängen bleibt", asy
   const iK = w.indexOf("K      NR=1"), iM74 = w.indexOf("M      NR=74/1"), iN2 = w.indexOf("N      NR=1", iK);
   assert.ok(iK > 0 && iK < iM74 && iM74 < iN2);
   assert.match(w.slice(iN2), /BEG1=07:00 =--:--/);
+});
+
+test(".wwf: Regeln der Schnellparametrierung (Grenzen, „-“, Textlänge, Regelkreis-Definitionen)", () => {
+  const p90 = [
+    "# P90-Sicherung (Kieback&Peter DDC3000)", "",
+    "[Gerät 1.1.0 DDC3200 32 96]", "t1 1.1.0 32 96 00 D3200",
+    "p1 1.1.0 1090/1 6 0F 00 ", "p1 1.1.0 1422/1 10 0 0F 04 ", "p1 1.1.0 1511/1 0 0 0F 00 1.0.0/0",
+    'p1 1.1.0 2119/1 "Disconnect          0000" 0F 00 ',
+    "[Gerät 1.1.3 HEIZUNG 31 111]", "t1 1.1.3 31 111 00 HEIZUNG",
+    "p1 1.1.3 5125/1 0 12 0F 80 Vorhalt", "p1 1.1.3 5169/1 6.1 108 0F 00 ", "",
+    "[Definitionen 1.1.0 D0 Parameterdefinitionen]",
+    "D1 32 1090 3 80 127 0 0 0 03 0F 0000 SyM: Sub-Bus",
+    "D1 32 1422 2 02 999 1 10 0 03 0F 0000 Alarm-Verbindung",
+    "D1 32 1511-1520 2 07 100000000 0 0 0 43 0F 0000 Z-Bus Top-20 #%(1)",
+    "D1 32 2119 4 10 - - - 0 43 0F 0000 Modem Zustand",
+    "D1 32 5125 2 02 299 1 20 12 A3 0F 0000 Vorhalt",
+    "D1 32 5169 1 8B 100.00 -50.00 0.00 108 42 0F 0000 TAmittel",
+    ""
+  ].join("\r\n");
+  const t = toWwf(p90, "T")[0].rtf.replace(/\r/g, "").replace(/\\par\n?/g, "\n");
+  assert.match(t, /AX {6}P=1090 [^\n]*\n {8}W=6 [^\n]*\n {7}UG= {5}; OG=\n/, "Format 0x80 → keine Grenzen");
+  assert.match(t, /P=1422 [^\n]*\n[^\n]*\n {7}UG=1 {4}; OG=999/);
+  assert.doesNotMatch(t, /P=1511/, "Z-Bus-Statistik weglassen");
+  assert.match(t, /TX {6}P=2119\n {8}W=Disconnect\n/, "höchstens 16 Zeichen");
+  assert.match(t, /AX {6}P=5125 [^\n]*\n {8}W=- {4}; E=s/, "Status 0x80 → „-“");
+  assert.match(t, /AI {6}P=5169 {6}; K= {5}!TAmittel/, "Regelkreis nutzt die Definitionen der Zentrale");
 });

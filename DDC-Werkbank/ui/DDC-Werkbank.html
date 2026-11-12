@@ -9731,7 +9731,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
       h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
-      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.8.4")
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.8.5")
     ));
   }
   function renderTitle() {
@@ -11021,7 +11021,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   });
 
   // src/ui/model/p90.js
-  var UNITS2 = { "13": "min", "108": "°C", "109": "K", "150": "%", "190": "kByte" };
+  var UNITS2 = { "12": "s", "13": "min", "108": "°C", "109": "K", "150": "%", "190": "kByte" };
   var unitText = (c) => UNITS2[c] || "";
   var HEX2 = /^[0-9A-F]{2}$/i;
   var REF_Z = /^(\d{3})\.(\d{3})$/;
@@ -11081,6 +11081,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         lo: pm[2] === "" ? null : +pm[2],
         hi: pm[4] != null ? +pm[4] : pm[2] === "" ? null : +pm[2],
         typ: +t[3],
+        fmt: parseInt(t[4], 16) || 0,
         max: t[5],
         min: t[6],
         dflt: t[7],
@@ -11092,11 +11093,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       if (!byGroup.has(t[1])) byGroup.set(t[1], []);
       byGroup.get(t[1]).push(d);
     }
+    const zentral = byGroup.get("32") || null;
     return (group, base) => {
-      const L = byGroup.get(String(group));
-      if (!L) return null;
       const m = base.match(/^([A-Za-z]*)(\d*)$/);
       if (!m) return null;
+      const L = byGroup.get(String(group)) || (!m[1] && m[2] ? zentral : null);
+      if (!L) return null;
       const num = m[2] === "" ? null : +m[2];
       return L.find((d) => d.letter === m[1] && (num == null ? d.lo == null : d.lo != null && num >= d.lo && num <= d.hi)) || null;
     };
@@ -11143,6 +11145,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return out;
   }
   var SP_SKIP = /* @__PURE__ */ new Set(["1207", "2030"]);
+  var SP_SKIP_ALWAYS = /^15(1[1-9]|20)$/;
   var NZ_DAY = { "1014": 0, "1015": 1, "1016": 2, "1017": 3, "1018": 4, "1019": 5, "1020": 6 };
   var NZ_VAL = /^(?:---|\d\d:\d\d-\d\d:\d\d)(?: (?:---|\d\d:\d\d-\d\d:\d\d)){0,3}$/;
   var JDP_VAL = /^([PE])([A-Z])([A-Z]) (\d{4}) (\d\d\.\d\d)(?:-(\d\d\.\d\d))?$/;
@@ -11208,11 +11211,17 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         if (MK && MK.name && !pinLike && !f.K) f.K = MK.name;
         const u = unitText(r.unit || D && D.unit || "") || (MK && MK.unit && !/keine/i.test(MK.unit) ? MK.unit : "");
         if (u) f.E = u;
-        if (kind === "AX" && D) {
+        if (kind === "AX" && D && !(D.fmt & 128)) {
           f.UG = D.min;
           f.OG = D.max;
         }
+        if (parseInt(r.st, 16) & 128) {
+          if (kind === "AX") f.W = "-";
+          else if (kind === "TX") f.W = "---";
+        }
+        if (kind === "TX" && D && D.typ === 4 && D.fmt & 127 && f.W.length > (D.fmt & 127)) f.W = f.W.slice(0, D.fmt & 127).trimEnd();
         if (D ? D.attr & 4 : g === 0 && SP_SKIP.has(r.base)) f.noSP = true;
+        if (g === 0 && SP_SKIP_ALWAYS.test(r.base)) f.noSP = true;
         if (kind === "V") refsOf(r.tok).slice(0, 4).forEach((x, i) => {
           if (x) f["V" + (i + 1)] = x;
         });
@@ -13814,7 +13823,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     S.log = [];
     S.prog = { text: "Verbinde …", done: 0, total: 0 };
     S.ac = new AbortController();
-    addLog("Start (Werkbank 0.8.4, " + (S.demo ? "Demo" : "Port " + (S.portIdx + 1)) + ")");
+    addLog("Start (Werkbank 0.8.5, " + (S.demo ? "Demo" : "Port " + (S.portIdx + 1)) + ")");
     try {
       paint();
     } catch (e) {
@@ -14142,7 +14151,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   init_persist();
   init_wtgml();
   var api = {
-    version: "0.8.4",
+    version: "0.8.5",
     register: ALL,
     state: APP,
     curC,
