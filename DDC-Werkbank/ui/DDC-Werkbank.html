@@ -9731,7 +9731,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
       h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
-      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.8.5")
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.8.6")
     ));
   }
   function renderTitle() {
@@ -11097,10 +11097,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return (group, base) => {
       const m = base.match(/^([A-Za-z]*)(\d*)$/);
       if (!m) return null;
-      const L = byGroup.get(String(group)) || (!m[1] && m[2] ? zentral : null);
+      const own = byGroup.get(String(group));
+      const L = own || (!m[1] && m[2] ? zentral : null);
       if (!L) return null;
       const num = m[2] === "" ? null : +m[2];
-      return L.find((d) => d.letter === m[1] && (num == null ? d.lo == null : d.lo != null && num >= d.lo && num <= d.hi)) || null;
+      const d = L.find((d2) => d2.letter === m[1] && (num == null ? d2.lo == null : d2.lo != null && num >= d2.lo && num <= d2.hi)) || null;
+      return d && !own ? { ...d, viaZ: true } : d;
     };
   }
   function kindFromDef(d) {
@@ -11199,25 +11201,26 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         const r = parseP1(l);
         if (!r) continue;
         const D = def(d.group, r.base);
-        const MK = !D && d.group ? makroDef(devName(d.group, d.type), r.base) : null;
+        const MK = (!D || D.viaZ) && d.group ? makroDef(devName(d.group, d.type), r.base) : null;
         const pinLike = /^[bykBYK]\d+$/.test(r.base);
         const kind = D && kindFromDef(D) || MK && !(MK.kind === "V" && !isRef(r.tok)) && MK.kind || kindGuess(r);
         const f = { P: r.base + "/" + r.inst, W: r.val, ST: r.st };
         if (r.gt) f.GT = r.gt;
-        if (D && D.name) {
+        if (MK && MK.name && !pinLike && D && D.viaZ) f.K = MK.name;
+        else if (D && D.name) {
           const n = D.range && D.lo != null ? parseInt(r.base.replace(/^[A-Za-z]*/, ""), 10) - D.lo + 1 : r.inst;
           f.K = D.name.replace(/%\((\d+)\)/, "%(" + n + ")");
         }
         if (MK && MK.name && !pinLike && !f.K) f.K = MK.name;
         const u = unitText(r.unit || D && D.unit || "") || (MK && MK.unit && !/keine/i.test(MK.unit) ? MK.unit : "");
         if (u) f.E = u;
-        if (kind === "AX" && D && !(D.fmt & 128)) {
+        if (kind === "AX" && D && !D.viaZ && !(D.fmt & 128)) {
           f.UG = D.min;
           f.OG = D.max;
         }
         if (parseInt(r.st, 16) & 128) {
-          if (kind === "AX") f.W = "-";
-          else if (kind === "TX") f.W = "---";
+          if (kind === "AX" && /^(?:0+(?:\.0+)?|00:00)$/.test(r.val)) f.W = "-";
+          else if (kind === "TX" && !r.val) f.W = "---";
         }
         if (kind === "TX" && D && D.typ === 4 && D.fmt & 127 && f.W.length > (D.fmt & 127)) f.W = f.W.slice(0, D.fmt & 127).trimEnd();
         if (D ? D.attr & 4 : g === 0 && SP_SKIP.has(r.base)) f.noSP = true;
@@ -13823,7 +13826,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     S.log = [];
     S.prog = { text: "Verbinde …", done: 0, total: 0 };
     S.ac = new AbortController();
-    addLog("Start (Werkbank 0.8.5, " + (S.demo ? "Demo" : "Port " + (S.portIdx + 1)) + ")");
+    addLog("Start (Werkbank 0.8.6, " + (S.demo ? "Demo" : "Port " + (S.portIdx + 1)) + ")");
     try {
       paint();
     } catch (e) {
@@ -14151,7 +14154,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   init_persist();
   init_wtgml();
   var api = {
-    version: "0.8.5",
+    version: "0.8.6",
     register: ALL,
     state: APP,
     curC,

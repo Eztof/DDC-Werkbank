@@ -65,9 +65,11 @@ function defIndex(lines) {
   const zentral = byGroup.get("32") || null;
   return (group, base) => {
     const m = base.match(/^([A-Za-z]*)(\d*)$/); if (!m) return null;
-    const L = byGroup.get(String(group)) || (!m[1] && m[2] ? zentral : null); if (!L) return null;
+    const own = byGroup.get(String(group));
+    const L = own || (!m[1] && m[2] ? zentral : null); if (!L) return null;
     const num = m[2] === "" ? null : +m[2];
-    return L.find(d => d.letter === m[1] && (num == null ? d.lo == null : d.lo != null && num >= d.lo && num <= d.hi)) || null;
+    const d = L.find(d => d.letter === m[1] && (num == null ? d.lo == null : d.lo != null && num >= d.lo && num <= d.hi)) || null;
+    return d && !own ? { ...d, viaZ: true } : d;
   };
 }
 
@@ -167,22 +169,29 @@ function recordsOf(z, devices, def) {
       if (!r) continue;
       const D = def(d.group, r.base);
       /* ohne Definitionen: Vorlagen der Schnellparametrierung (falls in die Werkbank geladen) */
-      const MK = !D && d.group ? makroDef(devName(d.group, d.type), r.base) : null;
+      /* (auch bei Definitionen, die nur aus der Tabelle der Zentrale stammen: die Vorlagen haben die besseren Namen) */
+      const MK = (!D || D.viaZ) && d.group ? makroDef(devName(d.group, d.type), r.base) : null;
       const pinLike = /^[bykBYK]\d+$/.test(r.base);
       const kind = (D && kindFromDef(D)) || (MK && !(MK.kind === "V" && !isRef(r.tok)) && MK.kind) || kindGuess(r);
       const f = { P: r.base + "/" + r.inst, W: r.val, ST: r.st };
       if (r.gt) f.GT = r.gt;
-      if (D && D.name) {
+      if (MK && MK.name && !pinLike && D && D.viaZ) f.K = MK.name;
+      else if (D && D.name) {
         const n = D.range && D.lo != null ? (parseInt(r.base.replace(/^[A-Za-z]*/, ""), 10) - D.lo + 1) : r.inst;
         f.K = D.name.replace(/%\((\d+)\)/, "%(" + n + ")");
       }
       if (MK && MK.name && !pinLike && !f.K) f.K = MK.name;
       const u = unitText(r.unit || (D && D.unit) || "") || (MK && MK.unit && !/keine/i.test(MK.unit) ? MK.unit : "");
       if (u) f.E = u;
-      /* Grenzen nur, wo die Schnellparametrierung sie selbst angibt: Format-Bit 0x80 (vorzeichenbehaftet) → keine */
-      if (kind === "AX" && D && !(D.fmt & 0x80)) { f.UG = D.min; f.OG = D.max; }
-      /* Status-Bit 0x80 = nicht belegt/aus: die DDC zeigt „-“, die .wwf auch (Wert 0 läge sonst unter UG) */
-      if (parseInt(r.st, 16) & 0x80) { if (kind === "AX") f.W = "-"; else if (kind === "TX") f.W = "---"; }
+      /* Grenzen nur, wo die Schnellparametrierung sie selbst angibt: Format-Bit 0x80 (vorzeichenbehaftet) → keine.
+         Bei den Regelkreisen hat SPEnterprise eigene Grenzen (z. B. 5120 bis 9999.90 statt 999.90) → dort leer lassen. */
+      if (kind === "AX" && D && !D.viaZ && !(D.fmt & 0x80)) { f.UG = D.min; f.OG = D.max; }
+      /* Status-Bit 0x80 = Parameter kann „aus“ sein; Wert 0 heißt dann „-“ (DDC-Anzeige, so auch in der .wwf).
+         Andere Werte bleiben (z. B. tN = 3 min mit demselben Status). */
+      if (parseInt(r.st, 16) & 0x80) {
+        if (kind === "AX" && /^(?:0+(?:\.0+)?|00:00)$/.test(r.val)) f.W = "-";
+        else if (kind === "TX" && !r.val) f.W = "---";
+      }
       /* Texte: höchstens so lang, wie die Definition erlaubt (Format = Länge, z. B. 0x10 = 16 Zeichen) */
       if (kind === "TX" && D && D.typ === 4 && (D.fmt & 0x7f) && f.W.length > (D.fmt & 0x7f)) f.W = f.W.slice(0, D.fmt & 0x7f).trimEnd();
       /* Parameter, die die Schnellparametrierung nicht kennt (Attribut-Bit 0x04 in D1, z. B. 1207 Task-Zustand,

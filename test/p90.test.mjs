@@ -300,13 +300,14 @@ test(".wwf: Regeln der Schnellparametrierung (Grenzen, „-“, Textlänge, Rege
     "p1 1.1.0 1090/1 6 0F 00 ", "p1 1.1.0 1422/1 10 0 0F 04 ", "p1 1.1.0 1511/1 0 0 0F 00 1.0.0/0",
     'p1 1.1.0 2119/1 "Disconnect          0000" 0F 00 ',
     "[Gerät 1.1.3 HEIZUNG 31 111]", "t1 1.1.3 31 111 00 HEIZUNG",
-    "p1 1.1.3 5125/1 0 12 0F 80 Vorhalt", "p1 1.1.3 5169/1 6.1 108 0F 00 ", "",
+    "p1 1.1.3 5125/1 0 12 0F 80 Vorhalt", "p1 1.1.3 5169/1 6.1 108 0F 00 ", "p1 1.1.3 5106/1 3 13 0F 80 tN", "",
     "[Definitionen 1.1.0 D0 Parameterdefinitionen]",
     "D1 32 1090 3 80 127 0 0 0 03 0F 0000 SyM: Sub-Bus",
     "D1 32 1422 2 02 999 1 10 0 03 0F 0000 Alarm-Verbindung",
     "D1 32 1511-1520 2 07 100000000 0 0 0 43 0F 0000 Z-Bus Top-20 #%(1)",
     "D1 32 2119 4 10 - - - 0 43 0F 0000 Modem Zustand",
     "D1 32 5125 2 02 299 1 20 12 A3 0F 0000 Vorhalt",
+    "D1 32 5106 2 01 99 1 3 13 83 0F 0000 tN",
     "D1 32 5169 1 8B 100.00 -50.00 0.00 108 42 0F 0000 TAmittel",
     ""
   ].join("\r\n");
@@ -317,4 +318,5 @@ test(".wwf: Regeln der Schnellparametrierung (Grenzen, „-“, Textlänge, Rege
   assert.match(t, /TX {6}P=2119\n {8}W=Disconnect\n/, "höchstens 16 Zeichen");
   assert.match(t, /AX {6}P=5125 [^\n]*\n {8}W=- {4}; E=s/, "Status 0x80 → „-“");
   assert.match(t, /AI {6}P=5169 {6}; K= {5}!TAmittel/, "Regelkreis nutzt die Definitionen der Zentrale");
+  assert.match(t, /AX {6}P=5106 [^\n]*\n {8}W=3 {4}; E=min [^\n]*\n {7}UG= {5}; OG=\n/, "Wert ≠ 0 bleibt; Regelkreis ohne Grenzen");
 });
