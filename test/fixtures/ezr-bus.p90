@@ -1,0 +1,39 @@
+# P90-Sicherung (Kieback&Peter DDC3000)
+# Erstellt: 13.11.2026, 09:00:00
+# Geräte: 4
+
+[Gerät 1.4.0 DDC3035 32 93]
+t1 1.4.0 32 93 00 
+p1 1.4.0 k1/1 0 0F 00 Pumpe
+# Ende m0: Z6 000 m0 1.4.0 */* | Ende p0: Z6 000 p0 1.4.0 */*
+
+[Gerät 1.4.1 EZR30 16 74]
+t1 1.4.1 16 74 00 Raum 1
+m1 1.4.1 202/1 03
+p1 1.4.1 899/1 2.030 0 0F 00 
+p1 1.4.1 6410/1 45 150 0F 00 Raum 1 Ventil Heizen
+p1 1.4.1 6450/1 21.4 108 0F 00 Raum 1 Temp. Raum
+p1 1.4.1 8230/1 21.0 108 0F 00 Raum 1 Temp. Raum Soll Komfort
+p1 1.4.1 8233/1 21.0 108 0F 00 Raum 1 Temp. Raum Soll Ist
+# Ende m0: Z6 000 m0 1.4.1 */* | Ende p0: Z6 000 p0 1.4.1 */*
+
+[Gerät 1.4.2 EZR10 16 70]
+t1 1.4.2 16 70 40 Raum 2
+m1 1.4.2 198/1 03
+p1 1.4.2 899/1 ???? 0 0F 20 
+p1 1.4.2 6410/1 ???? 150 0F 20 Raum 2 Ventil Heizen
+p1 1.4.2 6450/1 ???? 108 0F 20 Raum 2 Temp. Raum
+p1 1.4.2 8230/1 20.0 108 0F 00 Raum 2 Temp. Raum Soll Komfort
+p1 1.4.2 8233/1 ???? 108 0F 20 Raum 2 Temp. Raum Soll Ist
+# Ende m0: Z6 000 m0 1.4.2 */* | Ende p0: Z6 000 p0 1.4.2 */*
+
+[Gerät 1.4.3 EZR30 16 74]
+t1 1.4.3 16 74 00 Raum 3
+m1 1.4.3 202/1 03
+p1 1.4.3 899/1 2.030 0 0F 00 
+p1 1.4.3 6410/1 0 150 0F 00 Raum 3 Ventil Heizen
+p1 1.4.3 6450/1 ???? 108 0F 20 Raum 3 Temp. Raum
+p1 1.4.3 8233/1 19.5 108 0F 00 Raum 3 Temp. Raum Soll Ist
+# Ende m0: Z6 000 m0 1.4.3 */* | Ende p0: Z6 000 p0 1.4.3 */*
+
+\r\n

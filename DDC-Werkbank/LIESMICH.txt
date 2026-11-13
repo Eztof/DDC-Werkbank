@@ -70,6 +70,13 @@ Reiter „DDC3000 sichern“  liest eine DDC3000 über die serielle Schnittstell
                         Auslesen, oder unten „→ .wwf …“ für eine vorhandene
                         .p90/.EZR/.PRO. Je Zentrale eine .wwf. In SPEnterprise
                         dann „Übersetzen > Datei übersetzen“.
+Busmodule              Übersicht einer DDC3000 aus .p90/.EZR/.PRO: je Modul
+                        (EZR, FBM, SBM …), ob es bei der Sicherung geantwortet
+                        hat, seine Version und bei EZR Raumtemperatur, Soll
+                        und Ventil. Filter „Antworten nicht“ / „Wert ungültig“,
+                        Kachel „Busmodule antworten“, Befund je Modul ohne
+                        Antwort. Die .wwf enthält keine Werte – dafür die .p90
+                        öffnen.
 
 Wartungsdoku
 ------------

@@ -296,9 +296,41 @@ export function parseP90(text, label, fileName) {
     if (failed.length) C.system.push({ group: "Sicherung", k: "Geräte mit Fehler", v: failed.join(", "), warn: true });
     if (B.aborted) C.system.push({ group: "Sicherung", k: "Status", v: "abgebrochen – unvollständig", warn: true });
     C.p90 = { failed, aborted: B.aborted, defs: B.definitions.D1.length };
+    markBus(C, devices);
     out.push(C);
   }
   return out.length === 1 ? out[0] : out;
+}
+
+/* Busmodule (EZR, FBM, SBM …): antwortet das Modul, und was meldete es bei der Sicherung?
+   t1-Status Bit 0x40 = die Zentrale erreicht das Modul nicht. Dann sind alle Istwerte des Moduls „????“
+   bzw. Status 20 und die Version (899) fehlt – in den echten Sicherungen ausnahmslos so.
+   Regelkreise (Gruppe 31) und die Zentrale selbst (32) sind kein Busmodul. */
+const BUS_VALS = [["6450", "Raum"], ["8233", "Soll"], ["6410", "Ventil"]];   // Einzelraumregler (EZR10/11/30)
+function markBus(C, devices) {
+  const byG = new Map(devices.map(d => [String(+d.addr.split(".")[2]), d]));
+  const bad = r => (parseInt(r.st, 16) & 0x20) || /^\?+$/.test(r.val);
+  for (const mo of C.modules) {
+    const d = byG.get(mo.addr);
+    if (!d || mo.addr === "0" || !d.group || d.group === "31" || d.group === "32") continue;
+    const tm = String(d.t1 || "").match(/^t1 \S+ \d+ \d+ ([0-9A-Fa-f]{2})/);
+    const st = tm ? parseInt(tm[1], 16) : null;
+    const P = new Map();
+    let pins = 0, pinsOk = 0;
+    for (const l of d.values) {
+      const r = parseP1(l); if (!r) continue;
+      if (!P.has(r.base)) P.set(r.base, r);
+      if (/^[byk]\d+$/.test(r.base)) { pins++; if (!bad(r)) pinsOk++; }
+    }
+    const fw = P.get("899");
+    const vals = BUS_VALS.map(([b, k]) => {
+      const r = P.get(b); if (!r) return null;
+      const u = unitText(r.unit);
+      return { k, v: bad(r) ? null : r.val + (u ? " " + u : "") };
+    }).filter(Boolean);
+    mo.bus = { st, off: st != null && !!(st & 0x40), fw: fw && !bad(fw) ? fw.val : "", vals, pins, pinsOk };
+    if (mo.bus.fw) mo.fw = mo.bus.fw;
+  }
 }
 
 /* =========================================================================

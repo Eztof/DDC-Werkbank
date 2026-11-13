@@ -3,6 +3,7 @@
    (Übernommen aus p90/test/run-tests.js und erweitert.) */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import * as P from "../src/ui/p90/protocol.js";
 import * as cp850 from "../src/ui/p90/cp850.js";
 import { P90Link, LOGIN_IDENT } from "../src/ui/p90/link.js";
@@ -319,4 +320,30 @@ test(".wwf: Regeln der Schnellparametrierung (Grenzen, „-“, Textlänge, Rege
   assert.match(t, /AX {6}P=5125 [^\n]*\n {8}W=- {4}; E=s/, "Status 0x80 → „-“");
   assert.match(t, /AI {6}P=5169 {6}; K= {5}!TAmittel/, "Regelkreis nutzt die Definitionen der Zentrale");
   assert.match(t, /AX {6}P=5106 [^\n]*\n {8}W=3 {4}; E=min [^\n]*\n {7}UG= {5}; OG=\n/, "Wert ≠ 0 bleibt; Regelkreis ohne Grenzen");
+});
+
+/* Erfundene EZR-Zentrale (test/fixtures/ezr-bus.p90): Kreis 1 antwortet, Kreis 2 nicht (t1-Status 40, alles „????“),
+   Kreis 3 antwortet, aber der Raumfühler liefert nichts */
+const EZR_P90 = fs.readFileSync(new URL("./fixtures/ezr-bus.p90", import.meta.url), "utf8");
+
+test("Busmodule: antwortet / antwortet nicht (t1-Status 40), Werte der EZR bei der Sicherung, Befund", async () => {
+  const mem = new Map();
+  globalThis.localStorage ??= { getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, String(v)), removeItem: k => mem.delete(k) };
+  const { runFindings } = await import("../src/ui/model/findings.js");
+  const C = parseP90(EZR_P90, "EZR", "ezr.p90");
+  const mo = a => C.modules.find(m => m.addr === a);
+  assert.equal(mo("0").bus, undefined, "Grundgerät ist kein Busmodul");
+  assert.deepEqual(mo("1").bus, { st: 0, off: false, fw: "2.030", vals: [{ k: "Raum", v: "21.4 °C" }, { k: "Soll", v: "21.0 °C" }, { k: "Ventil", v: "45 %" }], pins: 0, pinsOk: 0 });
+  assert.equal(mo("2").bus.off, true);
+  assert.equal(mo("2").bus.fw, "");
+  assert.deepEqual(mo("3").bus.vals.map(x => x.v), [null, "19.5 °C", "0 %"], "Fühlerfehler: Raum ungültig, Modul antwortet");
+  assert.equal(mo("3").bus.off, false);
+  runFindings(C);
+  const F = C.findings.filter(f => f.cat === "Bus");
+  assert.equal(F.length, 1);
+  assert.match(F[0].title, /^Modul 2 EZR10 · Raum 2 antwortet nicht/);
+  /* .wwf kennt keinen Busstatus */
+  const W = toWwf(EZR_P90, "EZR")[0];
+  const { parseDDC3000 } = await import("../src/ui/model/ddc3000.js");
+  assert.ok(parseDDC3000(W.rtf, "x", "x.wwf").modules.every(m => !m.bus));
 });

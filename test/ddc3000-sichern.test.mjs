@@ -124,3 +124,35 @@ test("Ordner mit .p90 und .wwf laden: Zentralen heißen nach Datei bzw. Namen in
     await browser.close();
   }
 });
+
+test("Übersicht: welche Busmodule (EZR …) antworten und was sie bei der Sicherung meldeten – mit Filter", async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+    const errors = [];
+    page.on("pageerror", e => errors.push(e.message));
+    await page.goto("file://" + HTML);
+    await page.setInputFiles("#fileIn", path.join(ROOT, "test", "fixtures", "ezr-bus.p90"));
+    await page.waitForSelector("#modTable");
+    const row = n => page.innerText(`#modTable tbody tr:has(td.mono:text-is('${n}'))`);
+    assert.match(await row("1"), /antwortet\s*V 2\.030[\s\S]*Raum 21\.4 °C · Soll 21\.0 °C · Ventil 45 %/);
+    assert.match(await row("2"), /antwortet nicht[\s\S]*keine Werte/);
+    assert.match(await row("3"), /Raum ungültig · Soll 19\.5 °C · Ventil 0 %/);
+    assert.match(await page.innerText(".tile:has-text('Busmodule antworten')"), /2\s*\/ 3[\s\S]*1 ohne Antwort[\s\S]*1 mit ungültigem Wert/);
+    /* Kachel → nur die, die nicht antworten */
+    await page.click(".tile:has-text('Busmodule antworten')");
+    await page.waitForFunction(() => document.querySelectorAll("#modTable tbody tr").length === 1);
+    assert.match(await page.innerText("#modTable tbody"), /Raum 2/);
+    await page.click("#modTable .seg button:has-text('Wert ungültig')");
+    assert.match(await page.innerText("#modTable tbody"), /^3\s/);
+    await page.click("#modTable .seg button:has-text('Alle')");
+    assert.equal(await page.locator("#modTable tbody tr").count(), 4);
+    /* Befund und Sprung in den Kreis */
+    assert.match(await page.innerText(".page-body"), /Modul 2 EZR10 · Raum 2 antwortet nicht/);
+    await page.click("#modTable tbody tr:has-text('Raum 1')");
+    await page.waitForSelector(".nav-item.on[data-view='program'], .nav-item.active[data-view='program']");
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});

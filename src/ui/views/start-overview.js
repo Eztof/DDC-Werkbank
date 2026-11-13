@@ -84,7 +84,7 @@ VIEWS.add({
 VIEWS.add({
   id: "overview", label: "Übersicht", icon: "overview", group: 1, order: 110,
   needsC: true,
-  render(root, C) {
+  render(root, C, opts) {
     const m = C.meta;
     root.appendChild(pageHead(centralTitle(C), stationSub(C), [
       btn("Bericht drucken", "print", () => window.print()),
@@ -107,22 +107,7 @@ VIEWS.add({
     }
 
     /* Module */
-    body.appendChild(h("div", { class: "section-title" }, C.format === "DDC3000" ? "Grundgerät und Kreise" : "Module"));
-    const t = h("table", { class: "grid card-t" });
-    t.appendChild(h("thead", null, h("tr", null, h("th", null, C.format === "DDC3000" ? "Kreis" : "Modul"), h("th", null, "Typ"), h("th", null, "Bezeichnung"),
-      h("th", { class: "num" }, "Klemmen"), h("th", { style: { width: "28%" } }, "Belegung"), h("th", null, C.format === "DDC3000" ? "SW-Module" : "Stand"))));
-    const tb = h("tbody");
-    for (const mo of C.modules) {
-      const usedM = mo.pinCount - (mo.kinds.frei || 0);
-      tb.appendChild(h("tr", { class: mo.pinCount ? "click" : "", onclick: mo.pinCount ? () => go("points", { mod: mo.addr }) : null },
-        h("td", { class: "mono" }, mo.addr), h("td", null, mo.type || "–", mo.active === false ? h("span", { class: "pill warn", style: { marginLeft: "6px" } }, "inaktiv") : null),
-        h("td", null, mo.name || h("span", { class: "faint" }, "–")),
-        h("td", { class: "num" }, mo.pinCount ? usedM + " / " + mo.pinCount : "–"),
-        h("td", null, mo.pinCount ? kbar(mo.kinds, mo.pinCount) : null),
-        h("td", { class: "small muted" }, C.format === "DDC3000" ? (mo.swModules || []).map(x => "M" + x.nr).join(" ") : [mo.fw ? "FW " + mo.fw : "", mo.hw ? "HW " + trunc(mo.hw, 40) : ""].filter(Boolean).join(" · ") || "")));
-    }
-    t.appendChild(tb);
-    body.appendChild(h("div", { class: "card tight" }, t));
+    body.appendChild(moduleTable(C, opts || {}));
 
     /* Systemdaten */
     const groups = new Map();
@@ -155,6 +140,67 @@ VIEWS.add({
   }
 });
 
+/* Module bzw. Grundgerät und Kreise. Bei DDC3000-Sicherungen (.p90/.EZR) dazu je Busmodul:
+   antwortet es, und welche Werte meldete es bei der Sicherung (EZR: Raum, Soll, Ventil). */
+const MODF = new Map();   // cid → "all" | "off" | "bad"
+const busBad = mo => !!(mo.bus && !mo.bus.off && mo.bus.vals.some(x => x.v == null));
+function moduleTable(C, opts) {
+  const d3 = C.format === "DDC3000";
+  const bus = C.modules.filter(mo => mo.bus);
+  const off = bus.filter(mo => mo.bus.off), bad = bus.filter(busBad);
+  let f = MODF.get(C.cid) || "all";
+  if ((f === "off" && !off.length) || (f === "bad" && !bad.length)) f = "all";
+  const wrap = h("div", { id: "modTable" });
+  const title = h("div", { class: "section-title" }, d3 ? "Grundgerät und Kreise" : "Module");
+  wrap.appendChild(title);
+  if (bus.length) {
+    const seg = h("div", { class: "seg", style: { marginLeft: "12px" } });
+    const opt = (k, label, n) => seg.appendChild(h("button", { class: f === k ? "on" : "", onclick: () => { MODF.set(C.cid, k); wrap.replaceWith(moduleTable(C, {})); } }, label + " " + n));
+    opt("all", "Alle", C.modules.length);
+    if (off.length) opt("off", "Antworten nicht", off.length);
+    if (bad.length) opt("bad", "Wert ungültig", bad.length);
+    title.appendChild(seg);
+    title.appendChild(h("span", { class: "small muted", style: { marginLeft: "10px", fontWeight: "normal" } },
+      (bus.length - off.length) + " von " + bus.length + " Busmodulen antworten · Werte zum Zeitpunkt der Sicherung"));
+  }
+  const t = h("table", { class: "grid card-t" });
+  t.appendChild(h("thead", null, h("tr", null, h("th", null, d3 ? "Kreis" : "Modul"), h("th", null, "Typ"), h("th", null, "Bezeichnung"),
+    bus.length ? h("th", null, "Verbindung") : null, bus.length ? h("th", null, "Werte") : null,
+    h("th", { class: "num" }, "Klemmen"), bus.length ? null : h("th", { style: { width: "28%" } }, "Belegung"), h("th", null, d3 ? "SW-Module" : "Stand"))));
+  const tb = h("tbody");
+  const rows = f === "off" ? off : f === "bad" ? bad : C.modules;
+  for (const mo of rows) {
+    const usedM = mo.pinCount - (mo.kinds.frei || 0);
+    const rk = C.nodes.has(mo.addr + ":RK") ? mo.addr + ":RK" : null;
+    const open = mo.pinCount ? () => go("points", { mod: mo.addr }) : rk ? () => go("program", { node: rk }) : null;
+    tb.appendChild(h("tr", { class: open ? "click" : "", onclick: open },
+      h("td", { class: "mono" }, mo.addr), h("td", null, mo.type || "–", mo.active === false ? h("span", { class: "pill warn", style: { marginLeft: "6px" } }, "inaktiv") : null),
+      h("td", null, mo.name || h("span", { class: "faint" }, "–")),
+      bus.length ? h("td", { class: "nowrap" }, busState(mo)) : null,
+      bus.length ? h("td", { class: "small" }, busVals(mo)) : null,
+      h("td", { class: "num" }, mo.pinCount ? usedM + " / " + mo.pinCount : "–"),
+      bus.length ? null : h("td", null, mo.pinCount ? kbar(mo.kinds, mo.pinCount) : null),
+      h("td", { class: "small muted" }, d3 ? (mo.swModules || []).map(x => "M" + x.nr).join(" ") : [mo.fw ? "FW " + mo.fw : "", mo.hw ? "HW " + trunc(mo.hw, 40) : ""].filter(Boolean).join(" · ") || "")));
+  }
+  t.appendChild(tb);
+  wrap.appendChild(h("div", { class: "card tight" }, t));
+  if (opts.scroll === "mods") requestAnimationFrame(() => wrap.scrollIntoView({ block: "start" }));
+  return wrap;
+}
+function busState(mo) {
+  if (!mo.bus) return null;
+  if (mo.bus.off) return h("span", { class: "pill err", title: "Bei der Sicherung hat die Zentrale das Modul nicht erreicht – keine Version, alle Istwerte ungültig." }, "antwortet nicht");
+  return [h("span", { class: "pill ok" }, "antwortet"), mo.bus.fw ? h("span", { class: "small muted", style: { marginLeft: "6px" } }, "V " + mo.bus.fw) : null];
+}
+function busVals(mo) {
+  const B = mo.bus;
+  if (!B) return null;
+  if (B.off) return h("span", { class: "faint" }, "keine Werte");
+  const parts = B.vals.map(x => x.v == null ? h("span", { class: "pill err", title: x.k + ": Wert ungültig (????) – z. B. Fühler defekt oder nicht angeschlossen" }, x.k + " ungültig") : h("span", null, h("span", { class: "muted" }, x.k + " "), x.v));
+  if (!parts.length && B.pins) parts.push(h("span", null, B.pinsOk + " von " + B.pins + " Klemmen mit Wert"));
+  return parts.length ? parts.flatMap((x, i) => i ? [h("span", { class: "faint" }, " · "), x] : [x]) : h("span", { class: "faint" }, "–");
+}
+
 function stationProfileText(C) {
   const m = C.meta, L = [];
   const kinds = {}; C.pins.forEach(p => kinds[p.kind] = (kinds[p.kind] || 0) + 1);
@@ -181,6 +227,14 @@ OVERVIEW_TILES.add({ id: "klemmen", order: 10, tile(C, go) {
   return { icon: "pin", title: "Klemmen belegt", value: C.pins.length - (kinds.frei || 0), small: "/ " + C.pins.length, onclick: () => go("points"),
     detail: h("div", { class: "stack", style: { gap: "6px", marginTop: "4px" } }, kbar(kinds),
       h("div", { class: "legend" }, ["AE", "AA", "BE", "BA"].filter(k => kinds[k]).map(k => h("span", null, h("i", { style: { background: `var(--k-${k})` } }), k + " " + kinds[k])))) };
+} });
+OVERVIEW_TILES.add({ id: "bus", order: 15, tile(C, go) {
+  const bus = C.modules.filter(mo => mo.bus); if (!bus.length) return null;
+  const off = bus.filter(mo => mo.bus.off).length, bad = bus.filter(busBad).length;
+  return { icon: "cpu", title: "Busmodule antworten", value: bus.length - off, small: "/ " + bus.length,
+    onclick: () => { MODF.set(C.cid, off ? "off" : bad ? "bad" : "all"); go("overview", { scroll: "mods" }); },
+    detail: h("div", { class: "row", style: { gap: "6px" } }, off ? h("span", { class: "pill err" }, off + " ohne Antwort") : h("span", { class: "pill ok" }, "alle antworten"),
+      bad ? h("span", { class: "pill warn" }, bad + " mit ungültigem Wert") : null) };
 } });
 OVERVIEW_TILES.add({ id: "programm", order: 20, tile(C, go) {
   let n = 0; for (const x of C.nodes.values()) if (!x.ghost && !x.isPin && !String(x.type).startsWith("SY_") && x.type !== "SYS") n++;
