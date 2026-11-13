@@ -331,7 +331,7 @@ export function pageHead(title, sub, acts) {
 /* Zentralennummer ohne führende Nullen („07“ → „7“) */
 export function centralNr(c) { const n = parseInt(c.meta.centralAddr, 10); return isNaN(n) ? "" : String(n); }
 /* Titel einer Zentrale wie im Service-Tool: „Nr: Zentralenname“ (ohne Namen in der Sicherung: Ordner-/Dateiname) */
-export function centralTitle(c) { const nr = centralNr(c), nm = c.meta.stationName || c.meta.name; return nr ? nr + ": " + nm : nm; }
+export function centralTitle(c) { const nr = centralNr(c), nm = c.meta.stationName || c.meta.fileTitle || c.meta.name; return nr ? nr + ": " + nm : nm; }
 export function stationLabel(c) {
   const m = c.meta, t = c.format === "DDC3000" ? "DDC3000" : m.stationType;
   const ti = centralTitle(c);

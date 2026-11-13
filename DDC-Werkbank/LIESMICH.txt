@@ -1,4 +1,4 @@
-DDC-Werkbank – Version 0.8
+DDC-Werkbank – Version 0.9
 ==========================
 
 Aktualisieren
@@ -13,7 +13,8 @@ ersetzen und im Browser F5 zu drücken.
 
 Was liegt wo?
 -------------
-DDC-Werkbank.exe   Hintergrunddienst: Oberfläche, Live-Lesen, Merkliste
+DDC-Werkbank.exe   Hintergrunddienst: Oberfläche, Live-Lesen, Merkliste,
+                   Wartungsdoku direkt speichern („Über die .exe öffnen“)
 ui\                die Oberfläche (DDC-Werkbank.html – geht auch ohne Dienst)
 ui\erweiterungen.js  optional: eigene Prüfungen/Ansichten ohne Neubau
                    (fehlt die Datei, passiert nichts)
@@ -72,6 +73,15 @@ Reiter „DDC3000 sichern“  liest eine DDC3000 über die serielle Schnittstell
 
 Wartungsdoku
 ------------
+Öffnen          „Wartungsdoku öffnen“ nimmt den Dateidialog des Browsers;
+                danach fragt der Browser einmal „Änderungen speichern?“ –
+                ab da schreibt die Werkbank direkt in die Datei.
+                Passiert nach der Dateiauswahl nichts (manche Rechner geben
+                dem Browser die Datei nicht heraus): „Über die .exe öffnen“.
+                Dort Ordner anklicken oder den Pfad einfügen und die .wtgml
+                wählen. Die .exe liest und schreibt die Datei dann selbst.
+                Braucht die DDC-Werkbank.exe ab Version 0.9 (Dienst 0.4) und
+                die Werkbank über die .exe geöffnet (http://localhost:47902).
 Module          SBM, FBM, Raumregler (EZR) usw. aus der Sicherung stehen als
                 eigene Einträge bei der Automationsstation. In einer schon
                 begonnenen Doku: ISP oder Stations-Anlage wählen und

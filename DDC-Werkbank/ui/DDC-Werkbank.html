@@ -667,6 +667,19 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
 .p90-log .tx { color: var(--accent); }
 .p90-log .err { color: var(--err); }
 .p90-log .warn { color: var(--warn); }
+/* Wartungsdoku über die Werkbank-.exe öffnen (Dateiauswahl in der Seite) */
+.wdsvc { max-width: 980px; }
+.wdsvc-orte, .wdsvc-recent { flex-wrap: wrap; gap: 6px; }
+.wdsvc-recent { margin-top: 8px; gap: 10px; }
+.wdsvc-orte .btn.on { border-color: var(--accent); color: var(--accent); }
+.wdsvc-list { margin-top: 10px; max-height: 42vh; overflow: auto; border: 1px solid var(--stroke); border-radius: 6px; background: var(--card-3); }
+.wdsvc-list.busy { opacity: .6; }
+.wdsvc-it { display: flex; align-items: center; gap: 10px; padding: 7px 12px; cursor: pointer; border-bottom: 1px solid var(--stroke); font-size: 13px; }
+.wdsvc-it:last-child { border-bottom: 0; }
+.wdsvc-it:hover { background: var(--card); }
+.wdsvc-it .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wdsvc-it.file .nm { font-weight: 600; }
+.wdsvc-it .sz { width: 64px; text-align: right; }
 </style>
 </head>
 <body>
@@ -2838,6 +2851,29 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     }
   });
 
+  // src/ui/core/service.js
+  async function svcJson(path, body, ms) {
+    const ctl = typeof AbortController === "function" ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), ms || 8e3) : null;
+    try {
+      const opts = { signal: ctl ? ctl.signal : void 0 };
+      if (body !== void 0) Object.assign(opts, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const r = await fetch(SERVICE_BASE + path, opts);
+      return await r.json();
+    } catch (e) {
+      if (e && e.name === "AbortError") throw new Error("Zeitüberschreitung (" + path + ")");
+      throw e;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  var SERVICE_BASE;
+  var init_service = __esm({
+    "src/ui/core/service.js"() {
+      SERVICE_BASE = location.protocol === "file:" ? "http://localhost:47902" : "";
+    }
+  });
+
   // src/ui/wartung/wtgml.js
   function wset(el, name, value) {
     let k = wkid(el, name);
@@ -2992,7 +3028,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   }
   function wdocOpen(text, name, handle) {
     const { doc, decl } = wtgmlParse(text);
-    WDOC.cur = { name, text0: text, doc, decl, handle: handle || null, writable: false, dirty: false, savedAt: null, lastMod: null, auto: store.get("wdAuto", true), err: null, sel: null };
+    WDOC.cur = { name, text0: text, doc, decl, handle: handle || null, svc: null, writable: false, dirty: false, savedAt: null, lastMod: null, auto: store.get("wdAuto", true), err: null, sel: null };
     return WDOC.cur;
   }
   function wdocInfo(D) {
@@ -3029,6 +3065,31 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     D = D || WDOC.cur;
     if (!D) return;
     const text = wdocText(D);
+    if (D.svc) {
+      try {
+        const r = await wdSvc("schreiben", { pfad: D.svc.pfad, text, mtime: D.svc.mtime, force: !!D.overwriteOk });
+        if (r && r.konflikt) {
+          D.err = "Die Datei wurde außerhalb der Werkbank geändert.";
+          wdocStatus();
+          if (!silent) toast("Die Datei wurde zwischenzeitlich außerhalb geändert. Bitte neu laden oder „Trotzdem speichern“ wählen.", "warn", 8e3);
+          return false;
+        }
+        if (!r || !r.ok) throw new Error(r && r.err || "keine Antwort der Werkbank-.exe");
+        D.svc.mtime = r.mtime;
+        D.dirty = false;
+        D.savedAt = /* @__PURE__ */ new Date();
+        D.err = null;
+        D.overwriteOk = false;
+        wdocStatus();
+        if (!silent) toast("In " + D.name + " gespeichert.", "ok");
+        return true;
+      } catch (e) {
+        D.err = /^Speichern fehlgeschlagen/.test(e.message) ? e.message : "Speichern fehlgeschlagen: " + e.message;
+        wdocStatus();
+        toast(D.err, "err", 8e3);
+        return false;
+      }
+    }
     if (D.handle && D.writable) {
       try {
         const f = await D.handle.getFile();
@@ -3069,21 +3130,42 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       $("#wdIn") && $("#wdIn").click();
       return;
     }
+    let handle = null, settled = false, hang = null;
+    const onFocus = () => {
+      hang = setTimeout(() => {
+        if (!settled) toast("Der Browser liefert die gewählte Datei nicht. " + PICK_HINT(), "warn", 12e3);
+      }, 5e3);
+    };
+    window.addEventListener("focus", onFocus, { once: true });
     try {
-      const [handle] = await window.showOpenFilePicker({ types: [{ description: "WTGML-Wartungsdoku", accept: { "application/xml": [".wtgml", ".xml"] } }], multiple: false });
+      [handle] = await window.showOpenFilePicker({ types: [{ description: "WTGML-Wartungsdoku", accept: { "application/xml": [".wtgml", ".xml"] } }], multiple: false });
+    } catch (e) {
+      if (e && e.name === "AbortError") toast("Keine Datei geöffnet. Falls du eine ausgewählt hattest, gibt der Browser sie nicht heraus. " + PICK_HINT(), "inf", 9e3);
+      else {
+        toast("Der Dateidialog des Browsers geht hier nicht (" + (e && e.message || e) + "). " + PICK_HINT(), "warn", 1e4);
+        if (!WDSVC.ok && $("#wdIn")) $("#wdIn").click();
+      }
+      return;
+    } finally {
+      settled = true;
+      clearTimeout(hang);
+      window.removeEventListener("focus", onFocus);
+    }
+    try {
       await wdocLinkHandle(handle, true);
     } catch (e) {
-      if (e && e.name !== "AbortError") toast("Öffnen fehlgeschlagen: " + e.message, "err", 7e3);
+      toast("Öffnen fehlgeschlagen: " + (e && e.message || e), "err", 8e3);
     }
   }
   async function wdocLinkHandle(handle, ask) {
     const f = await handle.getFile();
     const D = wdocOpen(decodeBytes(new Uint8Array(await f.arrayBuffer())), f.name, handle);
     D.lastMod = f.lastModified;
-    if (ask) await wdocRequestWrite(D);
     idbPut("wdHandle", handle);
-    toast(D.writable ? "Verknüpft: " + f.name + " – Änderungen werden direkt in die Datei geschrieben." : "Geöffnet: " + f.name + " (nur lesen)", D.writable ? "ok" : "warn", 5e3);
     go("wartung", { tab: "doc" });
+    if (ask) await wdocRequestWrite(D);
+    if (WDOC.cur !== D) return;
+    toast(D.writable ? "Verknüpft: " + f.name + " – Änderungen werden direkt in die Datei geschrieben." : "Geöffnet: " + f.name + " (nur lesen) – oben „Zum Bearbeiten verknüpfen“ wählen.", D.writable ? "ok" : "warn", 6e3);
   }
   async function wdocRequestWrite(D) {
     if (!D.handle || !D.handle.requestPermission) return false;
@@ -3098,7 +3180,17 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   }
   async function wdocReload() {
     const D = WDOC.cur;
-    if (!D || !D.handle) return;
+    if (!D) return;
+    if (D.svc) {
+      const auto = D.auto;
+      if (await wdSvcOpen(D.svc.pfad, true)) {
+        WDOC.cur.auto = auto;
+        toast("Neu geladen: " + WDOC.cur.name, "ok");
+        renderAll();
+      }
+      return;
+    }
+    if (!D.handle) return;
     const f = await D.handle.getFile();
     const keep = { handle: D.handle, writable: D.writable, auto: D.auto };
     const N = wdocOpen(decodeBytes(new Uint8Array(await f.arrayBuffer())), f.name, keep.handle);
@@ -3123,15 +3215,15 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     } else if (D.writable) {
       cls = D.dirty ? "warn" : "ok";
       ic = D.dirty ? "clock" : "check";
-      msg = "Verknüpft mit " + D.name + (D.dirty ? " · ungespeicherte Änderungen" + (D.auto ? " · wird gleich gespeichert" : "") : t ? " · gespeichert " + t : " · keine Änderungen");
+      msg = "Verknüpft mit " + D.name + (D.svc ? " (über die Werkbank-.exe)" : "") + (D.dirty ? " · ungespeicherte Änderungen" + (D.auto ? " · wird gleich gespeichert" : "") : t ? " · gespeichert " + t : " · keine Änderungen");
     } else {
       cls = D.dirty ? "warn" : "inf";
       msg = D.name + (D.handle ? " · nur lesen – zum direkten Speichern verknüpfen" : " · nicht verknüpft – Speichern lädt eine neue Datei herunter") + (D.dirty ? " · ungespeicherte Änderungen" : "");
     }
     el.className = "infobar " + cls;
     el.appendChild(icon(ic));
-    el.appendChild(h("div", { class: "grow" }, msg));
-    if (D.err && D.handle) el.appendChild(h("div", { class: "row" }, btn("Neu laden", "upload", () => wdocReload(), "sm"), btn("Trotzdem speichern", "download", () => {
+    el.appendChild(h("div", { class: "grow", title: D.svc ? D.svc.pfad : null }, msg));
+    if (D.err && (D.handle || D.svc)) el.appendChild(h("div", { class: "row" }, btn("Neu laden", "upload", () => wdocReload(), "sm"), btn("Trotzdem speichern", "download", () => {
       D.overwriteOk = true;
       D.err = null;
       wdocSave(D);
@@ -3149,6 +3241,62 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       store.set("wdAuto", v);
       if (v && D.dirty) wdocSave(D, true);
     }));
+  }
+  async function wdSvc(what, body, ms) {
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), ms || 2e4);
+    try {
+      const opts = { signal: ctl.signal, headers: { "X-Werkbank": "1" } };
+      if (body !== void 0) Object.assign(opts, { method: "POST", headers: { "X-Werkbank": "1", "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const r = await fetch(SERVICE_BASE + "/api/wd/" + what, opts);
+      return await r.json();
+    } catch (e) {
+      throw new Error(e && e.name === "AbortError" ? "die Werkbank-.exe antwortet nicht" : "die Werkbank-.exe ist nicht erreichbar – läuft sie noch?");
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  function wdSvcCheck() {
+    if (WDSVC.ok != null) return Promise.resolve(WDSVC.ok);
+    if (location.protocol === "file:") {
+      WDSVC.ok = false;
+      return Promise.resolve(false);
+    }
+    if (!WDSVC.checking) WDSVC.checking = fetch(SERVICE_BASE + "/api/health").then((r) => r.json()).then((j) => !!(j && j.wd), () => false).then((v) => {
+      WDSVC.ok = v;
+      WDSVC.checking = null;
+      return v;
+    });
+    return WDSVC.checking;
+  }
+  async function wdSvcOpen(pfad, quiet) {
+    if (!quiet && WDOC.cur && WDOC.cur.dirty && !confirm("Die geöffnete Wartungsdoku hat ungespeicherte Änderungen. Trotzdem eine andere öffnen?")) return false;
+    let r;
+    try {
+      r = await wdSvc("lesen?pfad=" + encodeURIComponent(pfad), void 0, 3e4);
+    } catch (e) {
+      toast("Öffnen fehlgeschlagen: " + e.message, "err", 8e3);
+      return false;
+    }
+    if (!r || !r.ok) {
+      toast("Öffnen fehlgeschlagen: " + (r && r.err || "keine Antwort"), "err", 8e3);
+      return false;
+    }
+    let D;
+    try {
+      D = wdocOpen(decodeBytes(b64Bytes(r.data)), r.name, null);
+    } catch (e) {
+      toast(r.name + ": " + e.message, "err", 8e3);
+      return false;
+    }
+    D.svc = { pfad: r.pfad, mtime: r.mtime };
+    D.writable = true;
+    const rec = [r.pfad, ...store.get("wdSvcRecent", []).filter((p) => p !== r.pfad)].slice(0, 6);
+    store.set("wdSvcRecent", rec);
+    if (!quiet) {
+      toast("Verknüpft: " + r.name + " – Änderungen werden direkt in die Datei geschrieben.", "ok", 6e3);
+      go("wartung", { tab: "doc" });
+    }
+    return true;
   }
   function idb() {
     return new Promise((res, rej) => {
@@ -3193,7 +3341,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     }
     return isp;
   }
-  var WX, wkids, wkid, wtxt, wPrueferOf, WDOC, wdocBauteile, FS_OK, wDateFromInput, wDateToInput;
+  var WX, wkids, wkid, wtxt, wPrueferOf, WDOC, wdocBauteile, FS_OK, PICK_HINT, WDSVC, b64Bytes, wDateFromInput, wDateToInput;
   var init_wtgml = __esm({
     "src/ui/wartung/wtgml.js"() {
       init_nav();
@@ -3203,6 +3351,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       init_load();
       init_shell();
       init_persist();
+      init_service();
       init_generator();
       WX = {
         /* Kind-Elemente in der Reihenfolge, wie sie das K&P-Programm schreibt */
@@ -3249,6 +3398,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       WDOC = { cur: null };
       wdocBauteile = (D) => [...D.doc.getElementsByTagNameNS(WTG_NS, "selBauteil")];
       FS_OK = () => typeof window.showOpenFilePicker === "function";
+      PICK_HINT = () => WDSVC.ok ? "Bitte „Über die .exe öffnen“ benutzen – das geht ohne den Browser-Dialog." : "Die Datei stattdessen ins Fenster ziehen.";
       window.addEventListener("beforeunload", (e) => {
         if (WDOC.cur && WDOC.cur.dirty) {
           e.preventDefault();
@@ -3261,6 +3411,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           wdocSave(WDOC.cur);
         }
       });
+      WDSVC = { ok: null, checking: null };
+      b64Bytes = (b) => {
+        const s2 = atob(b), u = new Uint8Array(s2.length);
+        for (let i = 0; i < s2.length; i++) u[i] = s2.charCodeAt(i);
+        return u;
+      };
       wDateFromInput = (v) => {
         if (!v) return null;
         const [y, mo, d] = v.split("-").map(Number);
@@ -3284,6 +3440,126 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           return { view: "wartung", msg: "Wartungsdoku geöffnet: " + WDOC.cur.name + (WDOC.cur.handle ? " – zum direkten Speichern im Tab „Wartungsdoku“ verknüpfen." : "") };
         }
       });
+    }
+  });
+
+  // src/ui/wartung/ueber-dienst.js
+  async function open(pfad) {
+    APP.wdBrowse = false;
+    if (!await wdSvcOpen(pfad)) {
+      APP.wdBrowse = true;
+      renderAll();
+    }
+  }
+  async function load(dir) {
+    B.busy = true;
+    B.err = "";
+    paint();
+    try {
+      if (!B.orte) {
+        const o = await wdSvc("orte");
+        B.orte = o && o.orte || [];
+      }
+      dir = String(dir || B.dir || B.orte[0] && B.orte[0].pfad || "").trim().replace(/^"(.*)"$/, "$1");
+      if (dir) {
+        const r = await wdSvc("liste?pfad=" + encodeURIComponent(dir));
+        if (r && r.ok) {
+          B.list = r;
+          B.dir = r.pfad;
+          store.set("wdSvcDir", r.pfad);
+          if (r.datei) {
+            B.busy = false;
+            return open(r.datei);
+          }
+        } else B.err = r && r.err || "keine Antwort der Werkbank-.exe";
+      }
+    } catch (e) {
+      B.err = e.message;
+    }
+    B.busy = false;
+    paint();
+  }
+  function paint() {
+    const el = B.el;
+    if (!el || !document.body.contains(el)) return;
+    el.innerHTML = "";
+    el.appendChild(h(
+      "div",
+      { class: "row" },
+      h("h3", { class: "grow", style: { margin: 0 } }, icon("folder"), "Wartungsdoku über die Werkbank-.exe öffnen"),
+      btn(null, "close", () => {
+        APP.wdBrowse = false;
+        renderAll();
+      }, "subtle", "Schließen")
+    ));
+    el.appendChild(h(
+      "div",
+      { class: "muted small", style: { margin: "4px 0 10px" } },
+      "Die .exe liest die Datei und schreibt jede Änderung direkt hinein – unabhängig vom Dateidialog des Browsers."
+    ));
+    if (B.orte && B.orte.length) el.appendChild(h("div", { class: "row wdsvc-orte" }, B.orte.map((o) => h("button", { class: "btn sm" + (B.list && B.list.pfad === o.pfad ? " on" : ""), title: o.pfad, onclick: () => load(o.pfad) }, o.name))));
+    const recent = store.get("wdSvcRecent", []);
+    if (recent.length) el.appendChild(h(
+      "div",
+      { class: "row small wdsvc-recent" },
+      h("span", { class: "muted" }, "Zuletzt:"),
+      recent.map((p) => h("a", { href: "#", title: p, onclick: (e) => {
+        e.preventDefault();
+        open(p);
+      } }, baseName(p)))
+    ));
+    const inp = h("input", { class: "in grow", type: "text", spellcheck: false, placeholder: "Ordner oder Datei, z. B. C:\\Wartung (Pfad einfügen und Enter)", value: B.dir || "" });
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") load(inp.value);
+    });
+    el.appendChild(h(
+      "div",
+      { class: "row", style: { marginTop: "10px" } },
+      btn(null, "up", () => load(B.list.eltern), "", "Eine Ebene höher"),
+      inp,
+      btn("Anzeigen", "search", () => load(inp.value))
+    ));
+    if (!(B.list && B.list.eltern)) el.querySelector("button[title='Eine Ebene höher']").disabled = true;
+    if (B.err) el.appendChild(h("div", { class: "infobar err", style: { marginTop: "10px" } }, h("span", { class: "i" }, icon("error")), h("div", null, B.err)));
+    if (B.busy && !B.list) {
+      el.appendChild(h("div", { class: "muted small", style: { marginTop: "10px" } }, "Lese …"));
+      return;
+    }
+    if (!B.list) return;
+    const L = h("div", { class: "wdsvc-list" + (B.busy ? " busy" : "") });
+    for (const d of B.list.dateien) L.appendChild(h(
+      "div",
+      { class: "wdsvc-it file", title: "Öffnen und verknüpfen", onclick: () => open(join(d.name)) },
+      icon("doc"),
+      h("span", { class: "nm" }, d.name),
+      h("span", { class: "muted small" }, fmtDate(d.mtime)),
+      h("span", { class: "muted small sz" }, fmtSize(d.size))
+    ));
+    for (const d of B.list.ordner) L.appendChild(h("div", { class: "wdsvc-it", onclick: () => load(join(d.name)) }, icon("folder"), h("span", { class: "nm" }, d.name)));
+    if (!B.list.dateien.length && !B.list.ordner.length) L.appendChild(h("div", { class: "muted small", style: { padding: "10px" } }, "Dieser Ordner ist leer."));
+    else if (!B.list.dateien.length) L.insertBefore(h("div", { class: "muted small", style: { padding: "6px 10px" } }, "Hier liegt keine .wtgml-Datei – Unterordner:"), L.firstChild);
+    el.appendChild(L);
+  }
+  function wdSvcPanel() {
+    B.el = h("div", { class: "card wdsvc" });
+    setTimeout(() => {
+      paint();
+      if (!B.list && !B.busy) load("");
+    }, 0);
+    return B.el;
+  }
+  var B, fmtDate, fmtSize, baseName, join;
+  var init_ueber_dienst = __esm({
+    "src/ui/wartung/ueber-dienst.js"() {
+      init_state();
+      init_util();
+      init_shell();
+      init_wtgml();
+      B = { dir: store.get("wdSvcDir", ""), orte: null, list: null, err: "", busy: false, el: null };
+      fmtDate = (ms) => ms ? new Date(ms).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+      fmtSize = (n) => n > 1048576 ? (n / 1048576).toFixed(1).replace(".", ",") + " MB" : Math.max(1, Math.round(n / 1024)) + " kB";
+      baseName = (p) => String(p).split(/[\\/]/).filter(Boolean).pop() || p;
+      join = (name) => B.list.pfad + (B.list.pfad.endsWith(B.list.sep) ? "" : B.list.sep) + name;
     }
   });
 
@@ -3396,7 +3672,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           )
         )
       ),
-      h("div", { class: "row", style: { marginTop: "14px" } }, btn("Wartungsdoku öffnen", "folder", () => wdocPickAndLink(), "accent")),
+      h("div", { class: "row", style: { marginTop: "14px" } }, btn("Wartungsdoku öffnen", "folder", () => wdocPickAndLink(), "accent"), WDSVC.ok ? svcBtn() : null),
+      WDSVC.ok ? h("div", { class: "muted small", style: { marginTop: "8px" } }, "Passiert nach der Dateiauswahl nichts? Dann „Über die .exe öffnen“ nehmen – das geht ohne den Dateidialog des Browsers.") : null,
       FS_OK() ? null : h("div", { class: "infobar warn", style: { marginTop: "14px" } }, icon("alert"), h("div", { class: "small" }, "Dieser Browser kann Dateien nicht direkt zurückschreiben. In Microsoft Edge oder Google Chrome öffnen – hier wird beim Speichern eine neue Datei heruntergeladen."))
     ));
   }
@@ -4049,7 +4326,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         tb.appendChild(tr);
       } else {
         const js = jobStats(jobs);
-        const open = !!(D.openArt && D.openArt.has(a));
+        const open2 = !!(D.openArt && D.openArt.has(a));
         tr = h(
           "tr",
           { class: (D.pick.has(a) ? "on " : "") + rowExClass(jobs) },
@@ -4060,9 +4337,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           h("td", { colspan: 3 }, h(
             "span",
             { class: "row" },
-            btn(jobs.length + " Arbeiten", open ? "chevd" : "chev", () => {
+            btn(jobs.length + " Arbeiten", open2 ? "chevd" : "chev", () => {
               D.openArt = D.openArt || /* @__PURE__ */ new Set();
-              open ? D.openArt.delete(a) : D.openArt.add(a);
+              open2 ? D.openArt.delete(a) : D.openArt.add(a);
               rerender();
             }, "sm subtle"),
             ...statPills(js),
@@ -4076,7 +4353,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           h("td", null, rowMenu(a))
         );
         tb.appendChild(tr);
-        if (open) for (const j of jobs) tb.appendChild(h("tr", { class: "subjob " + exClass(wtxt(j, "executed")) }, h("td"), h("td"), h("td", { class: "small", style: { paddingLeft: "22px" } }, wtxt(j, "jobDescription")), h("td"), ...jobCells(j), h("td"), h("td")));
+        if (open2) for (const j of jobs) tb.appendChild(h("tr", { class: "subjob " + exClass(wtxt(j, "executed")) }, h("td"), h("td"), h("td", { class: "small", style: { paddingLeft: "22px" } }, wtxt(j, "jobDescription")), h("td"), ...jobCells(j), h("td"), h("td")));
       }
       tr.draggable = true;
       if (D.flashArt === a) flashRow = tr;
@@ -4837,7 +5114,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       "Offene Mängel werden als Ergebnis „Mangel“ mit Bemerkung eingetragen, behobene als „Ja“ mit dem Vermerk „Mangel behoben: …“. Erneutes Eintragen ersetzt den eigenen Vermerk – Abwählen und Eintragen nimmt ihn wieder heraus. Was du im Tab „Dokument“ von Hand schreibst, bleibt erhalten."
     )));
   }
-  var W_EXEC, EX_CLASS, exClass, wIsps, artName, facJobs, ispJobs, ispComment, ST_TITLE, zustandBox, WD_SORTS, WD_KIND_ORD, artKindOf, fKey, lineOf;
+  var W_EXEC, EX_CLASS, exClass, wIsps, artName, facJobs, ispJobs, ispComment, ST_TITLE, zustandBox, svcBtn, WD_SORTS, WD_KIND_ORD, artKindOf, fKey, lineOf;
   var init_view = __esm({
     "src/ui/wartung/view.js"() {
       init_nav();
@@ -4854,6 +5131,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       init_live();
       init_generator();
       init_anlagen();
+      init_ueber_dienst();
       init_wtgml();
       init_link();
       W_EXEC = [["", "–  offen"], ["Ja", "Ja"], ["Nein", "Nein"], ["Mangel", "Mangel"], ["nicht möglich", "nicht möglich"], ["nicht beauftragt", "nicht beauftragt"], ["kein Bedarf", "kein Bedarf"]];
@@ -4904,13 +5182,18 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
             renderAll();
           });
           root.appendChild(inp);
+          if (WDSVC.ok == null) wdSvcCheck().then((v) => {
+            if (v && APP.view === "wartung") renderAll();
+          });
           const info = D ? wdocInfo(D) : null;
           root.appendChild(pageHead("Wartungsdoku", info ? [info.svc, info.prj, info.cust, info.obj].filter(Boolean).join("  ·  ") : "WTGML-Wartungsdokumentation öffnen, aus der Sicherung füllen und direkt bearbeiten", [
             btn(D ? "Andere öffnen" : "Wartungsdoku öffnen", "folder", () => wdocPickAndLink(), D ? "" : "accent"),
+            WDSVC.ok ? svcBtn() : null,
             D ? btn("Speichern", "download", () => wdocSave(D), D.dirty ? "accent" : "", "Strg+S") : null,
             D && D.writable ? btn(null, "copy", () => download(D.name.replace(/\.wtgml$/i, "") + "_kopie.wtgml", wdocText(D), "application/xml;charset=utf-8"), "", "Kopie herunterladen") : null
           ]));
           if (D) root.appendChild(h("div", { style: { padding: "0 32px 10px" } }, h("div", { id: "wdStatus", class: "infobar" })));
+          if (APP.wdBrowse && WDSVC.ok) root.appendChild(h("div", { style: { padding: "0 32px 12px" } }, wdSvcPanel()));
           if (!WD_TABS.get(APP.wdTab)) APP.wdTab = D ? "doc" : "gen";
           root.appendChild(h("div", { class: "pivot" }, WD_TABS.list().map((T2) => {
             const b = D && T2.badge ? safely("Reiter " + T2.id, () => T2.badge(D), null) : null;
@@ -4934,6 +5217,16 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
           return T.render(body, D);
         }
       });
+      svcBtn = (cls) => btn(
+        "Über die .exe öffnen",
+        "folder",
+        () => {
+          APP.wdBrowse = !APP.wdBrowse;
+          renderAll();
+        },
+        cls || "",
+        "Wartungsdoku über die Werkbank-.exe öffnen – speichert direkt in die Datei, auch wenn der Dateidialog des Browsers nicht mitspielt"
+      );
       WD_TABS.add({ id: "doc", label: "Dokument", icon: "doc", order: 10, needsDoc: true, fill: () => true, render: (body, D) => wdDocTab(body, D) });
       WD_TABS.add({ id: "gen", label: "Aus Sicherung übernehmen", icon: "upload", order: 40, render: (body, D) => wdGenTab(body, D) });
       WD_TABS.add({ id: "mangel", label: "Befunde als Mängel", icon: "alert", order: 50, needsDoc: true, render: (body, D) => wdMangelTab(body, D) });
@@ -5180,7 +5473,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
             }
             const order = [...byCat.entries()].sort((a, b) => Math.max(...b[1].map((f) => SEV[f.sev])) - Math.max(...a[1].map((f) => SEV[f.sev])) || b[1].length - a[1].length);
             for (const [cat, fs] of order) {
-              const open = S2.open.has(cat) || !!S2.q || APP.ignView === "nur";
+              const open2 = S2.open.has(cat) || !!S2.q || APP.ignView === "nur";
               const c = { err: 0, warn: 0, info: 0 };
               fs.forEach((f) => c[f.sev]++);
               const bd = h("div", { class: "bd" });
@@ -5191,10 +5484,10 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
                 const fi = opts.focus != null ? fs.findIndex((f) => f.id === opts.focus) : -1;
                 lazyAppend(bd, fs, (f) => findingRow(C, f), { first: 60, until: fi >= 0 ? fi : null });
               };
-              if (open) build();
+              if (open2) build();
               const g = h(
                 "div",
-                { class: "card tight fgroup" + (open ? " open" : "") },
+                { class: "card tight fgroup" + (open2 ? " open" : "") },
                 h(
                   "div",
                   { class: "hd", onclick: () => {
@@ -6369,15 +6662,15 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
             for (const P of programTree(C)) {
               const gs = P.groups.filter((g) => !q || norm(P.label + " " + groupLabel(C, g) + " " + g.key).includes(q));
               if (!gs.length) continue;
-              const open = S2.open.has(P.key) || !!q;
+              const open2 = S2.open.has(P.key) || !!q;
               const allVis = gs.every((g) => S2.vis.has(g.key)), anyVis = gs.some((g) => S2.vis.has(g.key));
               const pSev = maxSev(gs.flatMap((g) => g.nodes.map((id) => C.nodeSev.get(id))));
               const row = h(
                 "div",
-                { class: "tree-row" + (open ? " open" : "") },
+                { class: "tree-row" + (open2 ? " open" : "") },
                 h("span", { class: "tw", onclick: (e) => {
                   e.stopPropagation();
-                  open ? S2.open.delete(P.key) : S2.open.add(P.key);
+                  open2 ? S2.open.delete(P.key) : S2.open.add(P.key);
                   drawTree();
                 } }, icon("chev")),
                 h("span", { class: "lbl", style: { fontWeight: 600 }, title: P.label, onclick: () => {
@@ -6398,7 +6691,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
                 } }, icon(anyVis ? "eye" : "eyeoff"))
               );
               treeBox.appendChild(row);
-              if (!open) continue;
+              if (!open2) continue;
               const kidsBox = h("div", { class: "tree-kids" });
               for (const g of gs) {
                 const vis = S2.vis.has(g.key);
@@ -7396,12 +7689,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       return K;
     };
   }
-  function keyRel(A, B) {
-    const a = A.k, b = B.k, n = Math.min(a.length, b.length);
+  function keyRel(A, B2) {
+    const a = A.k, b = B2.k, n = Math.min(a.length, b.length);
     if (!n) return 0;
     let p = 0;
     while (p < n && a[p] === b[p]) p++;
-    const short = a.length <= b.length ? A : B;
+    const short = a.length <= b.length ? A : B2;
     if (p === n) return validPart(short.toks) ? n : 0;
     let s2 = 0;
     while (s2 < n && a[a.length - 1 - s2] === b[b.length - 1 - s2]) s2++;
@@ -7413,8 +7706,8 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     if (w.length < 5 || v.length < 5) return false;
     return w.endsWith(v) || v.endsWith(w) || w.startsWith(v) || v.startsWith(w);
   }
-  function lcpRel(A, B) {
-    const a = A.k, b = B.k, n = Math.min(a.length, b.length);
+  function lcpRel(A, B2) {
+    const a = A.k, b = B2.k, n = Math.min(a.length, b.length);
     let p = 0;
     while (p < n && a[p] === b[p]) p++;
     if (p < 3 || p < a.length / 2 || !validPart(A.toks.slice(0, p))) return 0;
@@ -7627,7 +7920,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       const K = keyOf2.get(p);
       if (K) cand.set(p, firstHit(K));
     }
-    const tailKey = (A, B) => B.k.length < A.k.length && B.k.every((w, j) => w === A.k[A.k.length - B.k.length + j]) && B.k.some(meaningful);
+    const tailKey = (A, B2) => B2.k.length < A.k.length && B2.k.every((w, j) => w === A.k[A.k.length - B2.k.length + j]) && B2.k.some(meaningful);
     for (const p of [...rest]) {
       const K = keyOf2.get(p), c = cand.get(p);
       if (!c) continue;
@@ -7694,7 +7987,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       for (const p of c.pins) put(p, hits[0][0], "Name", null);
       clusters.splice(i, 1);
     }
-    const sameKey = (A, B) => A.k.length === B.k.length && A.k.every((w, i) => w === B.k[i]);
+    const sameKey = (A, B2) => A.k.length === B2.k.length && A.k.every((w, i) => w === B2.k[i]);
     const allgLeft = [];
     const allgKey = order.find((k) => /^allgemein\b/i.test(plants.get(k).name));
     for (const p of allg) {
@@ -9186,29 +9479,6 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     }
   });
 
-  // src/ui/core/service.js
-  async function svcJson(path, body, ms) {
-    const ctl = typeof AbortController === "function" ? new AbortController() : null;
-    const timer = ctl ? setTimeout(() => ctl.abort(), ms || 8e3) : null;
-    try {
-      const opts = { signal: ctl ? ctl.signal : void 0 };
-      if (body !== void 0) Object.assign(opts, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const r = await fetch(SERVICE_BASE + path, opts);
-      return await r.json();
-    } catch (e) {
-      if (e && e.name === "AbortError") throw new Error("Zeitüberschreitung (" + path + ")");
-      throw e;
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
-  }
-  var SERVICE_BASE;
-  var init_service = __esm({
-    "src/ui/core/service.js"() {
-      SERVICE_BASE = location.protocol === "file:" ? "http://localhost:47902" : "";
-    }
-  });
-
   // src/ui/core/persist.js
   function pfile(name) {
     let d = PERSIST.data[name];
@@ -9731,7 +10001,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
       h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
-      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.8.6")
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.9.0")
     ));
   }
   function renderTitle() {
@@ -9813,7 +10083,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return isNaN(n) ? "" : String(n);
   }
   function centralTitle(c) {
-    const nr = centralNr(c), nm = c.meta.stationName || c.meta.name;
+    const nr = centralNr(c), nm = c.meta.stationName || c.meta.fileTitle || c.meta.name;
     return nr ? nr + ": " + nm : nm;
   }
   function stationLabel(c) {
@@ -10248,13 +10518,15 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       if (wm) weekCtx = +wm[1];
       else if (r.kind !== "N" && !(f.P && /^N(\/|$)/.test(f.P))) weekCtx = null;
       switch (r.kind) {
+        /* Name der Zentrale: in der .wwf steht er hinter K= (und noch einmal als GT des Grundgeräts) */
         case "Z":
           M.centralAddr = (f.NR || "").trim();
           M.series = f.TYP || "DDC3000";
-          M.stationName = (f.GT || f.NAME || f.TXT || "").trim();
+          M.stationName = (f.GT || f.NAME || f.TXT || f.K || "").trim();
           break;
         case "B":
           M.stationType = f.TYP || f.GT || "";
+          if (!M.stationName && f.TYP && f.GT) M.stationName = f.GT.trim();
           break;
         case "K":
           kreis = parseInt(f.NR, 10) || 0;
@@ -10276,6 +10548,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       }
     }
     M.name = label;
+    M.fileTitle = String(fileName2 || "").replace(/\.[^.]+$/, "");
     M.format = opt.format || "DDC3000 · Parameterliste (.wwf)";
     M.applRev = "";
     M.stamp = opt.stamp || "";
@@ -10905,9 +11178,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return m;
   })();
   function toPro(text) {
-    const B = parseBackup(text);
+    const B2 = parseBackup(text);
     const L = [];
-    for (const d of B.devices) {
+    for (const d of B2.devices) {
       L.push(d.t1 || `t1 ${d.addr} ${d.group || 0} ${d.type || 0} 00 ${d.text || ""}`.replace(/ $/, " "));
       L.push(...d.menus, ...d.values);
     }
@@ -11288,13 +11561,13 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     for (const [k, L] of groups) if (k !== 0) out.push(...L);
     return out;
   }
-  function defsFor(B, z, devices) {
-    const own = devices.map((d) => B.defsBy && B.defsBy[d.addr]).find((x) => x && x.D1.length);
-    return defIndex(own ? own.D1 : B.definitions.D1);
+  function defsFor(B2, z, devices) {
+    const own = devices.map((d) => B2.defsBy && B2.defsBy[d.addr]).find((x) => x && x.D1.length);
+    return defIndex(own ? own.D1 : B2.definitions.D1);
   }
-  function byZentrale(B) {
+  function byZentrale(B2) {
     const byZ = /* @__PURE__ */ new Map();
-    for (const d of B.devices) {
+    for (const d of B2.devices) {
       const [a, zz] = d.addr.split(".").map(Number);
       const z = zz || a;
       if (!byZ.has(z)) byZ.set(z, []);
@@ -11303,28 +11576,28 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return byZ;
   }
   function parseP90(text, label, fileName2) {
-    const B = parseBackup(text);
-    if (!B.devices.length) throw new Error(B.aborted ? "Sicherung wurde abgebrochen, bevor ein Gerät gelesen war" : "Keine Geräte in der P90-Sicherung");
-    const byZ = byZentrale(B);
-    const stamp2 = (B.header.Erstellt || "").replace(/,/, "");
+    const B2 = parseBackup(text);
+    if (!B2.devices.length) throw new Error(B2.aborted ? "Sicherung wurde abgebrochen, bevor ein Gerät gelesen war" : "Keine Geräte in der P90-Sicherung");
+    const byZ = byZentrale(B2);
+    const stamp2 = (B2.header.Erstellt || "").replace(/,/, "");
     const out = [];
     for (const [z, devices] of byZ) {
-      const C = buildDDC3000(ordered(z, devices, defsFor(B, z, devices)), label, fileName2, {
-        format: (B.plain ? "DDC3000 · Sicherung des K&P-Programms (" + ((fileName2 || "").match(/\.\w+$/) || [".PRO"])[0].toUpperCase() + ")" : "DDC3000 · P90-Sicherung (.p90)") + (B.definitions.D1.length ? "" : " ohne Definitionen"),
+      const C = buildDDC3000(ordered(z, devices, defsFor(B2, z, devices)), label, fileName2, {
+        format: (B2.plain ? "DDC3000 · Sicherung des K&P-Programms (" + ((fileName2 || "").match(/\.\w+$/) || [".PRO"])[0].toUpperCase() + ")" : "DDC3000 · P90-Sicherung (.p90)") + (B2.definitions.D1.length ? "" : " ohne Definitionen"),
         stamp: stamp2,
         stampSrc: stamp2 ? "Sicherung erstellt" : "",
         values: true
       });
       const failed = devices.filter((d) => !d.ok).map((d) => d.addr);
       C.system.push(
-        { group: "Sicherung", k: "Erstellt", v: B.header.Erstellt || "–" },
-        { group: "Sicherung", k: "Kennung", v: B.header.Kennung || "–" },
+        { group: "Sicherung", k: "Erstellt", v: B2.header.Erstellt || "–" },
+        { group: "Sicherung", k: "Kennung", v: B2.header.Kennung || "–" },
         { group: "Sicherung", k: "Geräte", v: String(devices.length) },
-        { group: "Sicherung", k: "Definitionen", v: B.definitions.D1.length ? B.definitions.D1.length + " Parameterdefinitionen" : "nicht mitgesichert – Art der Werte geschätzt", warn: !B.definitions.D1.length }
+        { group: "Sicherung", k: "Definitionen", v: B2.definitions.D1.length ? B2.definitions.D1.length + " Parameterdefinitionen" : "nicht mitgesichert – Art der Werte geschätzt", warn: !B2.definitions.D1.length }
       );
       if (failed.length) C.system.push({ group: "Sicherung", k: "Geräte mit Fehler", v: failed.join(", "), warn: true });
-      if (B.aborted) C.system.push({ group: "Sicherung", k: "Status", v: "abgebrochen – unvollständig", warn: true });
-      C.p90 = { failed, aborted: B.aborted, defs: B.definitions.D1.length };
+      if (B2.aborted) C.system.push({ group: "Sicherung", k: "Status", v: "abgebrochen – unvollständig", warn: true });
+      C.p90 = { failed, aborted: B2.aborted, defs: B2.definitions.D1.length };
       out.push(C);
     }
     return out.length === 1 ? out[0] : out;
@@ -11490,12 +11763,12 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     return L;
   }
   function toWwf(text, name) {
-    const B = parseBackup(text);
-    if (!B.devices.length) throw new Error("Keine Geräte in der Sicherung");
+    const B2 = parseBackup(text);
+    if (!B2.devices.length) throw new Error("Keine Geräte in der Sicherung");
     const out = [];
-    for (const [z, devices] of byZentrale(B)) {
+    for (const [z, devices] of byZentrale(B2)) {
       const nm = name || "Zentrale " + z;
-      const lines = wwfLines(ordered(z, devices, defsFor(B, z, devices)), nm);
+      const lines = wwfLines(ordered(z, devices, defsFor(B2, z, devices)), nm);
       const rtf = "{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0\\fmodern\\fprq1\\fcharset0 Courier New;}}\r\n{\\colortbl ;\\red0\\green0\\blue0;\\red255\\green255\\blue255;}\r\n\\viewkind4\\uc1\\pard\\cf1\\highlight2\\lang1031\\protect\\f0\\fs24\\par\r\n" + lines.map((l) => rtfEsc(l) + "\\par\r\n").join("") + "\\par\r\n}\r\n\0";
       out.push({ z, name: nm, rtf });
     }
@@ -12021,16 +12294,16 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         rail.appendChild(h("div", { class: "rail-head" }, icon("station"), " ", wtxt(o2.bte, "bteBezeichnung") || "Einbauort"));
         lastB = o2.bte;
       }
-      const open = o2.devs.filter((d) => !d.side).length;
+      const open2 = o2.devs.filter((d) => !d.side).length;
       rail.appendChild(h(
         "div",
         { class: "rail-item" + (S2.sel === o2.isp ? " on" : ""), onclick: () => {
           S2.sel = o2.isp;
           rerender();
         } },
-        h("span", { class: "sevdot " + (!o2.devs.length ? "info" : open ? "warn" : "ok") }),
-        h("div", { class: "lbl" }, h("b", null, lkIspKey(o2.isp) || "ISP"), h("small", null, o2.devs.length ? o2.devs.length + " Geräte · " + (o2.devs.length - open) + " mit Angabe" : "keine Geräte dieser Bauarten")),
-        open ? h("span", { class: "badge soft" }, open) : null
+        h("span", { class: "sevdot " + (!o2.devs.length ? "info" : open2 ? "warn" : "ok") }),
+        h("div", { class: "lbl" }, h("b", null, lkIspKey(o2.isp) || "ISP"), h("small", null, o2.devs.length ? o2.devs.length + " Geräte · " + (o2.devs.length - open2) + " mit Angabe" : "keine Geräte dieser Bauarten")),
+        open2 ? h("span", { class: "badge soft" }, open2) : null
       ));
     }
     const o = all.find((x) => x.isp === S2.sel);
@@ -13826,9 +14099,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     S.log = [];
     S.prog = { text: "Verbinde …", done: 0, total: 0 };
     S.ac = new AbortController();
-    addLog("Start (Werkbank 0.8.6, " + (S.demo ? "Demo" : "Port " + (S.portIdx + 1)) + ")");
+    addLog("Start (Werkbank 0.9.0, " + (S.demo ? "Demo" : "Port " + (S.portIdx + 1)) + ")");
     try {
-      paint();
+      paint2();
     } catch (e) {
       console.error(e);
     }
@@ -13885,7 +14158,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       }
       S.running = false;
       S.ac = null;
-      paint();
+      paint2();
     }
   }
   function diagnose(rx, err) {
@@ -14024,7 +14297,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
         await refreshPorts();
         S.portIdx = Math.max(0, S.ports.indexOf(p));
         store.set("p90Port", S.portIdx);
-        paint();
+        paint2();
       } catch (e) {
         if (e.name !== "NotFoundError") toast("Port: " + e.message, "err");
       }
@@ -14042,7 +14315,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     });
     const demo = chk("Demo-Modus (nachgebaute DDC, ohne Hardware)", S.demo, (v) => {
       S.demo = v;
-      paint();
+      paint2();
     });
     for (const l of [defs, demo]) l.querySelector("input").disabled = dis;
     card.appendChild(h(
@@ -14075,7 +14348,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       mk ? "Vorlagen der Schnellparametrierung: " + mk + " geladen – ergänzen Namen und Arten bei Sicherungen ohne Definitionen." : "Tipp: Ordner „makro.sp“ aus PS4000 (system\\makro.sp, auch als ZIP) einmal in die Werkbank ziehen – dann haben auch Sicherungen ohne Definitionen Namen und Arten.",
       mk ? btn("Vorlagen entfernen", "trash", () => {
         clearMakro();
-        paint();
+        paint2();
       }, "sm") : null
     ));
     card.appendChild(h(
@@ -14111,7 +14384,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     }, 0);
     return card;
   }
-  function paint() {
+  function paint2() {
     const root = S._root;
     if (!root) return;
     root.innerHTML = "";
@@ -14135,9 +14408,9 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       const body = h("div", { class: "page-body" });
       root.appendChild(body);
       S._root = body;
-      paint();
+      paint2();
       if (serialSupported() && !S.running) refreshPorts().then(() => {
-        if (S._root === body) paint();
+        if (S._root === body) paint2();
       });
     }
   });
@@ -14154,7 +14427,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   init_persist();
   init_wtgml();
   var api = {
-    version: "0.8.6",
+    version: "0.9.0",
     register: ALL,
     state: APP,
     curC,

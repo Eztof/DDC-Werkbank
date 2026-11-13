@@ -95,8 +95,9 @@ export function buildDDC3000(recs, label, fileName, opt = {}) {
     if (wm) weekCtx = +wm[1];
     else if (r.kind !== "N" && !(f.P && /^N(\/|$)/.test(f.P))) weekCtx = null;
     switch (r.kind) {
-      case "Z": M.centralAddr = (f.NR || "").trim(); M.series = f.TYP || "DDC3000"; M.stationName = (f.GT || f.NAME || f.TXT || "").trim(); break;
-      case "B": M.stationType = f.TYP || f.GT || ""; break;
+      /* Name der Zentrale: in der .wwf steht er hinter K= (und noch einmal als GT des Grundgeräts) */
+      case "Z": M.centralAddr = (f.NR || "").trim(); M.series = f.TYP || "DDC3000"; M.stationName = (f.GT || f.NAME || f.TXT || f.K || "").trim(); break;
+      case "B": M.stationType = f.TYP || f.GT || ""; if (!M.stationName && f.TYP && f.GT) M.stationName = f.GT.trim(); break;
       case "K": kreis = parseInt(f.NR, 10) || 0; kreise.set(kreis, { nr: kreis, typ: f.TYP || "", name: f.GT || "", rk: f.RK || "", anl: f.ANL || "", modules: [] }); break;
       case "M": (kreise.get(kreis) || kreise.get(0)).modules.push({ nr: f.NR, aktiv: f.AKTIV }); break;
       case "N": scheds.push({ kreis, nr: weekCtx || parseInt(f.NR, 10) || 1, sched: r.sched }); weekCtx = null; break;
@@ -109,6 +110,9 @@ export function buildDDC3000(recs, label, fileName, opt = {}) {
     }
   }
   M.name = label;
+  /* Eine DDC3000 hat in der Sicherung keinen eigenen Namen. Im Titel dann der Dateiname – nicht der Ordner,
+     in dem die Datei liegt (sonst heißen alle Zentralen eines Ordners gleich, z. B. „1: wwf“). */
+  M.fileTitle = String(fileName || "").replace(/\.[^.]+$/, "");
   M.format = opt.format || "DDC3000 · Parameterliste (.wwf)";
   M.applRev = ""; M.stamp = opt.stamp || ""; M.stampSrc = opt.stampSrc || "";
   const typOf = n => (kreise.get(n) || {}).typ || "";

@@ -94,3 +94,33 @@ test("DDC3000 sichern: DDC antwortet nicht → klare Meldung, keine leere Datei"
     await browser.close();
   }
 });
+
+test("Ordner mit .p90 und .wwf laden: Zentralen heißen nach Datei bzw. Namen in der .wwf, nicht nach dem Ordner", async () => {
+  const { P90Link } = await import("../src/ui/p90/link.js");
+  const { createBackup } = await import("../src/ui/p90/backup.js");
+  const { SimDDC } = await import("../src/ui/p90/sim.js");
+  const { toWwf } = await import("../src/ui/model/p90.js");
+  const link = new P90Link(new SimDDC({ demo: true }));
+  const r = await createBackup(link, { definitions: true });
+  await link.close();
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "wb-ordner-")), "wwf");
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, "DDC-Sicherung_2026-11-12_12-21.p90"), r.text);
+  fs.writeFileSync(path.join(dir, "Heizzentrale_Z2.wwf"), toWwf(r.text, "Heizzentrale Nord")[0].rtf, "latin1");
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+    const errors = [];
+    page.on("pageerror", e => errors.push(e.message));
+    await page.goto("file://" + HTML);
+    await page.setInputFiles("#dirIn", dir);
+    await page.waitForFunction(() => document.querySelectorAll("#tbStation option").length >= 2);
+    const names = await page.$$eval("#tbStation option", L => L.map(o => o.textContent.trim()));
+    assert.ok(names.some(n => n.startsWith("2: DDC-Sicherung_2026-11-12_12-21")), "P90: Dateiname im Titel – " + names.join(" | "));
+    assert.ok(names.some(n => n.startsWith("2: Heizzentrale Nord")), ".wwf: Name aus der Datei – " + names.join(" | "));
+    assert.ok(!names.some(n => /^2: wwf\b/.test(n)), "Ordnername darf nicht der Titel sein – " + names.join(" | "));
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});

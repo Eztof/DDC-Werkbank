@@ -11,9 +11,10 @@ const path = require('path');
 const { exec } = require('child_process');
 const B = require('./bacnet.js');
 const K = require('./ctos.js');
+const D = require('./dateien.js');
 
-const VERSION = '0.3';
-const PORT = 47902;
+const VERSION = '0.4';
+const PORT = parseInt(process.env.WERKBANK_PORT, 10) || 47902;   // anderer Port nur für Tests
 
 /* Ordner neben der .exe (in der Entwicklung: DDC-Werkbank\ im Repo oder WERKBANK_DIR) */
 const BASE = process.pkg ? path.dirname(process.execPath) : (process.env.WERKBANK_DIR || path.join(__dirname, '..', '..', 'DDC-Werkbank'));
@@ -67,10 +68,10 @@ function sendJson(res, obj, code) {
   res.writeHead(code || 200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
   res.end(b);
 }
-function readBody(req) {
+function readBody(req, max) {
   return new Promise((resolve, reject) => {
     let n = 0; const chunks = [];
-    req.on('data', c => { n += c.length; if (n > 8 * 1024 * 1024) { reject(new Error('zu groß')); req.destroy(); } else chunks.push(c); });
+    req.on('data', c => { n += c.length; if (n > (max || 8 * 1024 * 1024)) { reject(new Error('zu groß')); req.destroy(); } else chunks.push(c); });
     req.on('end', () => { try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}); } catch (e) { reject(e); } });
     req.on('error', reject);
   });
@@ -103,7 +104,9 @@ async function handleApi(req, res, u) {
   const q = u.searchParams;
   if (req.method === 'OPTIONS') { res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' }); res.end(); return; }
 
-  if (u.pathname === '/api/health') return sendJson(res, { ok: true, service: 'DDC-Werkbank', version: VERSION, port: PORT, data: true });
+  if (u.pathname === '/api/health') return sendJson(res, { ok: true, service: 'DDC-Werkbank', version: VERSION, port: PORT, data: true, wd: true });
+
+  if (u.pathname.startsWith('/api/wd/')) return handleWd(req, res, u);
 
   if (u.pathname.startsWith('/api/data/')) {
     const name = u.pathname.slice('/api/data/'.length);
@@ -145,6 +148,22 @@ async function handleApi(req, res, u) {
   if (u.pathname.startsWith('/api/kp/')) return handleKp(req, res, u.pathname.slice(8));
 
   sendJson(res, { ok: false, err: 'unbekannte Route' }, 404);
+}
+
+/* Wartungsdoku über den Dienst: orte · liste · lesen · schreiben (nur für die eigene Seite, ohne CORS-Freigabe) */
+async function handleWd(req, res, u) {
+  const send = (obj, code) => { res.writeHead(code || 200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  if (!D.erlaubt(req.headers, PORT)) return send({ ok: false, err: 'nur für die Werkbank-Seite selbst' }, 403);
+  const what = u.pathname.slice('/api/wd/'.length);
+  if (what === 'orte') return send({ ok: true, orte: await D.orte() });
+  if (what === 'liste') return send(await D.liste(u.searchParams.get('pfad')));
+  if (what === 'lesen') return send(await D.lesen(u.searchParams.get('pfad')));
+  if (what === 'schreiben') {
+    if (req.method !== 'POST') return send({ ok: false, err: 'POST erwartet' }, 405);
+    let body; try { body = await readBody(req, D.MAX_BODY); } catch (e) { return send({ ok: false, err: 'ungültiger Body' }, 400); }
+    return send(await D.schreiben(body));
+  }
+  send({ ok: false, err: 'unbekannte Route' }, 404);
 }
 
 /* K&P direkt: status · verbinden · lesen · explorer · trennen */
@@ -214,5 +233,5 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log('  Der Browser sollte sich gleich öffnen. Falls nicht, Adresse oben aufrufen.');
   console.log('  Zum Beenden dieses Fenster schließen (oder Strg+C).');
   console.log('');
-  if (process.platform === 'win32') exec('cmd /c start "" "' + url + '"');
+  if (process.platform === 'win32' && !process.env.WERKBANK_PORT) exec('cmd /c start "" "' + url + '"');
 });

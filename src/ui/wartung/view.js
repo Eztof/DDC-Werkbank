@@ -12,7 +12,8 @@ import { pinCorrText, pinValue } from "../views/points.js";
 import { liveInfo, livePinText } from "../core/live.js";
 import { WTG_NS, hwModules, ispXml, moduleArtikel, newGid, pinsOfGroup, regroupBy, setKlartext, wdModel } from "./generator.js";
 import { assignPlant, plantOfNode } from "./anlagen.js";
-import { FS_OK, WDOC, wDate, wDateFromInput, wDateToInput, wPersons, wPrueferDefault, wPrueferOf, wRenumber, wSetPruefer, wSnapshot, wUndo, wdocBauteile, wdocChanged, wdocInfo, wdocInsertIsp, wdocOpen, wdocPickAndLink, wdocSave, wdocStatus, wdocText, wkid, wkids, wset, wtxt } from "./wtgml.js";
+import { wdSvcPanel } from "./ueber-dienst.js";
+import { FS_OK, WDOC, WDSVC, wdSvcCheck, wDate, wDateFromInput, wDateToInput, wPersons, wPrueferDefault, wPrueferOf, wRenumber, wSetPruefer, wSnapshot, wUndo, wdocBauteile, wdocChanged, wdocInfo, wdocInsertIsp, wdocOpen, wdocPickAndLink, wdocSave, wdocStatus, wdocText, wkid, wkids, wset, wtxt } from "./wtgml.js";
 import { LK_ON, artRemarkSuggestion, infoParse, infoTyp, lkCentral, lkGoto, lkLinks, lkSplitTag, pinOnlyExternal, pinUnlinked, setInfoTyp } from "./link.js";
 
 /* =========================================================================
@@ -122,12 +123,16 @@ VIEWS.add({
       renderAll();
     });
     root.appendChild(inp);
+    /* zweiter Weg zum Öffnen und direkten Speichern: über die Werkbank-.exe (falls sie läuft und es kann) */
+    if (WDSVC.ok == null) wdSvcCheck().then(v => { if (v && APP.view === "wartung") renderAll(); });
     const info = D ? wdocInfo(D) : null;
     root.appendChild(pageHead("Wartungsdoku", info ? [info.svc, info.prj, info.cust, info.obj].filter(Boolean).join("  ·  ") : "WTGML-Wartungsdokumentation öffnen, aus der Sicherung füllen und direkt bearbeiten", [
       btn(D ? "Andere öffnen" : "Wartungsdoku öffnen", "folder", () => wdocPickAndLink(), D ? "" : "accent"),
+      WDSVC.ok ? svcBtn() : null,
       D ? btn("Speichern", "download", () => wdocSave(D), D.dirty ? "accent" : "", "Strg+S") : null,
       D && D.writable ? btn(null, "copy", () => download(D.name.replace(/\.wtgml$/i, "") + "_kopie.wtgml", wdocText(D), "application/xml;charset=utf-8"), "", "Kopie herunterladen") : null]));
     if (D) root.appendChild(h("div", { style: { padding: "0 32px 10px" } }, h("div", { id: "wdStatus", class: "infobar" })));
+    if (APP.wdBrowse && WDSVC.ok) root.appendChild(h("div", { style: { padding: "0 32px 12px" } }, wdSvcPanel()));
     if (!WD_TABS.get(APP.wdTab)) APP.wdTab = D ? "doc" : "gen";
     root.appendChild(h("div", { class: "pivot" }, WD_TABS.list().map(T => {
       const b = D && T.badge ? safely("Reiter " + T.id, () => T.badge(D), null) : null;
@@ -144,6 +149,9 @@ VIEWS.add({
   }
 });
 
+const svcBtn = cls => btn("Über die .exe öffnen", "folder", () => { APP.wdBrowse = !APP.wdBrowse; renderAll(); }, cls || "",
+  "Wartungsdoku über die Werkbank-.exe öffnen – speichert direkt in die Datei, auch wenn der Dateidialog des Browsers nicht mitspielt");
+
 /* ---------- Reiter (Verknüpfung und Zu-/Abluft melden sich in link.js / air.js an) ---------- */
 WD_TABS.add({ id: "doc", label: "Dokument", icon: "doc", order: 10, needsDoc: true, fill: () => true, render: (body, D) => wdDocTab(body, D) });
 WD_TABS.add({ id: "gen", label: "Aus Sicherung übernehmen", icon: "upload", order: 40, render: (body, D) => wdGenTab(body, D) });
@@ -155,7 +163,8 @@ function wdNoDoc(body) {
       h("div", null, h("div", { class: "nm" }, "Wartungsdoku verknüpfen"),
         h("div", { class: "meta", style: { fontSize: "13px", marginTop: "4px" } },
           "Die .wtgml-Datei aus dem Wartungsprogramm öffnen – leer oder schon ausgefüllt. Danach schreibt die Werkbank jede Änderung direkt in diese Datei zurück: neue ISP aus der Sicherung, Prüfergebnisse, Bemerkungen, Mängel. Kein Herunterladen, kein Umbenennen."))),
-    h("div", { class: "row", style: { marginTop: "14px" } }, btn("Wartungsdoku öffnen", "folder", () => wdocPickAndLink(), "accent")),
+    h("div", { class: "row", style: { marginTop: "14px" } }, btn("Wartungsdoku öffnen", "folder", () => wdocPickAndLink(), "accent"), WDSVC.ok ? svcBtn() : null),
+    WDSVC.ok ? h("div", { class: "muted small", style: { marginTop: "8px" } }, "Passiert nach der Dateiauswahl nichts? Dann „Über die .exe öffnen“ nehmen – das geht ohne den Dateidialog des Browsers.") : null,
     FS_OK() ? null : h("div", { class: "infobar warn", style: { marginTop: "14px" } }, icon("alert"), h("div", { class: "small" }, "Dieser Browser kann Dateien nicht direkt zurückschreiben. In Microsoft Edge oder Google Chrome öffnen – hier wird beim Speichern eine neue Datei heruntergeladen."))));
 }
 

@@ -5,6 +5,7 @@ import { $, download, h, natCmp, nowStamp, store } from "../core/util.js";
 import { decodeBytes } from "../core/load.js";
 import { btn, chk, icon, renderAll, toast } from "../shell/shell.js";
 import { pref } from "../core/persist.js";
+import { SERVICE_BASE } from "../core/service.js";
 import { WTG_NS } from "./generator.js";
 
 /* =========================================================================
@@ -147,10 +148,11 @@ export function addTemplate(text, fname, handle) {
   if (handle) handle.getFile().then(f => { D.lastMod = f.lastModified; }).catch(() => {});
   return true;
 }
-export const WDOC = { cur: null };   // {name, text0, doc, decl, handle, writable, dirty, savedAt, lastMod, auto, err}
+export const WDOC = { cur: null };   // {name, text0, doc, decl, handle, svc, writable, dirty, savedAt, lastMod, auto, err}
+                                     // handle = Dateigriff des Browsers; svc = { pfad, mtime } = Datei über die Werkbank-.exe
 export function wdocOpen(text, name, handle) {
   const { doc, decl } = wtgmlParse(text);
-  WDOC.cur = { name, text0: text, doc, decl, handle: handle || null, writable: false, dirty: false, savedAt: null, lastMod: null, auto: store.get("wdAuto", true), err: null, sel: null };
+  WDOC.cur = { name, text0: text, doc, decl, handle: handle || null, svc: null, writable: false, dirty: false, savedAt: null, lastMod: null, auto: store.get("wdAuto", true), err: null, sel: null };
   return WDOC.cur;
 }
 export function wdocInfo(D) {
@@ -174,6 +176,25 @@ export function wdocChanged(D) {
 export async function wdocSave(D, silent) {
   D = D || WDOC.cur; if (!D) return;
   const text = wdocText(D);
+  if (D.svc) {
+    /* über die Werkbank-.exe direkt in die Datei */
+    try {
+      const r = await wdSvc("schreiben", { pfad: D.svc.pfad, text, mtime: D.svc.mtime, force: !!D.overwriteOk });
+      if (r && r.konflikt) {
+        D.err = "Die Datei wurde außerhalb der Werkbank geändert.";
+        wdocStatus(); if (!silent) toast("Die Datei wurde zwischenzeitlich außerhalb geändert. Bitte neu laden oder „Trotzdem speichern“ wählen.", "warn", 8000);
+        return false;
+      }
+      if (!r || !r.ok) throw new Error((r && r.err) || "keine Antwort der Werkbank-.exe");
+      D.svc.mtime = r.mtime; D.dirty = false; D.savedAt = new Date(); D.err = null; D.overwriteOk = false;
+      wdocStatus();
+      if (!silent) toast("In " + D.name + " gespeichert.", "ok");
+      return true;
+    } catch (e) {
+      D.err = /^Speichern fehlgeschlagen/.test(e.message) ? e.message : "Speichern fehlgeschlagen: " + e.message; wdocStatus();
+      toast(D.err, "err", 8000); return false;
+    }
+  }
   if (D.handle && D.writable) {
     try {
       const f = await D.handle.getFile();
@@ -200,21 +221,35 @@ export async function wdocSave(D, silent) {
   return true;
 }
 export const FS_OK = () => typeof window.showOpenFilePicker === "function";
+/* Öffnen über den Dateidialog des Browsers. Der Dialog kann auf manchen Rechnern scheitern, ohne dass die
+   Seite den Grund erfährt (Abbruch nach der Auswahl oder gar keine Antwort) – das darf nie still passieren. */
+const PICK_HINT = () => WDSVC.ok ? "Bitte „Über die .exe öffnen“ benutzen – das geht ohne den Browser-Dialog." : "Die Datei stattdessen ins Fenster ziehen.";
 export async function wdocPickAndLink() {
   if (!FS_OK()) { $("#wdIn") && $("#wdIn").click(); return; }
+  let handle = null, settled = false, hang = null;
+  /* kommt nach dem Schließen des Dialogs nichts zurück, Bescheid sagen */
+  const onFocus = () => { hang = setTimeout(() => { if (!settled) toast("Der Browser liefert die gewählte Datei nicht. " + PICK_HINT(), "warn", 12000); }, 5000); };
+  window.addEventListener("focus", onFocus, { once: true });
   try {
-    const [handle] = await window.showOpenFilePicker({ types: [{ description: "WTGML-Wartungsdoku", accept: { "application/xml": [".wtgml", ".xml"] } }], multiple: false });
-    await wdocLinkHandle(handle, true);
-  } catch (e) { if (e && e.name !== "AbortError") toast("Öffnen fehlgeschlagen: " + e.message, "err", 7000); }
+    [handle] = await window.showOpenFilePicker({ types: [{ description: "WTGML-Wartungsdoku", accept: { "application/xml": [".wtgml", ".xml"] } }], multiple: false });
+  } catch (e) {
+    if (e && e.name === "AbortError") toast("Keine Datei geöffnet. Falls du eine ausgewählt hattest, gibt der Browser sie nicht heraus. " + PICK_HINT(), "inf", 9000);
+    else { toast("Der Dateidialog des Browsers geht hier nicht (" + (e && e.message || e) + "). " + PICK_HINT(), "warn", 10000); if (!WDSVC.ok && $("#wdIn")) $("#wdIn").click(); }
+    return;
+  } finally { settled = true; clearTimeout(hang); window.removeEventListener("focus", onFocus); }
+  try { await wdocLinkHandle(handle, true); }
+  catch (e) { toast("Öffnen fehlgeschlagen: " + (e && e.message || e), "err", 8000); }
 }
 async function wdocLinkHandle(handle, ask) {
   const f = await handle.getFile();
   const D = wdocOpen(decodeBytes(new Uint8Array(await f.arrayBuffer())), f.name, handle);
   D.lastMod = f.lastModified;
-  if (ask) await wdocRequestWrite(D);
+  /* erst zeigen, dann nach dem Schreibrecht fragen – die Rückfrage des Browsers darf das Öffnen nicht aufhalten */
   idbPut("wdHandle", handle);
-  toast(D.writable ? "Verknüpft: " + f.name + " – Änderungen werden direkt in die Datei geschrieben." : "Geöffnet: " + f.name + " (nur lesen)", D.writable ? "ok" : "warn", 5000);
   go("wartung", { tab: "doc" });
+  if (ask) await wdocRequestWrite(D);
+  if (WDOC.cur !== D) return;
+  toast(D.writable ? "Verknüpft: " + f.name + " – Änderungen werden direkt in die Datei geschrieben." : "Geöffnet: " + f.name + " (nur lesen) – oben „Zum Bearbeiten verknüpfen“ wählen.", D.writable ? "ok" : "warn", 6000);
 }
 async function wdocRequestWrite(D) {
   if (!D.handle || !D.handle.requestPermission) return false;
@@ -226,7 +261,9 @@ async function wdocRequestWrite(D) {
   return D.writable;
 }
 async function wdocReload() {
-  const D = WDOC.cur; if (!D || !D.handle) return;
+  const D = WDOC.cur; if (!D) return;
+  if (D.svc) { const auto = D.auto; if (await wdSvcOpen(D.svc.pfad, true)) { WDOC.cur.auto = auto; toast("Neu geladen: " + WDOC.cur.name, "ok"); renderAll(); } return; }
+  if (!D.handle) return;
   const f = await D.handle.getFile();
   const keep = { handle: D.handle, writable: D.writable, auto: D.auto };
   const N = wdocOpen(decodeBytes(new Uint8Array(await f.arrayBuffer())), f.name, keep.handle);
@@ -242,17 +279,59 @@ export function wdocStatus() {
   const t = D.savedAt ? D.savedAt.toLocaleTimeString("de-DE") : "";
   let cls = "inf", ic = "info", msg;
   if (D.err) { cls = "err"; ic = "error"; msg = D.err; }
-  else if (D.writable) { cls = D.dirty ? "warn" : "ok"; ic = D.dirty ? "clock" : "check"; msg = "Verknüpft mit " + D.name + (D.dirty ? " · ungespeicherte Änderungen" + (D.auto ? " · wird gleich gespeichert" : "") : t ? " · gespeichert " + t : " · keine Änderungen"); }
+  else if (D.writable) { cls = D.dirty ? "warn" : "ok"; ic = D.dirty ? "clock" : "check"; msg = "Verknüpft mit " + D.name + (D.svc ? " (über die Werkbank-.exe)" : "") + (D.dirty ? " · ungespeicherte Änderungen" + (D.auto ? " · wird gleich gespeichert" : "") : t ? " · gespeichert " + t : " · keine Änderungen"); }
   else { cls = D.dirty ? "warn" : "inf"; msg = D.name + (D.handle ? " · nur lesen – zum direkten Speichern verknüpfen" : " · nicht verknüpft – Speichern lädt eine neue Datei herunter") + (D.dirty ? " · ungespeicherte Änderungen" : ""); }
   el.className = "infobar " + cls;
   el.appendChild(icon(ic));
-  el.appendChild(h("div", { class: "grow" }, msg));
-  if (D.err && D.handle) el.appendChild(h("div", { class: "row" }, btn("Neu laden", "upload", () => wdocReload(), "sm"), btn("Trotzdem speichern", "download", () => { D.overwriteOk = true; D.err = null; wdocSave(D); }, "sm")));
+  el.appendChild(h("div", { class: "grow", title: D.svc ? D.svc.pfad : null }, msg));
+  if (D.err && (D.handle || D.svc)) el.appendChild(h("div", { class: "row" }, btn("Neu laden", "upload", () => wdocReload(), "sm"), btn("Trotzdem speichern", "download", () => { D.overwriteOk = true; D.err = null; wdocSave(D); }, "sm")));
   else if (D.handle && !D.writable) el.appendChild(btn("Zum Bearbeiten verknüpfen", "lock", async () => { if (await wdocRequestWrite(D)) { const f = await D.handle.getFile(); D.lastMod = f.lastModified; toast("Verknüpft – Änderungen werden direkt gespeichert.", "ok"); if (D.dirty) wdocSave(D, true); } }, "sm accent"));
   else if (D.writable) el.appendChild(chk("automatisch speichern", D.auto, v => { D.auto = v; store.set("wdAuto", v); if (v && D.dirty) wdocSave(D, true); }));
 }
 window.addEventListener("beforeunload", e => { if (WDOC.cur && WDOC.cur.dirty) { e.preventDefault(); e.returnValue = ""; } });
 window.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s" && WDOC.cur) { e.preventDefault(); wdocSave(WDOC.cur); } });
+
+/* ---------- Wartungsdoku über die Werkbank-.exe (Dienst) ----------
+   Zweiter Weg zum direkten Speichern, unabhängig vom Dateizugriff des Browsers: die .exe liest und schreibt
+   die .wtgml selbst (Routen /api/wd/…, nur für die eigene Seite). Geht, wenn die Werkbank über die .exe
+   geöffnet ist (http://localhost:47902) und die .exe diese Routen kennt (Dienst ab 0.4). */
+export const WDSVC = { ok: null, checking: null };
+export async function wdSvc(what, body, ms) {
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), ms || 20000);
+  try {
+    const opts = { signal: ctl.signal, headers: { "X-Werkbank": "1" } };
+    if (body !== undefined) Object.assign(opts, { method: "POST", headers: { "X-Werkbank": "1", "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const r = await fetch(SERVICE_BASE + "/api/wd/" + what, opts);
+    return await r.json();
+  } catch (e) {
+    throw new Error(e && e.name === "AbortError" ? "die Werkbank-.exe antwortet nicht" : "die Werkbank-.exe ist nicht erreichbar – läuft sie noch?");
+  } finally { clearTimeout(timer); }
+}
+/* Kann die .exe das? (einmal fragen; ohne .exe oder aus der Datei heraus: nein) */
+export function wdSvcCheck() {
+  if (WDSVC.ok != null) return Promise.resolve(WDSVC.ok);
+  if (location.protocol === "file:") { WDSVC.ok = false; return Promise.resolve(false); }
+  if (!WDSVC.checking) WDSVC.checking = fetch(SERVICE_BASE + "/api/health").then(r => r.json()).then(j => !!(j && j.wd), () => false)
+    .then(v => { WDSVC.ok = v; WDSVC.checking = null; return v; });
+  return WDSVC.checking;
+}
+const b64Bytes = b => { const s = atob(b), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; };
+/* Datei über die .exe öffnen und verknüpfen */
+export async function wdSvcOpen(pfad, quiet) {
+  if (!quiet && WDOC.cur && WDOC.cur.dirty && !confirm("Die geöffnete Wartungsdoku hat ungespeicherte Änderungen. Trotzdem eine andere öffnen?")) return false;
+  let r;
+  try { r = await wdSvc("lesen?pfad=" + encodeURIComponent(pfad), undefined, 30000); }
+  catch (e) { toast("Öffnen fehlgeschlagen: " + e.message, "err", 8000); return false; }
+  if (!r || !r.ok) { toast("Öffnen fehlgeschlagen: " + ((r && r.err) || "keine Antwort"), "err", 8000); return false; }
+  let D;
+  try { D = wdocOpen(decodeBytes(b64Bytes(r.data)), r.name, null); }
+  catch (e) { toast(r.name + ": " + e.message, "err", 8000); return false; }
+  D.svc = { pfad: r.pfad, mtime: r.mtime }; D.writable = true;
+  const rec = [r.pfad, ...store.get("wdSvcRecent", []).filter(p => p !== r.pfad)].slice(0, 6);
+  store.set("wdSvcRecent", rec);
+  if (!quiet) { toast("Verknüpft: " + r.name + " – Änderungen werden direkt in die Datei geschrieben.", "ok", 6000); go("wartung", { tab: "doc" }); }
+  return true;
+}
 
 /* ---------- Dateigriff merken (IndexedDB) ---------- */
 function idb() {
