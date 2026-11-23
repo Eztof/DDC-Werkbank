@@ -9,7 +9,7 @@ import { wdSvc, wdSvcOpen } from "./wtgml.js";
    und schreibt jede Änderung direkt hinein – ohne den Dateidialog und ohne
    den Dateizugriff des Browsers (siehe wtgml.js, service/dateien.js).
    ========================================================================= */
-const B = { dir: store.get("wdSvcDir", ""), orte: null, list: null, err: "", busy: false, el: null };
+const B = { dir: store.get("wdSvcDir", ""), orte: null, list: null, err: "", busy: false, el: null, seq: 0, typed: null };
 const fmtDate = ms => ms ? new Date(ms).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
 const fmtSize = n => n > 1048576 ? (n / 1048576).toFixed(1).replace(".", ",") + " MB" : Math.max(1, Math.round(n / 1024)) + " kB";
 const baseName = p => String(p).split(/[\\/]/).filter(Boolean).pop() || p;
@@ -18,25 +18,30 @@ async function open(pfad) {
   APP.wdBrowse = false;
   if (!(await wdSvcOpen(pfad))) { APP.wdBrowse = true; renderAll(); }
 }
+/* Nur das zuletzt Angeforderte zählt: der Startordner darf einen inzwischen eingegebenen Pfad nicht überschreiben */
 async function load(dir) {
+  const my = ++B.seq;
+  if (dir) B.typed = null;
   B.busy = true; B.err = ""; paint();
   try {
     if (!B.orte) { const o = await wdSvc("orte"); B.orte = (o && o.orte) || []; }
     dir = String(dir || B.dir || (B.orte[0] && B.orte[0].pfad) || "").trim().replace(/^"(.*)"$/, "$1");   // „Als Pfad kopieren“ setzt Anführungszeichen
     if (dir) {
       const r = await wdSvc("liste?pfad=" + encodeURIComponent(dir));
+      if (my !== B.seq) return;
       if (r && r.ok) {
         B.list = r; B.dir = r.pfad; store.set("wdSvcDir", r.pfad);
         if (r.datei) { B.busy = false; return open(r.datei); }      // Pfad einer Datei eingefügt → gleich öffnen
       } else B.err = (r && r.err) || "keine Antwort der Werkbank-.exe";
     }
-  } catch (e) { B.err = e.message; }
+  } catch (e) { if (my !== B.seq) return; B.err = e.message; }
   B.busy = false; paint();
 }
 const join = name => B.list.pfad + (B.list.pfad.endsWith(B.list.sep) ? "" : B.list.sep) + name;
 
 function paint() {
   const el = B.el; if (!el || !document.body.contains(el)) return;
+  const had = document.activeElement && el.contains(document.activeElement) && document.activeElement.matches("input.in");
   el.innerHTML = "";
   el.appendChild(h("div", { class: "row" }, h("h3", { class: "grow", style: { margin: 0 } }, icon("folder"), "Wartungsdoku über die Werkbank-.exe öffnen"),
     btn(null, "close", () => { APP.wdBrowse = false; renderAll(); }, "subtle", "Schließen")));
@@ -47,10 +52,12 @@ function paint() {
   const recent = store.get("wdSvcRecent", []);
   if (recent.length) el.appendChild(h("div", { class: "row small wdsvc-recent" }, h("span", { class: "muted" }, "Zuletzt:"),
     recent.map(p => h("a", { href: "#", title: p, onclick: e => { e.preventDefault(); open(p); } }, baseName(p)))));
-  const inp = h("input", { class: "in grow", type: "text", spellcheck: false, placeholder: "Ordner oder Datei, z. B. C:\\Wartung (Pfad einfügen und Enter)", value: B.dir || "" });
+  const inp = h("input", { class: "in grow", type: "text", spellcheck: false, placeholder: "Ordner oder Datei, z. B. C:\\Wartung (Pfad einfügen und Enter)", value: B.typed ?? B.dir ?? "" });
+  inp.addEventListener("input", () => { B.typed = inp.value; });   // Eingabe bleibt, wenn die Karte neu gezeichnet wird
   inp.addEventListener("keydown", e => { if (e.key === "Enter") load(inp.value); });
   el.appendChild(h("div", { class: "row", style: { marginTop: "10px" } },
     btn(null, "up", () => load(B.list.eltern), "", "Eine Ebene höher"), inp, btn("Anzeigen", "search", () => load(inp.value))));
+  if (had) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
   if (!(B.list && B.list.eltern)) el.querySelector("button[title='Eine Ebene höher']").disabled = true;
   if (B.err) el.appendChild(h("div", { class: "infobar err", style: { marginTop: "10px" } }, h("span", { class: "i" }, icon("error")), h("div", null, B.err)));
   if (B.busy && !B.list) { el.appendChild(h("div", { class: "muted small", style: { marginTop: "10px" } }, "Lese …")); return; }
