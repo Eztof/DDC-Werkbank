@@ -65,6 +65,20 @@ function setExecuted(D, art, job, val) {
   if (!wkid(art, "pruefDatum")) wset(art, "pruefDatum", date);
   const pid = wPrueferDefault(D);
   if (pid) { const p = wPersons(D).find(x => x.id === pid); if (p) wSetPruefer(art, p); }
+  if (pref("wdKorrBem", false)) addKorrBem(art, job);
+}
+/* Wahlweise: vorhandene Fühlerkorrektur der verknüpften Klemme beim Abhaken als Bemerkung eintragen (einmal je Datenpunkt) */
+const KORR_RE = /Fühlerkorrektur [+-]?[\d.,]+/;
+function korrOfArt(art) {
+  const isp = art && art.parentElement && art.parentElement.parentElement;
+  const l = isp && isp.localName === "Isp" ? pinForArt(art, isp) : null;
+  return l && LK_ON.has(l.st) ? pinCorrText(l.p) : "";
+}
+function addKorrBem(art, job) {
+  const corr = korrOfArt(art); if (!corr) return;
+  if (wkids(art, "job").some(j => KORR_RE.test(wtxt(j, "jobBemerkung")))) return;
+  const cur = wtxt(job, "jobBemerkung").trim(), line = "Fühlerkorrektur " + corr;
+  wset(job, "jobBemerkung", cur ? cur.replace(/[;.\s]*$/, "") + "; " + line : line);
 }
 function facZustandVorschlag(fac) {
   const lines = [];
@@ -265,6 +279,11 @@ function wdDocTab(body, D) {
   rail.appendChild(h("div", { style: { padding: "10px 10px 6px", display: "grid", gridTemplateColumns: "92px 1fr", gap: "6px 8px", alignItems: "center", fontSize: "12px" } },
     h("span", { class: "muted" }, "Prüfdatum"), dateIn,
     h("span", { class: "muted" }, "Geprüft durch"), prSel));
+  const korrCb = h("input", { type: "checkbox", checked: pref("wdKorrBem", false) });
+  korrCb.addEventListener("change", () => setPref("wdKorrBem", korrCb.checked));
+  rail.appendChild(h("label", { class: "small wd-korrbem", style: { display: "flex", gap: "6px", alignItems: "center", padding: "0 10px 8px", cursor: "pointer" },
+    title: "Hat die verknüpfte Klemme eine Fühlerkorrektur, wird sie beim Abhaken (Ja, Mangel …) in die Bemerkung geschrieben, z. B. „Fühlerkorrektur +0,5 K“." },
+    korrCb, "Fühlerkorrektur beim Abhaken als Bemerkung"));
   if (!pid && persons.length) rail.appendChild(h("div", { class: "infobar warn", style: { margin: "4px 8px 8px", padding: "8px 10px" } }, icon("alert"), h("div", { class: "small" }, "Bitte auswählen, wer prüft – wird bei jedem Ergebnis als „geprüft durch“ eingetragen.")));
   if (!persons.length) rail.appendChild(h("div", { class: "small faint", style: { padding: "0 12px 8px" } }, "Im Dokument sind keine Projektbeteiligten hinterlegt."));
 

@@ -3639,6 +3639,19 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       const p = wPersons(D).find((x) => x.id === pid);
       if (p) wSetPruefer(art, p);
     }
+    if (pref("wdKorrBem", false)) addKorrBem(art, job);
+  }
+  function korrOfArt(art) {
+    const isp = art && art.parentElement && art.parentElement.parentElement;
+    const l = isp && isp.localName === "Isp" ? pinForArt(art, isp) : null;
+    return l && LK_ON.has(l.st) ? pinCorrText(l.p) : "";
+  }
+  function addKorrBem(art, job) {
+    const corr = korrOfArt(art);
+    if (!corr) return;
+    if (wkids(art, "job").some((j) => KORR_RE.test(wtxt(j, "jobBemerkung")))) return;
+    const cur = wtxt(job, "jobBemerkung").trim(), line = "Fühlerkorrektur " + corr;
+    wset(job, "jobBemerkung", cur ? cur.replace(/[;.\s]*$/, "") + "; " + line : line);
   }
   function facZustandVorschlag(fac) {
     const lines = [];
@@ -3823,6 +3836,18 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       dateIn,
       h("span", { class: "muted" }, "Geprüft durch"),
       prSel
+    ));
+    const korrCb = h("input", { type: "checkbox", checked: pref("wdKorrBem", false) });
+    korrCb.addEventListener("change", () => setPref("wdKorrBem", korrCb.checked));
+    rail.appendChild(h(
+      "label",
+      {
+        class: "small wd-korrbem",
+        style: { display: "flex", gap: "6px", alignItems: "center", padding: "0 10px 8px", cursor: "pointer" },
+        title: "Hat die verknüpfte Klemme eine Fühlerkorrektur, wird sie beim Abhaken (Ja, Mangel …) in die Bemerkung geschrieben, z. B. „Fühlerkorrektur +0,5 K“."
+      },
+      korrCb,
+      "Fühlerkorrektur beim Abhaken als Bemerkung"
     ));
     if (!pid && persons.length) rail.appendChild(h("div", { class: "infobar warn", style: { margin: "4px 8px 8px", padding: "8px 10px" } }, icon("alert"), h("div", { class: "small" }, "Bitte auswählen, wer prüft – wird bei jedem Ergebnis als „geprüft durch“ eingetragen.")));
     if (!persons.length) rail.appendChild(h("div", { class: "small faint", style: { padding: "0 12px 8px" } }, "Im Dokument sind keine Projektbeteiligten hinterlegt."));
@@ -5134,7 +5159,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       "Offene Mängel werden als Ergebnis „Mangel“ mit Bemerkung eingetragen, behobene als „Ja“ mit dem Vermerk „Mangel behoben: …“. Erneutes Eintragen ersetzt den eigenen Vermerk – Abwählen und Eintragen nimmt ihn wieder heraus. Was du im Tab „Dokument“ von Hand schreibst, bleibt erhalten."
     )));
   }
-  var W_EXEC, EX_CLASS, exClass, wIsps, artName, facJobs, ispJobs, ispComment, ST_TITLE, zustandBox, svcBtn, WD_SORTS, WD_KIND_ORD, artKindOf, fKey, lineOf;
+  var W_EXEC, EX_CLASS, exClass, wIsps, artName, facJobs, ispJobs, KORR_RE, ispComment, ST_TITLE, zustandBox, svcBtn, WD_SORTS, WD_KIND_ORD, artKindOf, fKey, lineOf;
   var init_view = __esm({
     "src/ui/wartung/view.js"() {
       init_nav();
@@ -5161,6 +5186,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       artName = (a) => (wtxt(a, "artKlartext") || wtxt(a, "artBezeichnung") || wtxt(a, "nummer")).trim();
       facJobs = (fac) => wkids(fac, "Artikel").flatMap((a) => wkids(a, "job"));
       ispJobs = (isp) => wkids(isp, "facility").flatMap(facJobs);
+      KORR_RE = /Fühlerkorrektur [+-]?[\d.,]+/;
       ispComment = (isp) => wtxt(wkid(isp, "ispComment"), "body");
       ST_TITLE = { open: "Noch nicht alles geprüft", mangel: "Alles geprüft – mit Mangel", ok: "Alles geprüft – ohne Mangel" };
       zustandBox = (label, value, placeholder, onInput, suggest) => {
@@ -10021,7 +10047,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
       { class: "nav-foot" },
       h("div", { class: "nav-sep" }),
       h("div", { class: "nav-head", title: "Alle Daten bleiben auf diesem Rechner." }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, icon("lock"), "Offline · keine Datenübertragung")),
-      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.9.2")
+      h("div", { class: "nav-head", style: { opacity: ".7" } }, "Version 0.9.3")
     ));
   }
   function renderTitle() {
@@ -14222,7 +14248,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
     S.log = [];
     S.prog = { text: "Verbinde …", done: 0, total: 0 };
     S.ac = new AbortController();
-    addLog("Start (Werkbank 0.9.2, " + (S.demo ? "Demo" : "Port " + (S.portIdx + 1)) + ")");
+    addLog("Start (Werkbank 0.9.3, " + (S.demo ? "Demo" : "Port " + (S.portIdx + 1)) + ")");
     try {
       paint2();
     } catch (e) {
@@ -14550,7 +14576,7 @@ table.wdoc tr.grp .grp-name:hover { color: var(--accent); text-decoration: under
   init_persist();
   init_wtgml();
   var api = {
-    version: "0.9.2",
+    version: "0.9.3",
     register: ALL,
     state: APP,
     curC,

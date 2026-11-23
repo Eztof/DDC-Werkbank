@@ -80,6 +80,10 @@ Busmodule              Übersicht einer DDC3000 aus .p90/.EZR/.PRO: je Modul
 
 Wartungsdoku
 ------------
+Korrektur       Links unter „Geprüft durch“: „Fühlerkorrektur beim Abhaken
+                als Bemerkung“. Angehakt schreibt die Werkbank beim Abhaken
+                (Ja, Mangel …) die Korrektur der verknüpften Klemme in die
+                Bemerkung, z. B. „Fühlerkorrektur +0,5 K“. Vorgabe: aus.
 Öffnen          „Wartungsdoku öffnen“ nimmt den Dateidialog des Browsers;
                 danach fragt der Browser einmal „Änderungen speichern?“ –
                 ab da schreibt die Werkbank direkt in die Datei.
